@@ -1,0 +1,36 @@
+{
+    "nextId": 3,
+    "moduleName": "CC检测",
+    "rules": [
+        {
+            "id": 1,
+            "attackType": "cc-url",
+            "rule": "cc-url",
+            "state": "off",
+            "severityLevel": "medium",
+            "countType": "url",
+            "pattern": "",
+            "autoIpBlock": "on",
+            "ipBlockExpireInSeconds": 600,
+            "action": "captcha",
+            "duration": 60,
+            "threshold": 1000,
+            "description": "统计单个IP访问单个URL次数"
+        },
+        {
+            "id": 2,
+            "attackType": "cc-ip",
+            "rule": "cc-ip",
+            "state": "off",
+            "severityLevel": "medium",
+            "countType": "ip",
+            "pattern": "",
+            "autoIpBlock": "on",
+            "ipBlockExpireInSeconds": 600,
+            "action": "captcha",
+            "duration": 60,
+            "threshold": 1000,
+            "description": "统计单个IP访问次数"
+        }
+    ]
+}

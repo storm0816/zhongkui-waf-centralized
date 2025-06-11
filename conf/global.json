@@ -1,0 +1,80 @@
+{
+  "sqli": {
+    "state": "on"
+  },
+  "xss": {
+    "state": "on"
+  },
+  "geoip": {
+    "language": "zh-CN",
+    "disallowCountrys": [
+      "AL"
+    ]
+  },
+  "fileContentCheck": {
+    "state": "on"
+  },
+  "post": {
+    "state": "on"
+  },
+  "whiteUrl": {
+    "state": "off"
+  },
+  "blackIP": {
+    "state": "on"
+  },
+  "whiteIP": {
+    "state": "off"
+  },
+  "sensitiveDataFilter": {
+    "state": "off"
+  },
+  "blackUrl": {
+    "state": "on"
+  },
+  "args": {
+    "state": "on"
+  },
+  "bot": {
+    "state": "on",
+    "captcha": {
+      "action": "captcha",
+      "state": "on",
+      "verifyInSeconds": 300,
+      "maxFailTimes": 3,
+      "ipBlockExpireInSeconds": 600,
+      "expireInSeconds": 1800,
+      "autoIpBlock": "on",
+      "type": "js_challenge"
+    },
+    "trap": {
+      "state": "off",
+      "autoIpBlock": "off",
+      "ipBlockExpireInSeconds": "600",
+      "uri": "/zhongkuiwaf/honey/trap",
+      "action": "deny"
+    }
+  },
+  "waf": {
+    "state": "on",
+    "mode": "protection"
+  },
+  "cookie": {
+    "state": "on"
+  },
+  "headers": {
+    "state": "on"
+  },
+  "httpMethod": {
+    "state": "off"
+  },
+  "fileExt": {
+    "state": "on"
+  },
+  "cc": {
+    "state": "on"
+  },
+  "acl": {
+    "state": "on"
+  }
+}
