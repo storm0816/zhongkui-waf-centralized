@@ -1,0 +1,137 @@
+[
+	{
+		"id": 1,
+		"title": "数据统计",
+		"icon": "layui-icon layui-icon-chart",
+		"type": 1,
+		"href": "view/dashboard.html"
+	},
+	{
+		"id": 2,
+		"title": "攻击事件",
+		"icon": "layui-icon layui-icon-list",
+		"type": 1,
+		"href": "view/events.html"
+	},
+	{
+		"id": 3,
+		"title": "IP封禁日志",
+		"icon": "layui-icon layui-icon-disabled",
+		"type": 1,
+		"href": "view/ip-blocking.html"
+	},
+	{
+		"id": 4,
+		"title": "防护站点",
+		"icon": "layui-icon layui-icon-website",
+		"type": 1,
+		"href": "view/website.html"
+	},
+	{
+		"id": 5,
+		"title": "防御配置",
+		"icon": "layui-icon layui-icon-auz",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 51,
+				"title": "网站防护",
+				"icon": "layui-icon layui-icon-console",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/web.html"
+			},
+			{
+				"id": 52,
+				"title": "IP黑白名单",
+				"icon": "layui-icon layui-icon-list",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/ip-filter.html"
+			},
+			{
+				"id": 53,
+				"title": "Bot管理",
+				"icon": "layui-icon layui-icon-console",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/bot.html"
+			},
+			{
+				"id": 54,
+				"title": "CC防护",
+				"icon": "layui-icon layui-icon-console",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/cc.html"
+			},
+			{
+				"id": 55,
+				"title": "访问控制(ACL)",
+				"icon": "layui-icon layui-icon-console",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/acl.html"
+			},
+			{
+				"id": 56,
+				"title": "敏感数据过滤",
+				"icon": "layui-icon layui-icon-console",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/sensitive.html"
+			}
+		]
+	},
+	{
+		"id": 6,
+		"title": "通用配置",
+		"icon": "layui-icon layui-icon-set-fill",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 62,
+				"title": "证书管理",
+				"icon": "layui-icon layui-icon-file",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/common/certificate.html"
+			},
+			{
+				"id": 63,
+				"title": "IP组",
+				"icon": "layui-icon layui-icon-list",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/common/ip-group.html"
+			}
+		]
+	},
+	{
+		"id": 7,
+		"title": "系统设置",
+		"icon": "layui-icon layui-icon-util",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 71,
+				"title": "系统设置",
+				"icon": "layui-icon layui-icon-template-1",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/system/system.html"
+			},
+			{
+				"id": 72,
+				"title": "密码修改",
+				"icon": "layui-icon layui-icon-console",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/system/password.html"
+			}
+		]
+	}
+]

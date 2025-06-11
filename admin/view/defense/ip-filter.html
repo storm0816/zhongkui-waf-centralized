@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+		<title>IP黑白名单</title>
+		<link href="../../component/pear/css/pear.css" rel="stylesheet">
+	</head>
+	<body class="pear-container">
+		<form class="layui-form" lay-filter="filter-form-sites">
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div class="layui-card">
+						<div class="layui-card-body layui-row">
+							<div class="layui-col-md6">
+								<div class="layui-input-inline">
+									<select name="site" id="site" lay-filter="filter-site">
+										<option value="0">全局设置</option>
+									</select>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</form>
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">IP黑白名单</div>
+					<div class="layui-card-body">
+						<div class="layui-row layui-form" lay-filter="filter-ip">
+							<div class="layui-col-md2">
+								<label class="layui-form-label" style="width: auto; padding-left: 0px;">白名单</label>
+								<div class="layui-input-block" style="margin-left: 0px;">
+									<input type="checkbox" name="whiteIP" lay-skin="switch" id="id-whiteip-state" module-id="whiteIP" lay-filter="filter-ip-module-state" title="ON|OFF" />
+								</div>
+							</div>
+							<div class="layui-col-md2">
+								<label class="layui-form-label">黑名单</label>
+								<div class="layui-input-block">
+									<input type="checkbox" name="blackIP" lay-skin="switch" id="id-blackip-state" module-id="blackIP" lay-filter="filter-ip-module-state" title="ON|OFF" />
+								</div>
+							</div>
+						</div>
+						<div class="layui-row layui-col-space10" id="id-div-iplist">
+							<div class="layui-col-md12">
+								<table id="id-table-iplist" lay-filter="filter-table-iplist"></table>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="layui-row layui-col-space10 layui-form" lay-filter="filter-form-geoip">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">地域级IP黑名单</div>
+					<div class="layui-card-body">
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md12" id="id-tab-geoip"></div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<form class="layui-form" style="background-color:#fff;padding: 10px 15px;display: none;" lay-filter="filter-form-iplist" id="id-form-iplist">
+			<input type="hidden" name="id" />
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">名单列表</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div class="layui-form-text">
+						<textarea name="content" placeholder="IP或网段，每行一个。" style="height: 210px;" class="layui-textarea"></textarea>
+					</div>
+				</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div style="float: right;">
+						<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-iplist-save">保存</button>
+						<button type="button" class="pear-btn" lay-on="cancel">取消</button>
+					</div>
+				</div>
+			</div>
+		</form>
+
+		<script type="text/html" id="iplist_bar">
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit"><i class="layui-icon layui-icon-edit"></i></button>
+		</script>
+		<script type="text/html" id="iplist_state">
+			<input type="checkbox" name="state" value="{{= d.id }}" lay-skin="switch" lay-filter="iplist_switch_status" title="ON|OFF" {{= d.state == "on" ? "checked" : "" }} />
+		</script>
+
+		<script src="../../component/layui/layui.js"></script>
+		<script src="../../component/pear/pear.js"></script>
+		
+		<script>
+			layui.use(['form','table','util','jquery','popup','element'], function() {
+				var table = layui.table;
+				var form = layui.form;
+				var util = layui.util;
+				var element = layui.element
+				var $ = layui.$;
+				var popup = layui.popup;
+				var layer = layui.layer;
+
+				var currentTabId;
+				var disallowArray;
+
+				// 切换域名
+				form.on('select(filter-site)', function(data) {
+					if (data.value == 0) {
+						$('#id-div-iplist').show();
+					} else {
+						$('#id-div-iplist').hide();
+					}
+					getSiteConfig();
+				});
+
+				function getSiteConfig() {
+					$.get('/ip/filter/config/get', {siteId : $('#site').val()}, function(res) {
+						if (res && res.data) {
+							config = JSON.parse(res.data);
+
+							$('#id-whiteip-state').prop('checked', config.whiteIP.state == 'on' ? true : false);
+							$('#id-blackip-state').prop('checked', config.blackIP.state == 'on' ? true : false);
+
+							$(":checkbox[name='geoip_disallow_country']").prop('checked', false);
+							var disallowCountrys = config.disallowCountrys;
+							if (Array.isArray(disallowCountrys)) {
+								$.each(disallowCountrys, function(idx, val) {
+									$(":checkbox[name='geoip_disallow_country'][value='" + val + "']").prop('checked', true);
+								});
+							}
+
+							form.render('checkbox', 'filter-form-geoip');
+							form.render(null, 'filter-ip');
+						}
+					}, "json");
+				}
+
+				function initCountries() {
+					// 加载国家和地区
+					$.get('/admin/data/countries.json', function(res) {
+							if (res) {
+								var html = '<div class="layui-tab layui-tab-brief" lay-filter="filter-tab-geoip"><ul class="layui-tab-title">';
+								html += '<input type="checkbox" id="chooseAll" lay-filter="chooseAll" title="全选">';
+								var lis = '';
+								var items = '';
+								$.each(res, function(key, value) {
+									lis +='<li lay-id="' + key + '" style="min-width: 50px;">'+ key + '</li>';
+									items += '<div class="layui-tab-item" id="item' + key + '">';
+
+									$.each(value, function(idx, v) {
+										if (idx == 0) {
+											items += '<div class="layui-row layui-col-space10">';
+										} else if (idx % 4 == 0) {
+											items += '</div><div class="layui-row layui-col-space10">';
+										}
+										items += '<div class="layui-col-md3">';
+										items += '<input type="checkbox" name="geoip_disallow_country" value="' + v.iso_code + '" title="' + v.name_cn + '" />';
+										items += '</div>';
+										if (idx == value.length - 1) {
+											var left = 4 - value.length % 4;
+											// 如果最后一行不够4个，补齐4列
+											if (left > 0 && left < 4) {
+												items += '<div class="layui-col-md' + left * 3 + '"></div>';
+											}
+											items += '</div>';
+										}
+									});
+									items += '</div>';
+								});
+
+								html += lis;
+								html += '<div style="float: right;display:inline-block;"><button type="submit" class="pear-btn pear-btn-primary pear-btn-sm" lay-submit lay-filter="filter-geoip-save">保存</button></div>';
+								html += '</ul><div class="layui-tab-content">';
+								html += items;
+								html += '</div></div>';
+
+								$('#id-tab-geoip').html(html);
+								form.render('checkbox', 'filter-form-geoip');
+
+								currentTabId = 'A';
+								element.render('tab', 'filter-tab-geoip');
+								element.tabChange('filter-tab-geoip', currentTabId);
+								element.on('tab(filter-tab-geoip)', function(data){
+									var id = $(this).attr('lay-id');
+									if (currentTabId != id) {
+										$("#chooseAll").prop('checked', false);
+										form.render('checkbox', 'filter-form-geoip');
+									}
+									currentTabId = $(this).attr('lay-id');
+								});
+
+								// 全选按钮点击事件
+								form.on('checkbox(chooseAll)', function(data) {
+									var checked = data.elem.checked;
+									var countries = $('#item' + currentTabId).find(':checkbox[name="geoip_disallow_country"]');
+									if (checked) {
+										countries.each(function() {
+											$(this).prop('checked', true);
+										});
+									} else {
+										countries.each(function() {
+											$(this).prop('checked', false);
+										});
+									}
+									form.render('checkbox', 'filter-form-geoip');
+								});
+
+								// 保存地域级IP黑名单设置
+								form.on('submit(filter-geoip-save)', function(data) {
+									var arr = [];
+									$(':checkbox[name="geoip_disallow_country"]:checked').each(function() {
+										arr.push($(this).val());
+									});
+
+									var param = {siteId: $('#site').val(), countries: JSON.stringify(arr)}
+									$.post('/ip/filter/rule/geo/update', param, function(data) {
+										if (data && data.code == 200) {
+											popup.success("已保存");
+											return true;
+										} else {
+											popup.failure(data.msg);
+											return false;
+										}
+									}, "json");
+
+									return false;
+								});
+							}
+					}, "json");
+				}
+
+				$(function() {
+					initCountries();
+
+					$.get('/sites/list', {}, function(data) {
+						if (data && data.data) {
+							$.each(data.data, function(key, site) {
+								var serverName = site.serverNames.join(',');
+								$('#site').append('<option value="' + site.id + '">' + serverName + '</option>');
+							});
+
+							form.render(null, 'filter-form-sites');
+							getSiteConfig();
+						}
+					}, "json");
+
+					// 阻止回车触发表单提交
+					$('input').on('keydown', function (e) {
+						if (e.keyCode === 13) {
+							e.preventDefault();
+							return false;
+						}
+					});
+				});
+
+				table.render({
+					elem: '#id-table-iplist',
+					url: '/ip/filter/rule/list',
+					cols: [[ //标题栏
+						{title: '类型', templet: function(d) {
+							return d.id == 1 ? '白名单' : '黑名单';
+						}, width: 100},
+						{field: 'content', title: '内容'},
+						{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#iplist_bar'}
+					]],
+					skin: 'line'
+				});
+
+				// 触发单元格工具事件
+				table.on('tool(filter-table-iplist)', function(obj) {
+					var data = obj.data; // 获得当前行数据
+
+					if(obj.event === 'edit') {
+						$.get('/ip/filter/rule/get', {id: data.id}, function(res) {
+							if (res && res.code == 200) {
+								layer.open({
+									type: 1,
+									title: '编辑IP' + (data.id == 1 ? '白名单' : '黑名单'),
+									shade: 0.6,
+									shadeClose: true,
+									area: ['430px', '360px'],
+									content: $('#id-form-iplist'),
+									end: function() {
+										$("#id-form-iplist").trigger("reset");
+										$("#id-form-iplist").find("input[type='hidden']").val("");
+									}
+								});
+
+								form.val('filter-form-iplist', res.data);
+							} else {
+								popup.failure(res.msg);
+								return false;
+							}
+						}, "json");
+					}
+				});
+
+				util.on('lay-on', {
+					cancel: function() {
+						layer.closeLast('page');
+					}
+				});
+
+				// ip名单列表提交保存
+				form.on('submit(filter-iplist-save)', function(data) {
+					var field = data.field;
+
+					$.post('/ip/filter/rule/update', {id: field.id, content: field.content.trim()}, function(data) {
+						if (data && data.code == 200) {
+							table.reloadData('id-table-iplist');
+							layer.closeLast('page');
+							popup.success("已保存");
+							return true;
+						} else {
+							popup.failure(data.msg);
+							return false;
+						}
+					}, "json");
+
+					return false;
+				});
+
+				form.on('switch(filter-ip-module-state)', function(obj) {
+					var name = this.name;
+					var state = this.checked ? 'on' : 'off';
+					var param = {siteId: $('#site').val(), state : state}
+					param[name] = name;
+					$.post('/ip/filter/config/state/update', param, function(data) {
+						if (data && data.code == 200) {
+							return true;
+						} else {
+							popup.failure(data.msg);
+							return false;
+						}
+					}, "json");
+				});
+			});
+		</script>
+	</body>
+</html>
