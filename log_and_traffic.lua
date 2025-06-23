@@ -135,14 +135,14 @@ local function write_attack_log()
         end
     end
 
-    if get_system_config('centralized').state then
+    if is_system_option_on('centralized').state then
         -- 使用 ngx.timer.at 异步写入 Redis
         ngx.timer.at(0, function()
             write_attack_log_to_redis(log_table)
         end)
     end
 
-    if is_system_option_on("mysql") and not get_system_config('centralized').state then
+    if is_system_option_on("mysql") and not is_system_option_on('centralized').state then
         local sql_str =
         '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
 

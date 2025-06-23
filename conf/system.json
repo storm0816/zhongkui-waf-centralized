@@ -34,10 +34,14 @@
         "state": "off",
         "period": 10
     },
-    "waf": {
-        "master": "on"
+    "master": {
+        "state": "on"
     },
     "centralized": {
         "state": "on"
+    },
+    "ipBlacklist": {
+        "expire_time": 1800
     }
+    
 }

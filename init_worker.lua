@@ -8,6 +8,9 @@ local isarray = require "table.isarray"
 local sql = require "sql"
 local utils = require "utils"
 local constants = require "constants"
+local file_utils = require "file_utils"
+local ipmatcher = require "resty.ipmatcher"
+local nkeys = require "table.nkeys"
 
 local md5 = ngx.md5
 local pairs = pairs
@@ -22,6 +25,7 @@ local dict_hits = ngx.shared.dict_config_rules_hits
 local is_global_option_on = config.is_global_option_on
 local is_system_option_on = config.is_system_option_on
 local get_system_config = config.get_system_config
+local read_file_to_table = file_utils.read_file_to_table
 
 local prefix = "waf_rules_hits:"
 
@@ -101,6 +105,68 @@ local get_rules_timer_handler = function(premature)
     end
 end
 
+-- 初始化 Redis 黑名单的函数
+local function init_redis_blacklist()
+    local redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
+
+    -- 加载黑名单数据
+    local ip_blacklist = config.file_ip_blacklist()
+    local redis_value, err = cjson_encode(ip_blacklist)
+
+    if not redis_value then
+        ngx.log(4, "failed to encode json for redis: ", err)
+        return
+    end
+    -- 设置key 不过期，  -1长期有效
+    local ok, err = redis_cli.set(redis_key, redis_value, -1)
+    if not ok then
+        ngx.log(4, "failed to write attack log to redis: ", err)
+    end
+end
+
+local function add_ip_group(group, ips)
+    if ips and nkeys(ips) > 0 then
+        local matcher, err = ipmatcher.new(ips)
+        if not matcher then
+            ngx.log(4, 'error to add ip group ' .. group, err)
+            return
+        end
+        config.ipgroups[group] = matcher
+        ngx.log(8, "Successfully added ip group: ", group)
+    end
+end
+
+local function load_ip_blacklist_from_redis()
+    local ip_blacklist = {}
+    local i = 1
+    local redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
+
+    local redis_value, err = redis_cli.get(redis_key)
+    if not redis_value then
+        ngx.log(4, "failed to get redis_value from redis: ", err)
+        return
+    end
+
+    local ip_list, err = cjson.decode(redis_value)
+    if not ip_list then
+        ngx.log(4, "failed to decode json from redis: ", err)
+        return
+    end
+
+    if type(ip_list) == "table" then
+        for _, ip in ipairs(ip_list) do
+            ip_blacklist[i] = ip
+            i = i + 1
+        end
+    else
+        ngx.log(4, "Invalid ip_list format: ", type(ip_list))
+    end
+
+    -- 在这里调用 add_ip_group 函数，将 IP 黑名单添加到 ipmatcher 中
+    ngx.log(8, "ip_blacklist: ", cjson_encode(ip_blacklist))
+    add_ip_group(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, ip_blacklist)
+end
+
 if is_global_option_on("waf") then
     local worker_id = ngx.worker.id()
 
@@ -117,7 +183,7 @@ if is_global_option_on("waf") then
     if is_system_option_on("mysql") then
         if worker_id == 0 then
             utils.start_timer(0, sql.check_table)
-            if get_system_config('waf').master then
+            if is_system_option_on("master") then
                 utils.start_timer_every(2, sql.write_attack_log_redis_to_mysql)
             else
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
@@ -126,5 +192,16 @@ if is_global_option_on("waf") then
             utils.start_timer_every(2, sql.update_waf_status)
             utils.start_timer_every(2, sql.update_traffic_stats)
         end
+    end
+
+    -- 将 文件中 blacklist 导入到 Redis
+    if is_system_option_on("master") then
+        ngx.timer.at(0.5, init_redis_blacklist)
+    end
+
+    -- 将 Redis blacklist 导入到 ipmatcher
+    if is_system_option_on("redis") and is_system_option_on('centralized') then
+        ngx.timer.at(1, load_ip_blacklist_from_redis)
+        utils.start_timer_every(2, load_ip_blacklist_from_redis)
     end
 end

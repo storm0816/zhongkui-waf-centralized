@@ -121,6 +121,12 @@ function _M.is_black_ip()
             end
         end
 
+        if not exists and is_system_option_on('centralized') then
+            if is_group_match(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, ip) then
+                exists = true
+            end
+        end
+
         if exists then
             local module = get_site_security_modules("blackIp")
             do_action(module.moduleName, module.rules[1])

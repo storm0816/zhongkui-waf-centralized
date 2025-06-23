@@ -381,4 +381,9 @@ function _M.reload_config_file()
     _M.reload_nginx()
 end
 
+function _M.file_ip_blacklist()
+    local ip_blacklist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList")
+    return ip_blacklist
+end
+
 return _M
