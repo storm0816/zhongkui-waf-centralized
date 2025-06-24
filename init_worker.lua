@@ -132,7 +132,7 @@ local function add_ip_group(group, ips)
             return
         end
         config.ipgroups[group] = matcher
-        ngx.log(8, "Successfully added ip group: ", group)
+        -- ngx.log(8, "Successfully added ip group: ", group)
     end
 end
 
@@ -163,7 +163,7 @@ local function load_ip_blacklist_from_redis()
     end
 
     -- 在这里调用 add_ip_group 函数，将 IP 黑名单添加到 ipmatcher 中
-    ngx.log(8, "ip_blacklist: ", cjson_encode(ip_blacklist))
+    -- ngx.log(8, "ip_blacklist: ", cjson_encode(ip_blacklist))
     add_ip_group(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, ip_blacklist)
 end
 
@@ -183,8 +183,9 @@ if is_global_option_on("waf") then
     if is_system_option_on("mysql") then
         if worker_id == 0 then
             utils.start_timer(0, sql.check_table)
-            if is_system_option_on("master") then
+            if is_system_option_on("master") and is_system_option_on("centralized") then
                 utils.start_timer_every(2, sql.write_attack_log_redis_to_mysql)
+                utils.start_timer_every(120, sql.write_waf_status_redis_to_mysql)
             else
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)

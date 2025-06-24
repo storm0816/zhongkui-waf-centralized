@@ -17,6 +17,11 @@ local quote_sql_str = ngx.quote_sql_str
 local floor = math.floor
 local format = string.format
 local get_system_config = config.get_system_config
+local is_system_option_on = config.is_system_option_on
+
+local redis_cli = require "redis_cli"
+
+local cjson = require "cjson"
 
 local _M = {}
 
@@ -312,34 +317,150 @@ end
 function _M.update_waf_status()
     local dict = ngx.shared.dict_req_count
 
-    local http4xx = utils.dict_get(dict, constants.KEY_HTTP_4XX) or 0
-    local http5xx = utils.dict_get(dict, constants.KEY_HTTP_5XX) or 0
-    local request_times = utils.dict_get(dict, constants.KEY_REQUEST_TIMES) or 0
-    local attack_times = utils.dict_get(dict, constants.KEY_ATTACK_TIMES) or 0
-    local block_times_attack = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_ATTACK) or 0
-    local block_times_captcha = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CAPTCHA) or 0
-    local block_times_cc = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CC) or 0
-    local captcha_pass_times = utils.dict_get(dict, constants.KEY_CAPTCHA_PASS_TIMES) or 0
+    -- 判断是否是集群
+    if is_system_option_on("centralized") then
+        local http4xx = utils.dict_get(dict, constants.KEY_HTTP_4XX) or 0
+        local http5xx = utils.dict_get(dict, constants.KEY_HTTP_5XX) or 0
+        local request_times = utils.dict_get(dict, constants.KEY_REQUEST_TIMES) or 0
+        local attack_times = utils.dict_get(dict, constants.KEY_ATTACK_TIMES) or 0
+        local block_times_attack = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_ATTACK) or 0
+        local block_times_captcha = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CAPTCHA) or 0
+        local block_times_cc = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CC) or 0
+        local captcha_pass_times = utils.dict_get(dict, constants.KEY_CAPTCHA_PASS_TIMES) or 0
 
-    if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0 and block_times_attack == 0 and block_times_captcha == 0 and block_times_cc == 0 and captcha_pass_times == 0 then
+        if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0 and block_times_attack == 0 and block_times_captcha == 0 and block_times_cc == 0 and captcha_pass_times == 0 then
+            return
+        end
+
+        utils.dict_set(dict, constants.KEY_HTTP_4XX, 0)
+        utils.dict_set(dict, constants.KEY_HTTP_5XX, 0)
+        utils.dict_set(dict, constants.KEY_REQUEST_TIMES, 0)
+        utils.dict_set(dict, constants.KEY_ATTACK_TIMES, 0)
+        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_ATTACK, 0)
+        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
+        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CC, 0)
+        utils.dict_set(dict, constants.KEY_CAPTCHA_PASS_TIMES, 0)
+
+        local block_times = block_times_attack + block_times_captcha + block_times_cc
+
+        -- 构建要写入 Redis 的数据
+        local waf_status = {
+            http4xx = http4xx,
+            http5xx = http5xx,
+            request_times = request_times,
+            attack_times = attack_times,
+            block_times = block_times,
+            block_times_attack = block_times_attack,
+            block_times_captcha = block_times_captcha,
+            block_times_cc = block_times_cc,
+            captcha_pass_times = captcha_pass_times,
+            date = ngx.today()
+        }
+
+        -- 将数据转换为 JSON 字符串
+        local waf_status_json = cjson.encode(waf_status)
+
+        -- 写入 Redis，假设使用一个固定的键名
+        local key = "waf_status:" .. ngx.today()
+        local ok, err = redis_cli.set(key, waf_status_json, get_system_config('redis').expire_time)
+        if not ok then
+            ngx.log(4, "Failed to write WAF status to Redis: ", err)
+        end
+    else
+        local http4xx = utils.dict_get(dict, constants.KEY_HTTP_4XX) or 0
+        local http5xx = utils.dict_get(dict, constants.KEY_HTTP_5XX) or 0
+        local request_times = utils.dict_get(dict, constants.KEY_REQUEST_TIMES) or 0
+        local attack_times = utils.dict_get(dict, constants.KEY_ATTACK_TIMES) or 0
+        local block_times_attack = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_ATTACK) or 0
+        local block_times_captcha = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CAPTCHA) or 0
+        local block_times_cc = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CC) or 0
+        local captcha_pass_times = utils.dict_get(dict, constants.KEY_CAPTCHA_PASS_TIMES) or 0
+
+        if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0 and block_times_attack == 0 and block_times_captcha == 0 and block_times_cc == 0 and captcha_pass_times == 0 then
+            return
+        end
+
+        utils.dict_set(dict, constants.KEY_HTTP_4XX, 0)
+        utils.dict_set(dict, constants.KEY_HTTP_5XX, 0)
+        utils.dict_set(dict, constants.KEY_REQUEST_TIMES, 0)
+        utils.dict_set(dict, constants.KEY_ATTACK_TIMES, 0)
+        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_ATTACK, 0)
+        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
+        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CC, 0)
+        utils.dict_set(dict, constants.KEY_CAPTCHA_PASS_TIMES, 0)
+
+        local block_times = block_times_attack + block_times_captcha + block_times_cc
+
+        local sql = format(SQL_INSERT_WAF_STATUS, http4xx, http5xx, request_times, attack_times, block_times,
+            block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times, quote_sql_str(ngx.today()))
+
+        mysql.query(sql)
+    end
+end
+
+local function yesterday()
+    local now = os.time()
+    local one_day = 24 * 60 * 60
+    local yesterday_time = now - one_day
+    return os.date("%Y-%m-%d", yesterday_time)
+end
+
+function _M.write_waf_status_redis_to_mysql()
+    local today = ngx.today()
+    local yesterday = yesterday() -- 获取昨天的日期
+
+    -- 尝试获取昨天的最后一个 key
+    local yesterday_key = "waf_status:" .. yesterday
+    local redis_value, err = redis_cli.get(yesterday_key)
+    local key_to_delete = yesterday_key -- 默认删除昨天的key
+
+    -- 如果昨天的 key 不存在，则尝试获取今天的 key
+    if not redis_value then
+        ngx.log(ngx.WARN, "failed to get yesterday's waf status from redis, try today: ", err)
+        local today_key = "waf_status:" .. today
+        redis_value, err = redis_cli.get(today_key)
+        if not redis_value then
+            ngx.log(ngx.ERR, "failed to get today's waf status from redis: ", err)
+            return
+        end
+        key_to_delete = today_key -- 如果昨天没有，删除今天的
+    end
+
+    -- 解码 JSON 数据
+    local waf_status, err = cjson.decode(redis_value)
+    if not waf_status then
+        ngx.log(ngx.ERR, "failed to decode waf status json: ", err)
         return
     end
 
-    utils.dict_set(dict, constants.KEY_HTTP_4XX, 0)
-    utils.dict_set(dict, constants.KEY_HTTP_5XX, 0)
-    utils.dict_set(dict, constants.KEY_REQUEST_TIMES, 0)
-    utils.dict_set(dict, constants.KEY_ATTACK_TIMES, 0)
-    utils.dict_set(dict, constants.KEY_BLOCK_TIMES_ATTACK, 0)
-    utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
-    utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CC, 0)
-    utils.dict_set(dict, constants.KEY_CAPTCHA_PASS_TIMES, 0)
+    -- 提取数据
+    local http4xx = waf_status.http4xx or 0
+    local http5xx = waf_status.http5xx or 0
+    local request_times = waf_status.request_times or 0
+    local attack_times = waf_status.attack_times or 0
+    local block_times = waf_status.block_times or 0
+    local block_times_attack = waf_status.block_times_attack or 0
+    local block_times_captcha = waf_status.block_times_captcha or 0
+    local block_times_cc = waf_status.block_times_cc or 0
+    local captcha_pass_times = waf_status.captcha_pass_times or 0
 
-    local block_times = block_times_attack + block_times_captcha + block_times_cc
-
+    -- 构建 SQL 语句，将数据写入今天的 MySQL 表
     local sql = format(SQL_INSERT_WAF_STATUS, http4xx, http5xx, request_times, attack_times, block_times,
-        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times, quote_sql_str(ngx.today()))
+        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times, quote_sql_str(today))
 
-    mysql.query(sql)
+    -- 执行 SQL 语句
+    local res, err = mysql.query(sql)
+    if not res then
+        ngx.log(4, "failed to write waf status to mysql: ", err)
+        return
+    end
+
+    if key_to_delete then
+        local ok, err = redis_cli.del(key_to_delete)
+        if not ok then
+            ngx.log(4, "failed to delete key ", err)
+        end
+    end
 end
 
 function _M.get_today_waf_status()
