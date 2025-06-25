@@ -12,6 +12,6 @@ if is_site_option_on("waf") and get_site_config("waf").mode == "protection" then
             ngx.header.content_length = nil
         end
     else
-        ngx.header.server = "ZhongKui WAF"
+        ngx.header.server = "DZH WAF"
     end
 end

@@ -215,6 +215,22 @@ local SQL_INSERT_IP_BLOCK_LOG = [[
     VALUES
 ]]
 
+local function yesterday()
+    local now = os.time()
+    local one_day = 24 * 60 * 60
+    local yesterday_time = now - one_day
+    return os.date("%Y-%m-%d", yesterday_time)
+end
+
+local function reset_traffic_stats(dict, prefix)
+    utils.dict_set(dict, prefix .. constants.KEY_REQUEST_TIMES, 0)
+    utils.dict_set(dict, prefix .. constants.KEY_ATTACK_TIMES, 0)
+    utils.dict_set(dict, prefix .. constants.KEY_BLOCK_TIMES_ATTACK, 0)
+    utils.dict_set(dict, prefix .. constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
+    utils.dict_set(dict, prefix .. constants.KEY_BLOCK_TIMES_CC, 0)
+    utils.dict_set(dict, prefix .. constants.KEY_CAPTCHA_PASS_TIMES, 0)
+end
+
 function _M.check_table(premature)
     if premature then
         return
@@ -235,7 +251,7 @@ function _M.check_table(premature)
         if res and res[1] and res[1].c == '0' then
             res, err = mysql.query(sql)
             if not res then
-                ngx.log(ngx.ERR, 'failed to create table ' .. name .. ' ', err)
+                ngx.log(4, 'failed to create table ' .. name .. ' ', err)
             end
         end
     end
@@ -243,6 +259,17 @@ end
 
 function _M.update_traffic_stats()
     local dict = ngx.shared.dict_req_count_citys
+
+    if not redis_cli then
+        ngx.log(4, "failed to load redis_cli module")
+        return
+    end
+
+    if not cjson then
+        ngx.log(4, "failed to load cjson module")
+        return
+    end
+
     local keys = dict:get_keys()
 
     if keys then
@@ -291,26 +318,148 @@ function _M.update_traffic_stats()
             local captcha_pass_times = utils.dict_get(dict, prefix .. constants.KEY_CAPTCHA_PASS_TIMES) or 0
 
             if request_times > 0 or attack_times > 0 or block_times_attack > 0 or block_times_captcha > 0 or block_times_cc > 0 or captcha_pass_times > 0 then
-                utils.dict_set(dict, prefix .. constants.KEY_REQUEST_TIMES, 0)
-                utils.dict_set(dict, prefix .. constants.KEY_ATTACK_TIMES, 0)
-                utils.dict_set(dict, prefix .. constants.KEY_BLOCK_TIMES_ATTACK, 0)
-                utils.dict_set(dict, prefix .. constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
-                utils.dict_set(dict, prefix .. constants.KEY_BLOCK_TIMES_CC, 0)
-                utils.dict_set(dict, prefix .. constants.KEY_CAPTCHA_PASS_TIMES, 0)
+                -- 判断是否是集群
+                if is_system_option_on("centralized") then
+                    local traffic_stats = {
+                        countryCode = t.countryCode,
+                        countryCN = t.countryCN,
+                        countryEN = t.countryEN,
+                        provinceCode = t.provinceCode,
+                        provinceCN = t.provinceCN,
+                        provinceEN = t.provinceEN,
+                        cityCode = t.cityCode,
+                        cityCN = t.cityCN,
+                        cityEN = t.cityEN,
+                        request_times = request_times,
+                        attack_times = attack_times,
+                        block_times_attack = block_times_attack,
+                        block_times_captcha = block_times_captcha,
+                        block_times_cc = block_times_cc,
+                        captcha_pass_times = captcha_pass_times,
+                        date = ngx.today()
+                    }
 
-                local block_times = block_times_attack + block_times_captcha + block_times_cc
+                    local traffic_stats_json, err = cjson.encode(traffic_stats)
+                    if not traffic_stats_json then
+                        ngx.log(4, "failed to encode traffic stats json: ", err)
+                        goto continue
+                    end
 
-                local sql = format(SQL_INSERT_TRAFFIC_STATS,
-                    quote_sql_str(t.countryCode), quote_sql_str(t.countryCN), quote_sql_str(t.countryEN),
-                    quote_sql_str(t.provinceCode), quote_sql_str(t.provinceCN), quote_sql_str(t.provinceEN),
-                    quote_sql_str(t.cityCode), quote_sql_str(t.cityCN), quote_sql_str(t.cityEN),
-                    request_times, attack_times, block_times, block_times_attack, block_times_captcha, block_times_cc,
-                    captcha_pass_times,
-                    quote_sql_str(ngx.today()))
+                    local redis_key = "waf:traffic_stats:" .. prefix .. ngx.today()
 
-                mysql.query(sql)
+                    -- 尝试从 Redis 中获取已有的数据
+                    local redis_value, err = redis_cli.get(redis_key)
+                    if redis_value then
+                        local old_traffic_stats, err = cjson.decode(redis_value)
+                        if old_traffic_stats then
+                            -- 将新的数据累加到已有的数据上
+                            traffic_stats.request_times = traffic_stats.request_times +
+                                (old_traffic_stats.request_times or 0)
+                            traffic_stats.attack_times = traffic_stats.attack_times +
+                                (old_traffic_stats.attack_times or 0)
+                            traffic_stats.block_times_attack = traffic_stats.block_times_attack +
+                                (old_traffic_stats.block_times_attack or 0)
+                            traffic_stats.block_times_captcha = traffic_stats.block_times_captcha +
+                                (old_traffic_stats.block_times_captcha or 0)
+                            traffic_stats.block_times_cc = traffic_stats.block_times_cc +
+                                (old_traffic_stats.block_times_cc or 0)
+                            traffic_stats.captcha_pass_times = traffic_stats.captcha_pass_times +
+                                (old_traffic_stats.captcha_pass_times or 0)
+                        end
+                    end
+
+                    traffic_stats_json, err = cjson.encode(traffic_stats)
+                    if not traffic_stats_json then
+                        ngx.log(4, "failed to encode traffic stats json: ", err)
+                        goto continue
+                    end
+
+                    local ok, err = redis_cli.set(redis_key, traffic_stats_json, get_system_config('redis').expire_time)
+                    if not ok then
+                        ngx.log(4, "failed to write traffic stats to redis: ", err)
+                    end
+
+                    reset_traffic_stats(dict, prefix)
+                else
+                    reset_traffic_stats(dict, prefix)
+
+                    local block_times = block_times_attack + block_times_captcha + block_times_cc
+
+                    local sql = format(SQL_INSERT_TRAFFIC_STATS,
+                        quote_sql_str(t.countryCode), quote_sql_str(t.countryCN), quote_sql_str(t.countryEN),
+                        quote_sql_str(t.provinceCode), quote_sql_str(t.provinceCN), quote_sql_str(t.provinceEN),
+                        quote_sql_str(t.cityCode), quote_sql_str(t.cityCN), quote_sql_str(t.cityEN),
+                        request_times, attack_times, block_times, block_times_attack, block_times_captcha, block_times_cc,
+                        captcha_pass_times,
+                        quote_sql_str(ngx.today()))
+
+                    mysql.query(sql)
+                end
             end
+            ::continue::
         end
+    end
+end
+
+function _M.write_traffic_stats_redis_to_mysql()
+    local redis_pattern = "waf:traffic_stats:*"
+    local traffic_stats_keys, err = redis_cli.scan(redis_pattern)
+
+    if not traffic_stats_keys then
+        ngx.log(4, "failed to get traffic stats keys from redis: ", err)
+        return
+    end
+
+    for _, redis_key in ipairs(traffic_stats_keys) do
+        local redis_value, err = redis_cli.get(redis_key)
+
+        if not redis_value then
+            ngx.log(4, "failed to get traffic stats from redis: ", err)
+            goto continue
+        end
+
+        local traffic_stats, err = cjson.decode(redis_value)
+        if not traffic_stats then
+            ngx.log(4, "failed to decode traffic stats json: ", err)
+            goto continue
+        end
+
+        local countryCode = traffic_stats.countryCode or ''
+        local countryCN = traffic_stats.countryCN or ''
+        local countryEN = traffic_stats.countryEN or ''
+        local provinceCode = traffic_stats.provinceCode or ''
+        local provinceCN = traffic_stats.provinceCN or ''
+        local provinceEN = traffic_stats.provinceEN or ''
+        local cityCode = traffic_stats.cityCode or ''
+        local cityCN = traffic_stats.cityCN or ''
+        local cityEN = traffic_stats.cityEN or ''
+        local request_times = traffic_stats.request_times or 0
+        local attack_times = traffic_stats.attack_times or 0
+        local block_times_attack = traffic_stats.block_times_attack or 0
+        local block_times_captcha = traffic_stats.block_times_captcha or 0
+        local block_times_cc = traffic_stats.block_times_cc or 0
+        local captcha_pass_times = traffic_stats.captcha_pass_times or 0
+        local block_times = block_times_attack + block_times_captcha + block_times_cc
+
+        local sql = format(SQL_INSERT_TRAFFIC_STATS,
+            quote_sql_str(countryCode), quote_sql_str(countryCN), quote_sql_str(countryEN),
+            quote_sql_str(provinceCode), quote_sql_str(provinceCN), quote_sql_str(provinceEN),
+            quote_sql_str(cityCode), quote_sql_str(cityCN), quote_sql_str(cityEN),
+            request_times, attack_times, block_times, block_times_attack, block_times_captcha, block_times_cc,
+            captcha_pass_times,
+            quote_sql_str(ngx.today()))
+
+        local res, err = mysql.query(sql)
+        if not res then
+            ngx.log(4, "failed to write traffic stats to mysql: ", err)
+            goto continue
+        end
+
+        local ok, err = redis_cli.del(redis_key)
+        if not ok then
+            ngx.log(4, "failed to delete traffic stats key from redis: ", err)
+        end
+        ::continue::
     end
 end
 
@@ -362,6 +511,28 @@ function _M.update_waf_status()
 
         -- 写入 Redis，假设使用一个固定的键名
         local key = "waf_status:" .. ngx.today()
+
+        -- 尝试从 Redis 中获取已有的数据
+        local redis_value, err = redis_cli.get(key)
+        if redis_value then
+            local old_waf_status, err = cjson.decode(redis_value)
+            if old_waf_status then
+                -- 将新的数据累加到已有的数据上
+                waf_status.http4xx = waf_status.http4xx + (old_waf_status.http4xx or 0)
+                waf_status.http5xx = waf_status.http5xx + (old_waf_status.http5xx or 0)
+                waf_status.request_times = waf_status.request_times + (old_waf_status.request_times or 0)
+                waf_status.attack_times = waf_status.attack_times + (old_waf_status.attack_times or 0)
+                waf_status.block_times = waf_status.block_times + (old_waf_status.block_times or 0)
+                waf_status.block_times_attack = waf_status.block_times_attack + (old_waf_status.block_times_attack or 0)
+                waf_status.block_times_captcha = waf_status.block_times_captcha +
+                    (old_waf_status.block_times_captcha or 0)
+                waf_status.block_times_cc = waf_status.block_times_cc + (old_waf_status.block_times_cc or 0)
+                waf_status.captcha_pass_times = waf_status.captcha_pass_times + (old_waf_status.captcha_pass_times or 0)
+            end
+        end
+
+        waf_status_json = cjson.encode(waf_status)
+
         local ok, err = redis_cli.set(key, waf_status_json, get_system_config('redis').expire_time)
         if not ok then
             ngx.log(4, "Failed to write WAF status to Redis: ", err)
@@ -398,13 +569,6 @@ function _M.update_waf_status()
     end
 end
 
-local function yesterday()
-    local now = os.time()
-    local one_day = 24 * 60 * 60
-    local yesterday_time = now - one_day
-    return os.date("%Y-%m-%d", yesterday_time)
-end
-
 function _M.write_waf_status_redis_to_mysql()
     local today = ngx.today()
     local yesterday = yesterday() -- 获取昨天的日期
@@ -416,11 +580,11 @@ function _M.write_waf_status_redis_to_mysql()
 
     -- 如果昨天的 key 不存在，则尝试获取今天的 key
     if not redis_value then
-        ngx.log(ngx.WARN, "failed to get yesterday's waf status from redis, try today: ", err)
+        ngx.log(5, "failed to get yesterday's waf status from redis, try today: ", err)
         local today_key = "waf_status:" .. today
         redis_value, err = redis_cli.get(today_key)
         if not redis_value then
-            ngx.log(ngx.ERR, "failed to get today's waf status from redis: ", err)
+            ngx.log(4, "failed to get today's waf status from redis: ", err)
             return
         end
         key_to_delete = today_key -- 如果昨天没有，删除今天的
@@ -429,7 +593,7 @@ function _M.write_waf_status_redis_to_mysql()
     -- 解码 JSON 数据
     local waf_status, err = cjson.decode(redis_value)
     if not waf_status then
-        ngx.log(ngx.ERR, "failed to decode waf status json: ", err)
+        ngx.log(4, "failed to decode waf status json: ", err)
         return
     end
 
@@ -531,7 +695,7 @@ function _M.write_attack_log_redis_to_mysql()
     local redis_cli = require "redis_cli"
 
     if not redis_cli then
-        ngx.log(ngx.ERR, "failed to load redis_cli module")
+        ngx.log(4, "failed to load redis_cli module")
         return
     end
 
@@ -541,7 +705,7 @@ function _M.write_attack_log_redis_to_mysql()
     local attack_log_keys, err = redis_cli.scan(redis_pattern)
 
     if not attack_log_keys then
-        ngx.log(ngx.ERR, "failed to get attack log keys from redis: ", err)
+        ngx.log(4, "failed to get attack log keys from redis: ", err)
         return
     end
 
@@ -549,13 +713,13 @@ function _M.write_attack_log_redis_to_mysql()
         local redis_value, err = redis_cli.get(redis_key)
 
         if not redis_value then
-            ngx.log(ngx.ERR, "failed to get attack log from redis: ", err)
+            ngx.log(4, "failed to get attack log from redis: ", err)
             goto continue
         end
 
         local log_data, err = cjson.decode(redis_value)
         if not log_data then
-            ngx.log(ngx.ERR, "failed to decode attack log json: ", err)
+            ngx.log(4, "failed to decode attack log json: ", err)
             goto continue
         end
 
@@ -603,14 +767,14 @@ function _M.write_attack_log_redis_to_mysql()
 
         local res, err = mysql.query(sql_str)
         if not res then
-            ngx.log(ngx.ERR, "failed to write attack log to mysql: ", err)
+            ngx.log(4, "failed to write attack log to mysql: ", err)
             goto continue
         end
 
         -- 删除 Redis key
         local ok, err = redis_cli.del(redis_key)
         if not ok then
-            ngx.log(ngx.ERR, "failed to delete attack log key from redis: ", err)
+            ngx.log(4, "failed to delete attack log key from redis: ", err)
         end
 
         ::continue::

@@ -48,8 +48,8 @@
       "type": "js_challenge"
     },
     "trap": {
-      "state": "off",
-      "autoIpBlock": "off",
+      "state": "on",
+      "autoIpBlock": "on",
       "ipBlockExpireInSeconds": "600",
       "uri": "/zhongkuiwaf/honey/trap",
       "action": "deny"

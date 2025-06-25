@@ -186,12 +186,14 @@ if is_global_option_on("waf") then
             if is_system_option_on("master") and is_system_option_on("centralized") then
                 utils.start_timer_every(2, sql.write_attack_log_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_status_redis_to_mysql)
+                utils.start_timer_every(120, sql.write_traffic_stats_redis_to_mysql)
+                utils.start_timer_every(30, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
             else
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
+                utils.start_timer_every(2, sql.update_waf_status)
+                utils.start_timer_every(2, sql.update_traffic_stats)
             end
-            utils.start_timer_every(2, sql.update_waf_status)
-            utils.start_timer_every(2, sql.update_traffic_stats)
         end
     end
 
