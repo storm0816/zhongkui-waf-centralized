@@ -30,8 +30,44 @@ local function getRequestTraffic()
     end
 
     dataStr = string.sub(dataStr, 1, -2) .. ']'
+    -- ngx.log(8, "getRequestTraffic dataStr: ", dataStr)
     return dataStr
 end
+
+local function getRequestTrafficMysql()
+    local res, err = sql.get_request_traffic_by_hour()
+    if not res then
+        ngx.log(4, "failed to get request traffic from mysql: ", err)
+        return '[]'
+    end
+
+    -- 初始化小时映射
+    local hours = time.get_hours()
+    local hour_map = {}
+    for _, h in ipairs(hours) do
+        hour_map[h] = { h, 0, 0, 0 }
+    end
+
+    for _, row in ipairs(res) do
+        local hour = row.hour
+        hour_map[hour] = {
+            hour,
+            tonumber(row.traffic) or 0,
+            tonumber(row.attack_traffic) or 0,
+            tonumber(row.blocked_traffic) or 0
+        }
+    end
+
+    local data = { { "hour", "traffic", "attack_traffic", "blocked_traffic" } }
+    for _, h in ipairs(hours) do
+        table.insert(data, hour_map[h])
+    end
+
+    local dataStr = cjson.encode(data)
+    -- ngx.log(8, "getRequestTrafficMysql: ", dataStr)
+    return dataStr
+end
+
 
 local function getAttackTypeTraffic()
     local dict = ngx.shared.dict_req_count
@@ -60,8 +96,26 @@ local function getAttackTypeTraffic()
     return dataStr
 end
 
+local function getAttackTypeTrafficMysql()
+    local res, err = sql.get_attack_type_traffic()
+    if not res then
+        ngx.log(ngx.ERR, "failed to get attack type traffic from mysql: ", err)
+        return '[]'
+    end
+
+    local attack_type_traffic = {}
+    for _, row in ipairs(res) do
+        table.insert(attack_type_traffic, { name = row.attack_type, value = row.attack_count })
+    end
+
+    -- 打印转换后的数据，用于调试
+    -- ngx.log(ngx.INFO, "Transformed data from MySQL: ", cjson.encode(attack_type_traffic))
+
+    return cjson.encode(attack_type_traffic) -- 暂时返回空数组，避免影响其他功能
+end
+
 function _M.do_request()
-    local response = {code = 200, data = {}, msg = ""}
+    local response = { code = 200, data = {}, msg = "" }
     local uri = ngx.var.uri
 
     if user.check_auth_token() == false then
@@ -74,9 +128,15 @@ function _M.do_request()
     end
 
     if uri == "/dashboard" then
-        local trafficDataStr = getRequestTraffic()
-        local attackTypeDataStr = getAttackTypeTraffic()
-
+        local trafficDataStr
+        local attackTypeDataStr
+        if is_system_option_on("centralized") then
+            attackTypeDataStr = getAttackTypeTrafficMysql()
+            trafficDataStr = getRequestTrafficMysql()
+        else
+            attackTypeDataStr = getAttackTypeTraffic()
+            trafficDataStr = getRequestTraffic()
+        end
         local data = {}
         data.trafficData = trafficDataStr
         data.attackTypeData = attackTypeDataStr
@@ -120,12 +180,20 @@ function _M.do_request()
 
             local block_times = block_times_attack + block_times_captcha + block_times_cc
 
-            wafStatus = {http4xx = http4xx, http5xx = http5xx, request_times = request_times,
-                        attack_times = attack_times, block_times = block_times, block_times_attack = block_times_attack,
-                        block_times_captcha = block_times_captcha, block_times_cc = block_times_cc, captcha_pass_times = captcha_pass_times}
+            wafStatus = {
+                http4xx = http4xx,
+                http5xx = http5xx,
+                request_times = request_times,
+                attack_times = attack_times,
+                block_times = block_times,
+                block_times_attack = block_times_attack,
+                block_times_captcha = block_times_captcha,
+                block_times_cc = block_times_cc,
+                captcha_pass_times = captcha_pass_times
+            }
         end
 
-        data.sourceRegion = {world = world, china = china}
+        data.sourceRegion = { world = world, china = china }
         data.wafStatus = wafStatus
         response.data = data
     end

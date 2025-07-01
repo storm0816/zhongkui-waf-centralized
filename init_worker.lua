@@ -184,20 +184,24 @@ if is_global_option_on("waf") then
         if worker_id == 0 then
             utils.start_timer(0, sql.check_table)
             if is_system_option_on("master") and is_system_option_on("centralized") then
-                utils.start_timer_every(2, sql.write_attack_log_redis_to_mysql)
+                -- 如果是主从模式，则定时将 Redis 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
+                utils.start_timer_every(120, sql.write_attack_log_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_status_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_traffic_stats_redis_to_mysql)
-                utils.start_timer_every(30, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
+                utils.start_timer_every(120, sql.write_ip_block_log_redis_to_mysql)
+                utils.start_timer_every(120, sql.write_attack_type_traffic_redis_to_mysql)
+                utils.start_timer_every(120, sql.write_waf_traffic_stats_redis_to_mysql)
             else
+                -- 如果是单机模式，则定时将 内存中的 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
-                utils.start_timer_every(2, sql.update_waf_status)
-                utils.start_timer_every(2, sql.update_traffic_stats)
             end
+            utils.start_timer_every(2, sql.update_waf_status)
+            utils.start_timer_every(2, sql.update_traffic_stats)
         end
     end
 
-    -- 将 文件中 blacklist 导入到 Redis
+    -- 异步加载 落地文件ipblacklist 导入到 Redis，启动时的初始化
     if is_system_option_on("master") then
         ngx.timer.at(0.5, init_redis_blacklist)
     end
@@ -205,6 +209,12 @@ if is_global_option_on("waf") then
     -- 将 Redis blacklist 导入到 ipmatcher
     if is_system_option_on("redis") and is_system_option_on('centralized') then
         ngx.timer.at(1, load_ip_blacklist_from_redis)
-        utils.start_timer_every(2, load_ip_blacklist_from_redis)
+        -- 定时将文件加载到redis中
+        utils.start_timer_every(10, load_ip_blacklist_from_redis)
+        -- 定时将攻击拦击名单加载到redis中
+        utils.start_timer_every(10, sql.write_sql_queue_to_redis)
+        -- 定时将攻击类型流量统计写入 Redis中
+        utils.start_timer_every(10, sql.write_attack_type_traffic_to_redis)
+        utils.start_timer_every(10, sql.write_waf_traffic_stats_to_redis)
     end
 end

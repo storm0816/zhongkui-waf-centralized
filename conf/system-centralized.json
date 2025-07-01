@@ -1,0 +1,47 @@
+{
+    "attackLog": {
+        "state": "on",
+        "logPath": "/opt/openresty/nginx/logs/hack/",
+        "jsonFormat": "off"
+    },
+    "geoip": {
+        "file": "/opt/openresty/share/GeoIP/GeoLite2-City.mmdb",
+        "language": "zh-CN"
+    },
+    "html": "",
+    "secret": "2215D605B798A5CCEB6D5C900EE3585B",
+    "mysql": {
+        "state": "on",
+        "host": "10.15.108.11",
+        "port": "33071",
+        "user": "zhongkui",
+        "password": "MJI(0okn",
+        "database": "zhongkui_waf",
+        "poolSize": "10",
+        "timeout": 5000
+    },
+    "redis": {
+        "state": "on",
+        "host": "10.15.108.11",
+        "password": "dzhinternet^!",
+        "timeouts": "1000,1000,1000",
+        "poolSize": 10,
+        "ssl": "off",
+        "port": 13972,
+        "expire_time": 1800
+    },
+    "rulesSort": {
+        "state": "off",
+        "period": 10
+    },
+    "master": {
+        "state": "off"
+    },
+    "centralized": {
+        "state": "on"
+    },
+    "ipBlacklist": {
+        "expire_time": 1800
+    }
+    
+}
