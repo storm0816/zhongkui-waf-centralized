@@ -42,6 +42,9 @@
     },
     "ipBlacklist": {
         "expire_time": 1800
+    },
+    "system": {
+        "version": "1.0.0",
+        "expire": 120
     }
-    
 }

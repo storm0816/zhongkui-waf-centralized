@@ -133,5 +133,12 @@
 				"href": "view/system/password.html"
 			}
 		]
+	},
+	{
+		"id": 8,
+		"title": "在线节点",
+		"icon": "layui-icon layui-icon-radio",
+		"type": 1,
+		"href": "view/cluster-nodes.html"
 	}
 ]

@@ -202,6 +202,34 @@ function _M.bath_del(key_table, key_prefix)
     return results, err
 end
 
+function _M.hmset(key, tbl, expire_time)
+    local red, _ = _M.get_connection()
+    local ok, err = nil, nil
+    if red then
+        ok, err = red:hmset(key, tbl)
+        if not ok then
+            ngx.log(ngx.ERR, "failed to hmset key: ", key, err)
+        elseif expire_time and expire_time > 0 then
+            red:expire(key, expire_time)
+        end
+        _M.close_connection(red)
+    end
+    return ok, err
+end
+
+function _M.hgetall(key)
+    local red, _ = _M.get_connection()
+    local res, err = nil, nil
+    if red then
+        res, err = red:hgetall(key)
+        if not res then
+            ngx.log(ngx.ERR, "failed to hgetall key: ", key, err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
 --[[
 function _M.bf_add(value)
     local red, err = _M.get_connection()

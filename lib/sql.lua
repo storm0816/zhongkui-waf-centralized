@@ -269,6 +269,29 @@ local SQL_GET_REQUEST_TRAFFIC_BY_HOUR = [[
     ORDER BY hour ASC
 ]]
 
+local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
+    CREATE TABLE waf_cluster_node (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ip VARCHAR(64) NOT NULL COMMENT '节点IP',
+        version VARCHAR(32) COMMENT '节点版本',
+        hostname VARCHAR(128) COMMENT '节点主机名',
+        last_seen DATETIME COMMENT '最近活跃时间',
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+        UNIQUE KEY uniq_ip (ip)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+]]
+
+
+local SQL_INSERT_CLUSTER_NODE = [[
+    INSERT INTO waf_cluster_node (ip, version, hostname, last_seen)
+    VALUES (%s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+        version = VALUES(version),
+        hostname = VALUES(hostname),
+        last_seen = VALUES(last_seen)
+]]
+
+
 
 local function yesterday()
     local now = os.time()
@@ -298,6 +321,7 @@ function _M.check_table(premature)
         { name = 'ip_block_log',        sql = SQL_CREATE_TABLE_IP_BLOCK_LOG },
         { name = 'attack_type_traffic', sql = SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC },
         { name = 'waf_traffic_stats',   sql = SQL_CREATE_TABLE_WAF_TRAFFIC_STATS },
+        { name = 'waf_cluster_node',    sql = SQL_CREATE_TABLE_WAF_CLUSTER_NODE },
     }
 
     for _, t in pairs(tables) do
@@ -1180,6 +1204,81 @@ function _M.write_attack_log_redis_to_mysql()
         end
 
         ::continue::
+    end
+end
+
+local function get_local_ip()
+    local f = io.popen("hostname -I")
+    if not f then return "unknown" end
+    local line = f:read("*l")
+    f:close()
+    if not line then return "unknown" end
+    local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
+    return ip or "unknown"
+end
+
+local function get_hostname()
+    local f = io.popen("hostname")
+    if not f then return "unknown" end
+    local h = f:read("*l")
+    f:close()
+    return h or "unknown"
+end
+
+function _M.report_node_info()
+    local node_id = get_local_ip()
+    local key = "waf:cluster:nodes:" .. node_id
+    local cfg = get_system_config("system")
+    local expire = cfg.expire or 120
+
+    local info = {
+        ip = node_id,
+        version = cfg.version or "unknown",
+        hostname = get_hostname(),
+        timestamp = tostring(os.time())
+    }
+    -- ngx.log(8, "node_id hmset node info: ", cjson.encode(info))
+
+    local ok, err = redis_cli.hmset(key, info, expire)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to hmset node info: ", err)
+        return
+    end
+end
+
+function _M.get_all_online_nodes()
+    local keys = redis_cli.scan("waf:cluster:nodes:*")
+    local node_list = {}
+
+    for _, key in ipairs(keys or {}) do
+        local data = redis_cli.hgetall(key)
+        if data and type(data) == "table" then
+            local node = {}
+            for i = 1, #data, 2 do
+                node[data[i]] = data[i + 1]
+            end
+            node.last_seen = os.date("%Y-%m-%d %H:%M:%S", tonumber(node.timestamp) or 0)
+            table.insert(node_list, node)
+        end
+    end
+
+    return node_list
+end
+
+function _M.write_cluster_nodes_to_mysql()
+    local nodes = _M.get_all_online_nodes()
+
+    for _, node in ipairs(nodes) do
+        local sql = format(SQL_INSERT_CLUSTER_NODE,
+            quote_sql_str(node.ip),
+            quote_sql_str(node.version),
+            quote_sql_str(node.hostname),
+            quote_sql_str(node.last_seen)
+        )
+        local res, err = mysql.query(sql)
+        if not res then
+            ngx.log(ngx.ERR, "failed to insert node info: ", err)
+        end
     end
 end
 

@@ -191,6 +191,7 @@ if is_global_option_on("waf") then
                 utils.start_timer_every(120, sql.write_ip_block_log_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_attack_type_traffic_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_traffic_stats_redis_to_mysql)
+                utils.start_timer_every(120, sql.write_cluster_nodes_to_mysql)
             else
                 -- 如果是单机模式，则定时将 内存中的 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
@@ -216,5 +217,7 @@ if is_global_option_on("waf") then
         -- 定时将攻击类型流量统计写入 Redis中
         utils.start_timer_every(10, sql.write_attack_type_traffic_to_redis)
         utils.start_timer_every(10, sql.write_waf_traffic_stats_to_redis)
+        -- 定时将节点信息写入 Redis 中
+        utils.start_timer_every(30, sql.report_node_info)
     end
 end
