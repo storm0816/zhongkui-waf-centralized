@@ -1118,13 +1118,6 @@ function _M.write_sql_to_queue(key, sql)
 end
 
 function _M.write_attack_log_redis_to_mysql()
-    local redis_cli = require "redis_cli"
-
-    if not redis_cli then
-        ngx.log(4, "failed to load redis_cli module")
-        return
-    end
-
     local redis_pattern = "waf:attack_log:*"
 
     -- 使用 scan 命令代替 keys 命令
@@ -1144,6 +1137,7 @@ function _M.write_attack_log_redis_to_mysql()
         end
 
         local log_data, err = cjson.decode(redis_value)
+
         if not log_data then
             ngx.log(4, "failed to decode attack log json: ", err)
             goto continue
@@ -1168,7 +1162,7 @@ function _M.write_attack_log_redis_to_mysql()
         local referer = log_data.referer or ""
         local request_protocol = log_data.request_protocol or ""
         local request_uri = log_data.request_uri or ""
-        local request_body = log_data.request_data or "" -- 修改：使用 log_data.request_data
+        local request_body = log_data.request_body or "" -- 修改：使用 log_data.request_body
         local http_status = log_data.http_status or ""
         local response_body = log_data.response_body or ""
         local request_time = log_data.attack_time or nil -- 修改：使用 log_data.attack_time

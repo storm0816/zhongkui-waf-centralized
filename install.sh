@@ -21,6 +21,8 @@ tar zxf openresty-1.25.3.2.tar.gz
 cd openresty-1.25.3.2
 
 ./configure --prefix=$OPENRESTY_PATH \
+--user=webuser \
+--group=users \
 --with-http_ssl_module \
 --with-http_v2_module \
 --with-http_realip_module \
@@ -37,38 +39,21 @@ cd openresty-1.25.3.2
 --without-mail_smtp_module
 
 ./configure --prefix=/opt/openresty \
-            --user=webuser \
-            --group=users \
-            --with-luajit \
-            --with-threads \
-            --with-file-aio \
-            --with-http_ssl_module \
-            --with-http_v2_module \
-            --with-http_realip_module \
-            --with-http_addition_module \
-            --with-http_xslt_module=dynamic \
-            --with-http_image_filter_module=dynamic \
-            --with-http_geoip_module=dynamic \
-            --with-http_sub_module \
-            --with-http_dav_module \
-            --with-http_flv_module \
-            --with-http_mp4_module \
-            --with-poll_module \
-            --with-http_gunzip_module \
-            --with-http_gzip_static_module \
-            --with-http_auth_request_module \
-            --with-http_random_index_module \
-            --with-http_secure_link_module \
-            --with-http_degradation_module \
-            --with-http_slice_module \
-            --with-http_stub_status_module \
-            --with-stream=dynamic \
-            --with-stream_ssl_module \
-            --with-stream_realip_module \
-            --with-stream_geoip_module=dynamic \
-            --with-stream_ssl_preread_module \
-            --with-compat \
-            --with-pcre-jit \
+--user=webuser \
+--group=users \
+--with-http_ssl_module \
+--with-http_v2_module \
+--with-http_realip_module \
+--with-http_sub_module \
+--with-http_stub_status_module \
+--with-http_auth_request_module \
+--with-http_secure_link_module \
+--with-stream \
+--with-stream_ssl_module \
+--with-stream_realip_module \
+--without-mail_pop3_module \
+--without-mail_imap_module \
+--without-mail_smtp_module
 
 
 make && make install
@@ -133,6 +118,12 @@ echo -e "\033[34m[luafilesystem安装成功]\033[0m"
 
 
 # =================maxminddb数据库文件自动更新start=================
+
+mkdir -p /opt/openresty/share/GeoIP
+
+
+
+
 cd /usr/local/src
 if [ ! -x "geoipupdate_6.0.0_linux_386.tar.gz" ]; then
     wget https://github.com/maxmind/geoipupdate/releases/download/v6.0.0/geoipupdate_6.0.0_linux_386.tar.gz
