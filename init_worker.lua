@@ -126,7 +126,17 @@ end
 
 local function add_ip_group(group, ips)
     if ips and nkeys(ips) > 0 then
-        local matcher, err = ipmatcher.new(ips)
+        -- 添加调试日志
+        -- ngx.log(8, "Attempting to add IP group: ", group, " with IPs: ", cjson.encode(ips))
+        -- 过滤无效或空的 IP 地址
+        local valid_ips = {}
+        for _, ip in ipairs(ips) do
+            if type(ip) == "string" and #ip > 0 then
+                table.insert(valid_ips, ip)
+            end
+        end
+
+        local matcher, err = ipmatcher.new(valid_ips)
         if not matcher then
             ngx.log(4, 'error to add ip group ' .. group, err)
             return

@@ -226,6 +226,8 @@ function _M.hgetall(key)
             ngx.log(ngx.ERR, "failed to hgetall key: ", key, err)
         end
         _M.close_connection(red)
+    else
+        ngx.log(ngx.ERR, "failed to get redis connection for key: ", key)
     end
     return res, err
 end
@@ -295,6 +297,32 @@ function _M.scan(pattern, count)
 
     _M.close_connection(red)
     return keys, nil
+end
+
+function _M.hincrby(key, field, value)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:hincrby(key, field, value)
+        if not res then
+            ngx.log(ngx.ERR, "failed to hincrby: key=", key, " field=", field, " err=", err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+function _M.expire(key, seconds)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:expire(key, seconds)
+        if not res then
+            ngx.log(ngx.ERR, "failed to expire key: ", key, err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
 end
 
 return _M

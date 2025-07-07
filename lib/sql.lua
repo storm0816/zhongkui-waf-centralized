@@ -55,15 +55,24 @@ local SQL_CREATE_TABLE_WAF_STATUS = [[
 ]]
 
 local SQL_INSERT_WAF_STATUS = [[
-    INSERT INTO waf_status (http4xx, http5xx, request_times, attack_times, block_times, block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times, request_date)
-    VALUES(%u, %u, %u, %u, %u, %u, %u, %u, %u, %s) ON DUPLICATE KEY UPDATE http4xx = http4xx + VALUES(http4xx),
-    http5xx = http5xx + VALUES(http5xx),request_times = request_times + VALUES(request_times),
-    attack_times = attack_times + VALUES(attack_times),block_times = block_times + VALUES(block_times),
-    block_times_attack = block_times_attack + VALUES(block_times_attack),
-    block_times_captcha = block_times_captcha + VALUES(block_times_captcha),
-    block_times_cc = block_times_cc + VALUES(block_times_cc),
-    captcha_pass_times = captcha_pass_times + VALUES(captcha_pass_times),
-    update_time = NOW();
+    INSERT INTO waf_status (
+        request_date, http4xx, http5xx, request_times, attack_times, block_times,
+        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times,
+        update_time
+    ) VALUES (
+        %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+        http4xx = VALUES(http4xx),
+        http5xx = VALUES(http5xx),
+        request_times = VALUES(request_times),
+        attack_times = VALUES(attack_times),
+        block_times = VALUES(block_times),
+        block_times_attack = VALUES(block_times_attack),
+        block_times_captcha = VALUES(block_times_captcha),
+        block_times_cc = VALUES(block_times_cc),
+        captcha_pass_times = VALUES(captcha_pass_times),
+        update_time = NOW();
 ]]
 
 local SQL_GET_TODAY_WAF_STATUS =
@@ -147,7 +156,7 @@ local SQL_CREATE_TABLE_ATTACK_LOG = [[
 
         `http_method` VARCHAR(20) NULL COMMENT '请求http方法',
         `server_name` VARCHAR(100) NULL COMMENT '请求域名',
-        `user_agent` VARCHAR(255) NULL COMMENT '请求客户端ua',
+        `user_agent` VARCHAR(2048) NULL COMMENT '请求客户端ua',
         `referer` VARCHAR(2048) NULL COMMENT 'referer',
 
         `request_protocol` VARCHAR(50) NULL COMMENT '请求协议',
@@ -251,11 +260,11 @@ local SQL_CREATE_TABLE_WAF_TRAFFIC_STATS = [[
 local SQL_INSERT_WAF_TRAFFIC_STATS = [[
     INSERT INTO waf_traffic_stats (
         access_time, total_requests, blocked_requests, attack_requests
-        ) VALUES (%s, %d, %d, %d)
+    ) VALUES (%s, %d, %d, %d)
         ON DUPLICATE KEY UPDATE
-        total_requests = total_requests + VALUES(total_requests),
-        blocked_requests = blocked_requests + VALUES(blocked_requests),
-        attack_requests = attack_requests + VALUES(attack_requests)
+        total_requests = VALUES(total_requests),
+        blocked_requests = VALUES(blocked_requests),
+        attack_requests = VALUES(attack_requests)
 ]]
 
 local SQL_GET_REQUEST_TRAFFIC_BY_HOUR = [[
@@ -547,165 +556,119 @@ end
 function _M.update_waf_status()
     local dict = ngx.shared.dict_req_count
 
-    -- 判断是否是集群
+    local function pop(key)
+        local val = dict:incr(key, 0) or 0
+        dict:incr(key, -val)
+        return val
+    end
+
+    -- 获取各类统计值，并原子清零
+    local http4xx = pop(constants.KEY_HTTP_4XX)
+    local http5xx = pop(constants.KEY_HTTP_5XX)
+    local request_times = pop(constants.KEY_REQUEST_TIMES)
+    local attack_times = pop(constants.KEY_ATTACK_TIMES)
+    local block_times_attack = pop(constants.KEY_BLOCK_TIMES_ATTACK)
+    local block_times_captcha = pop(constants.KEY_BLOCK_TIMES_CAPTCHA)
+    local block_times_cc = pop(constants.KEY_BLOCK_TIMES_CC)
+    local captcha_pass_times = pop(constants.KEY_CAPTCHA_PASS_TIMES)
+
+    -- 所有指标都为 0 时直接跳过
+    if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0
+        and block_times_attack == 0 and block_times_captcha == 0 and block_times_cc == 0 and captcha_pass_times == 0 then
+        return
+    end
+
+    local block_times = block_times_attack + block_times_captcha + block_times_cc
+
     if is_system_option_on("centralized") then
-        local http4xx = utils.dict_get(dict, constants.KEY_HTTP_4XX) or 0
-        local http5xx = utils.dict_get(dict, constants.KEY_HTTP_5XX) or 0
-        local request_times = utils.dict_get(dict, constants.KEY_REQUEST_TIMES) or 0
-        local attack_times = utils.dict_get(dict, constants.KEY_ATTACK_TIMES) or 0
-        local block_times_attack = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_ATTACK) or 0
-        local block_times_captcha = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CAPTCHA) or 0
-        local block_times_cc = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CC) or 0
-        local captcha_pass_times = utils.dict_get(dict, constants.KEY_CAPTCHA_PASS_TIMES) or 0
-
-        if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0 and block_times_attack == 0 and block_times_captcha == 0 and block_times_cc == 0 and captcha_pass_times == 0 then
-            return
-        end
-
-        utils.dict_set(dict, constants.KEY_HTTP_4XX, 0)
-        utils.dict_set(dict, constants.KEY_HTTP_5XX, 0)
-        utils.dict_set(dict, constants.KEY_REQUEST_TIMES, 0)
-        utils.dict_set(dict, constants.KEY_ATTACK_TIMES, 0)
-        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_ATTACK, 0)
-        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
-        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CC, 0)
-        utils.dict_set(dict, constants.KEY_CAPTCHA_PASS_TIMES, 0)
-
-        local block_times = block_times_attack + block_times_captcha + block_times_cc
-
-        -- 构建要写入 Redis 的数据
-        local waf_status = {
-            http4xx = http4xx,
-            http5xx = http5xx,
-            request_times = request_times,
-            attack_times = attack_times,
-            block_times = block_times,
-            block_times_attack = block_times_attack,
-            block_times_captcha = block_times_captcha,
-            block_times_cc = block_times_cc,
-            captcha_pass_times = captcha_pass_times,
-            date = ngx.today()
-        }
-
-        -- 将数据转换为 JSON 字符串
-        local waf_status_json = cjson.encode(waf_status)
-
-        -- 写入 Redis，假设使用一个固定的键名
-        local key = "waf_status:" .. ngx.today()
-
-        -- 尝试从 Redis 中获取已有的数据
-        local redis_value, err = redis_cli.get(key)
-        if redis_value then
-            local old_waf_status, err = cjson.decode(redis_value)
-            if old_waf_status then
-                -- 将新的数据累加到已有的数据上
-                waf_status.http4xx = waf_status.http4xx + (old_waf_status.http4xx or 0)
-                waf_status.http5xx = waf_status.http5xx + (old_waf_status.http5xx or 0)
-                waf_status.request_times = waf_status.request_times + (old_waf_status.request_times or 0)
-                waf_status.attack_times = waf_status.attack_times + (old_waf_status.attack_times or 0)
-                waf_status.block_times = waf_status.block_times + (old_waf_status.block_times or 0)
-                waf_status.block_times_attack = waf_status.block_times_attack + (old_waf_status.block_times_attack or 0)
-                waf_status.block_times_captcha = waf_status.block_times_captcha +
-                    (old_waf_status.block_times_captcha or 0)
-                waf_status.block_times_cc = waf_status.block_times_cc + (old_waf_status.block_times_cc or 0)
-                waf_status.captcha_pass_times = waf_status.captcha_pass_times + (old_waf_status.captcha_pass_times or 0)
+        -- ✅ 集群模式：Redis Hash 累加
+        local function hincr(key, field, val)
+            if val and val > 0 then
+                local ok, err = redis_cli.hincrby(key, field, val)
+                if not ok then
+                    ngx.log(ngx.ERR, "hincrby failed: ", field, " err: ", err)
+                end
             end
         end
 
-        waf_status_json = cjson.encode(waf_status)
+        local redis_key = "waf:waf_status_hmap:" .. ngx.today()
+        hincr(redis_key, "http4xx", http4xx)
+        hincr(redis_key, "http5xx", http5xx)
+        hincr(redis_key, "request_times", request_times)
+        hincr(redis_key, "attack_times", attack_times)
+        hincr(redis_key, "block_times", block_times)
+        hincr(redis_key, "block_times_attack", block_times_attack)
+        hincr(redis_key, "block_times_captcha", block_times_captcha)
+        hincr(redis_key, "block_times_cc", block_times_cc)
+        hincr(redis_key, "captcha_pass_times", captcha_pass_times)
 
-        local ok, err = redis_cli.set(key, waf_status_json, get_system_config('redis').expire_time)
-        if not ok then
-            ngx.log(4, "Failed to write WAF status to Redis: ", err)
-        end
+        redis_cli.expire(redis_key, get_system_config("redis").expire_time)
     else
-        local http4xx = utils.dict_get(dict, constants.KEY_HTTP_4XX) or 0
-        local http5xx = utils.dict_get(dict, constants.KEY_HTTP_5XX) or 0
-        local request_times = utils.dict_get(dict, constants.KEY_REQUEST_TIMES) or 0
-        local attack_times = utils.dict_get(dict, constants.KEY_ATTACK_TIMES) or 0
-        local block_times_attack = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_ATTACK) or 0
-        local block_times_captcha = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CAPTCHA) or 0
-        local block_times_cc = utils.dict_get(dict, constants.KEY_BLOCK_TIMES_CC) or 0
-        local captcha_pass_times = utils.dict_get(dict, constants.KEY_CAPTCHA_PASS_TIMES) or 0
+        -- ✅ 单节点模式：直接写入 MySQL
+        local sql = string.format(SQL_INSERT_WAF_STATUS,
+            http4xx, http5xx, request_times, attack_times, block_times,
+            block_times_attack, block_times_captcha, block_times_cc,
+            captcha_pass_times, quote_sql_str(ngx.today())
+        )
 
-        if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0 and block_times_attack == 0 and block_times_captcha == 0 and block_times_cc == 0 and captcha_pass_times == 0 then
-            return
+        local res, err = mysql.query(sql)
+        if not res then
+            ngx.log(ngx.ERR, "failed to insert waf_status: ", err)
         end
-
-        utils.dict_set(dict, constants.KEY_HTTP_4XX, 0)
-        utils.dict_set(dict, constants.KEY_HTTP_5XX, 0)
-        utils.dict_set(dict, constants.KEY_REQUEST_TIMES, 0)
-        utils.dict_set(dict, constants.KEY_ATTACK_TIMES, 0)
-        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_ATTACK, 0)
-        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CAPTCHA, 0)
-        utils.dict_set(dict, constants.KEY_BLOCK_TIMES_CC, 0)
-        utils.dict_set(dict, constants.KEY_CAPTCHA_PASS_TIMES, 0)
-
-        local block_times = block_times_attack + block_times_captcha + block_times_cc
-
-        local sql = format(SQL_INSERT_WAF_STATUS, http4xx, http5xx, request_times, attack_times, block_times,
-            block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times, quote_sql_str(ngx.today()))
-
-        mysql.query(sql)
     end
 end
 
 function _M.write_waf_status_redis_to_mysql()
     local today = ngx.today()
-    local yesterday = yesterday() -- 获取昨天的日期
+    local redis_key = "waf:waf_status_hmap:" .. today
 
-    -- 尝试获取昨天的最后一个 key
-    local yesterday_key = "waf_status:" .. yesterday
-    local redis_value, err = redis_cli.get(yesterday_key)
-    local key_to_delete = yesterday_key -- 默认删除昨天的key
-
-    -- 如果昨天的 key 不存在，则尝试获取今天的 key
-    if not redis_value then
-        ngx.log(5, "failed to get yesterday's waf status from redis, try today: ", err)
-        local today_key = "waf_status:" .. today
-        redis_value, err = redis_cli.get(today_key)
-        if not redis_value then
-            ngx.log(4, "failed to get today's waf status from redis: ", err)
-            return
-        end
-        key_to_delete = today_key -- 如果昨天没有，删除今天的
-    end
-
-    -- 解码 JSON 数据
-    local waf_status, err = cjson.decode(redis_value)
-    if not waf_status then
-        ngx.log(4, "failed to decode waf status json: ", err)
+    local hash_data, err = redis_cli.hgetall(redis_key)
+    if not hash_data then
+        ngx.log(ngx.ERR, "failed to hgetall from redis key: ", redis_key, " err: ", err)
         return
     end
 
-    -- 提取数据
-    local http4xx = waf_status.http4xx or 0
-    local http5xx = waf_status.http5xx or 0
-    local request_times = waf_status.request_times or 0
-    local attack_times = waf_status.attack_times or 0
-    local block_times = waf_status.block_times or 0
-    local block_times_attack = waf_status.block_times_attack or 0
-    local block_times_captcha = waf_status.block_times_captcha or 0
-    local block_times_cc = waf_status.block_times_cc or 0
-    local captcha_pass_times = waf_status.captcha_pass_times or 0
+    -- Redis 返回扁平数组：{ "field1", "val1", "field2", "val2", ... }
+    local data = {}
+    for i = 1, #hash_data, 2 do
+        local k = tostring(hash_data[i])
+        local v = tonumber(hash_data[i + 1]) or 0
+        data[k] = v
+    end
 
-    -- 构建 SQL 语句，将数据写入今天的 MySQL 表
-    local sql = format(SQL_INSERT_WAF_STATUS, http4xx, http5xx, request_times, attack_times, block_times,
-        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times, quote_sql_str(today))
+    -- 字段赋值，默认0
+    local http4xx = data.http4xx or 0
+    local http5xx = data.http5xx or 0
+    local request_times = data.request_times or 0
+    local attack_times = data.attack_times or 0
+    local block_times = data.block_times or 0
+    local block_times_attack = data.block_times_attack or 0
+    local block_times_captcha = data.block_times_captcha or 0
+    local block_times_cc = data.block_times_cc or 0
+    local captcha_pass_times = data.captcha_pass_times or 0
 
-    -- 执行 SQL 语句
+    -- 全部为0，跳过写入
+    if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0
+        and block_times == 0 and block_times_attack == 0 and block_times_captcha == 0
+        and block_times_cc == 0 and captcha_pass_times == 0 then
+        ngx.log(ngx.INFO, "all WAF status fields are 0, skip insert.")
+        return
+    end
+
+    -- 使用 ON DUPLICATE KEY UPDATE 实现累积写入（需确保表中 date 列为唯一键）
+    local sql = string.format(SQL_INSERT_WAF_STATUS,
+        quote_sql_str(today),
+        http4xx, http5xx, request_times, attack_times, block_times,
+        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times)
+
     local res, err = mysql.query(sql)
     if not res then
-        ngx.log(4, "failed to write waf status to mysql: ", err)
+        ngx.log(ngx.ERR, "failed to write waf_status from redis to mysql: ", err)
         return
     end
 
-    if key_to_delete then
-        local ok, err = redis_cli.del(key_to_delete)
-        if not ok then
-            ngx.log(4, "failed to delete key ", err)
-        end
-    end
+    -- 不删除 Redis key，保留数据，避免集群模式数据丢失
+    ngx.log(ngx.INFO, "write_waf_status_redis_to_mysql succeeded for date: ", today)
 end
 
 function _M.get_today_waf_status()
@@ -1100,11 +1063,11 @@ function _M.write_waf_traffic_stats_redis_to_mysql()
         end
     end
 
-    -- 删除 Redis 中的数据，避免重复
-    local ok, err = redis_cli.del(redis_key)
-    if not ok then
-        ngx.log(4, "failed to delete waf_traffic_stats redis key: ", err)
-    end
+    -- -- 删除 Redis 中的数据，避免重复
+    -- local ok, err = redis_cli.del(redis_key)
+    -- if not ok then
+    --     ngx.log(4, "failed to delete waf_traffic_stats redis key: ", err)
+    -- end
 end
 
 -- 获取每小时请求流量
