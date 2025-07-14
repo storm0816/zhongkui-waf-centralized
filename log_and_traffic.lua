@@ -9,6 +9,7 @@ local logger_factory = require "logger_factory"
 local sql = require "sql"
 local utils = require "utils"
 local constants = require "constants"
+local redis_cli = require "redis_cli"
 
 local pairs = pairs
 local upper = string.upper
@@ -29,19 +30,20 @@ local LOG_PATH = config.LOG_PATH
 local language = get_system_config('geoip').language ~= '' and get_system_config('geoip').language or 'en'
 
 local function write_attack_log_to_redis(log_data)
-    local redis_cli = require "redis_cli"
-    local ip = log_data.ip
-    local redis_key = "waf:attack_log:" .. ip .. log_data.request_id
-    local redis_value, err = cjson_encode(log_data)
+    local key = "waf:attack_log:list"
+    local expire = 86400 -- 1天
 
-    if not redis_value then
-        ngx.log(ngx.ERR, "failed to encode json for redis: ", err)
+    local json_str, err = cjson.encode(log_data)
+    if not json_str then
+        ngx.log(ngx.ERR, "Failed to encode log_data: ", err)
         return
     end
 
-    local ok, err = redis_cli.set(redis_key, redis_value, get_system_config('redis').expire_time)
+    -- 将 json 字符串推入 Redis List
+    local ok, err = redis_cli.rpush(key, json_str, expire)
     if not ok then
-        ngx.log(ngx.ERR, "failed to write attack log to redis: ", err)
+        ngx.log(ngx.ERR, "Failed to rpush to redis list: ", err)
+        return
     end
 end
 

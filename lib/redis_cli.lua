@@ -325,4 +325,61 @@ function _M.expire(key, seconds)
     return res, err
 end
 
+-- 推入 Redis List 队列
+function _M.rpush(key, value, expire_time)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:rpush(key, value)
+        if not res then
+            ngx.log(ngx.ERR, "failed to rpush to list: ", key, err)
+        elseif expire_time and expire_time > 0 then
+            red:expire(key, expire_time)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+-- 从 Redis List 中批量读取
+function _M.lrange(key, start, stop)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:lrange(key, start, stop)
+        if not res then
+            ngx.log(ngx.ERR, "failed to lrange list: ", key, err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+-- 裁剪 Redis List，只保留指定区间
+function _M.ltrim(key, start, stop)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:ltrim(key, start, stop)
+        if not res then
+            ngx.log(ngx.ERR, "failed to ltrim list: ", key, err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+function _M.ttl(key)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:ttl(key)
+        if not res then
+            ngx.log(ngx.ERR, "failed to get ttl for key: ", key, err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
 return _M

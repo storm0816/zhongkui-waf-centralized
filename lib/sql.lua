@@ -179,18 +179,21 @@ local SQL_CREATE_TABLE_ATTACK_LOG = [[
 ]]
 
 local SQL_INSERT_ATTACK_LOG = [[
-    INSERT INTO attack_log (
-        request_id, ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
-        ip_longitude, ip_latitude, http_method, server_name, user_agent, referer, request_protocol, request_uri,
-        request_body, http_status, response_body, request_time, attack_type, severity_level, security_module, hit_rule, action)
-    VALUES
+INSERT IGNORE INTO attack_log (
+    request_id, ip, ip_country_code, ip_country_cn, ip_country_en,
+    ip_province_code, ip_province_cn, ip_province_en,
+    ip_city_code, ip_city_cn, ip_city_en,
+    ip_longitude, ip_latitude,
+    http_method, server_name, user_agent, referer, request_protocol,
+    request_uri, request_body, http_status, response_body,
+    request_time, attack_type, severity_level, security_module, hit_rule, action
+) VALUES
 ]]
 
 local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
     CREATE TABLE `ip_block_log` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         `request_id` CHAR(20) NULL COMMENT '请求id',
-
         `ip` varchar(39) NOT NULL COMMENT 'ip地址',
         `ip_country_code` CHAR(2) NULL COMMENT 'ip所属国家代码',
         `ip_country_cn` VARCHAR(255) NULL COMMENT 'ip所属国家_中文',
@@ -203,7 +206,6 @@ local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
         `ip_city_en` VARCHAR(255) NULL COMMENT 'ip所属城市_英文',
         `ip_longitude` DECIMAL(10, 7) NULL COMMENT 'ip地理位置经度',
         `ip_latitude` DECIMAL(10, 7) NULL COMMENT 'ip地理位置纬度',
-
         `block_reason` VARCHAR(200) NULL COMMENT '封禁原因',
         `start_time` datetime NOT NULL COMMENT '封禁开始时间',
         `block_duration` INT NULL COMMENT '封禁时长',
@@ -211,7 +213,6 @@ local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
         `block_times` INT NULL COMMENT '封禁请求次数',
         `action` VARCHAR(100) NULL COMMENT '处置动作',
         `unblock_time` datetime  NULL COMMENT '解封时间',
-
         `update_time` datetime NULL,
         `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`)
@@ -302,11 +303,10 @@ local SQL_INSERT_CLUSTER_NODE = [[
 
 
 
-local function yesterday()
-    local now = os.time()
-    local one_day = 24 * 60 * 60
-    local yesterday_time = now - one_day
-    return os.date("%Y-%m-%d", yesterday_time)
+local function safe_number(val)
+    local n = tonumber(val)
+    if not n then return 0 end
+    return n
 end
 
 local function reset_traffic_stats(dict, prefix)
@@ -504,7 +504,7 @@ function _M.write_traffic_stats_redis_to_mysql()
         local redis_value, err = redis_cli.get(redis_key)
 
         if not redis_value then
-            ngx.log(4, "failed to get traffic stats from redis: ", err)
+            ngx.log(ngx.info, "failed to get traffic stats from redis: ", err)
             goto continue
         end
 
@@ -773,33 +773,6 @@ function _M.write_sql_queue_to_redis()
     end
 end
 
-local function getAttackTypeTraffic()
-    local dict = ngx.shared.dict_req_count
-    local keys = dict:get_keys()
-    local dataStr = ''
-
-    if keys then
-        local today = ngx.today()
-        local prefix = constants.KEY_ATTACK_TYPE_PREFIX .. today
-
-        for _, key in ipairs(keys) do
-            local from = ngxfind(key, prefix)
-            if from then
-                local count = dict:get(key) or 0
-                dataStr = concat({ dataStr, '{"name":"', key, '","value": ', count, '},' })
-            end
-        end
-    end
-
-    if #dataStr > 0 then
-        dataStr = '[' .. string.sub(dataStr, 1, -2) .. ']'
-    else
-        dataStr = '[]'
-    end
-
-    return dataStr
-end
-
 local function getRequestTraffic()
     local hours = time.get_hours()
     local dict = ngx.shared.dict_req_count
@@ -854,120 +827,105 @@ function _M.write_ip_block_log_redis_to_mysql()
 end
 
 function _M.write_attack_type_traffic_to_redis()
-    local redis_key = "waf:attack_type_traffic:" .. ngx.today()
-    local attackTypeDataStr = getAttackTypeTraffic()
+    local redis_key = "waf:attack_type_traffic_map:" .. ngx.today()
+    local dict = ngx.shared.dict_req_count
+    local keys = dict:get_keys()
+    local prefix = constants.KEY_ATTACK_TYPE_PREFIX .. ngx.today()
 
-    local redis_value, err = redis_cli.get(redis_key)
-    local combined_attack_type_traffic = {}
-
-    if redis_value then
-        -- ngx.log(8, "old_attack_type_traffic: ", redis_value)
-
-        local redis_value_table, err = cjson.decode(redis_value)
-        if not redis_value_table then
-            ngx.log(4, "failed to decode existing attack type traffic from redis: ", err)
-            -- 如果解析失败，则使用新的数据覆盖
-            combined_attack_type_traffic = {}
-        else
-            -- 将 Redis 中的数据复制到 combined_attack_type_traffic
-            for _, item in ipairs(redis_value_table) do
-                combined_attack_type_traffic[item.name] = item.value
-            end
-        end
-    end
-
-    local success, attackTypeData = pcall(cjson.decode, attackTypeDataStr)
-    if success then
-        -- 将新的数据合并到 combined_attack_type_traffic
-        for _, item in ipairs(attackTypeData) do
-            combined_attack_type_traffic[item.name] = (combined_attack_type_traffic[item.name] or 0) + item.value
-        end
-    else
-        ngx.log(4, "failed to decode new attack type traffic data: ", attackTypeDataStr)
+    if not keys or #keys == 0 then
         return
     end
 
-    -- 转换 combined_attack_type_traffic 为数组格式，以便 JSON 编码
-    local combined_attack_type_traffic_list = {}
-    for name, value in pairs(combined_attack_type_traffic) do
-        insert(combined_attack_type_traffic_list, { name = name, value = value })
-    end
-
-    local attack_type_traffic_json = cjson.encode(combined_attack_type_traffic_list)
-
-    local ok, err = redis_cli.set(redis_key, attack_type_traffic_json, 3600) -- 设置过期时间为 1 小时
-    if not ok then
-        ngx.log(4, "failed to write attack type traffic to redis: ", err)
-    end
-
-    -- 清空 ngx.shared.dict_req_count 中对应的数据
-    local dict = ngx.shared.dict_req_count
-    local keys = dict:get_keys()
-    if keys then
-        local today = ngx.today()
-        local prefix = constants.KEY_ATTACK_TYPE_PREFIX .. today
-        for _, key in ipairs(keys) do
-            local from = ngxfind(key, prefix)
-            if from then
-                dict:delete(key) -- 删除对应的 key
+    for _, key in ipairs(keys) do
+        local from = ngxfind(key, prefix)
+        if from then
+            local count = dict:get(key) or 0
+            if count > 0 then
+                local attack_type = "attack_type_" .. ngx.today() .. string.sub(key, #prefix + 1) -- 提取攻击类型
+                local ok, err = redis_cli.hincrby(redis_key, attack_type, count)
+                if not ok then
+                    ngx.log(ngx.ERR, "failed to hincrby attack_type: ", attack_type, " err: ", err)
+                end
             end
+        end
+    end
+
+    -- 设置过期时间（可配置）
+    local expire = 86400
+    local ok, err = redis_cli.expire(redis_key, expire)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to expire attack_type_traffic redis_key: ", err)
+    end
+
+    -- ✅ 清空 ngx.shared.dict_req_count 中该前缀的所有键
+    for _, key in ipairs(keys) do
+        if ngxfind(key, prefix) then
+            dict:delete(key)
         end
     end
 end
 
 function _M.write_attack_type_traffic_redis_to_mysql()
-    local redis_key = "waf:attack_type_traffic:" .. ngx.today()
-    local redis_value, err = redis_cli.get(redis_key)
+    local redis_key = "waf:attack_type_traffic_map:" .. ngx.today()
 
-    if not redis_value then
-        ngx.log(4, "failed to get attack type traffic from redis: ", err)
+    local hash_data, err = redis_cli.hgetall(redis_key)
+    if not hash_data then
+        ngx.log(ngx.ERR, "failed to hgetall attack_type_traffic from redis: ", err)
         return
     end
 
-    local attack_type_traffic, err = cjson.decode(redis_value)
-    if not attack_type_traffic then
-        ngx.log(4, "failed to decode attack type traffic json: ", err)
-        return
-    end
+    -- Redis 返回的是扁平数组：{ "type1", "count1", "type2", "count2", ... }
+    for i = 1, #hash_data, 2 do
+        local attack_type = tostring(hash_data[i])
+        local attack_count = tonumber(hash_data[i + 1]) or 0
 
-    for _, item in ipairs(attack_type_traffic) do
-        local attack_type = item.name
-        local attack_count = item.value
+        if attack_count > 0 then
+            local sql = string.format(
+                "INSERT INTO attack_type_traffic (attack_type, attack_count, request_date) " ..
+                "VALUES (%s, %d, CURDATE()) " ..
+                "ON DUPLICATE KEY UPDATE attack_count = %d",
+                quote_sql_str(attack_type), attack_count, attack_count
+            )
 
-        local sql = format(
-            "INSERT INTO attack_type_traffic (attack_type, attack_count, request_date) VALUES (%s, %d, CURDATE()) ON DUPLICATE KEY UPDATE attack_count = attack_count + %d",
-            quote_sql_str(attack_type), attack_count, attack_count)
-
-        local res, err = mysql.query(sql)
-        if not res then
-            ngx.log(4, "failed to write attack type traffic to mysql: ", err)
+            local res, err = mysql.query(sql)
+            if not res then
+                ngx.log(ngx.ERR, "failed to insert attack_type_traffic into mysql: ", err)
+            end
         end
     end
 
-    -- 删除 Redis key
-    local ok, err = redis_cli.del(redis_key)
-    if not ok then
-        ngx.log(4, "failed to delete attack type traffic key from redis: ", err)
-    end
+    -- 删除 Redis 中的 hash key（可选，按需）
+    -- local ok, err = redis_cli.del(redis_key)
+    -- if not ok then
+    --     ngx.log(ngx.ERR, "failed to delete attack_type_traffic redis key: ", err)
+    -- end
 end
 
 function _M.get_attack_type_traffic()
     return mysql.query(SQL_GET_ATTACK_TYPE_TRAFFIC)
 end
 
-function _M.write_waf_traffic_stats_to_redis()
-    local redis_key = "waf:waf_traffic_stats:" .. ngx.today()
-    local new_data_str = getRequestTraffic() -- [["hour", "traffic","attack_traffic","blocked_traffic"],["2025-06-30 08", 20,1,0],...]
-    -- ngx.log(8, "准备写入 waf_traffic_stats：", new_data_str)
+local lock = require "resty.lock"
 
-    -- 尝试获取 Redis 中已有数据
+function _M.write_waf_traffic_stats_to_redis()
+    local l = lock:new("waf_lock_dict") -- 需要先定义 ngx.shared.waf_lock_dict 共享内存字典
+
+    local elapsed, err = l:lock("waf_traffic_stats_lock")
+    if not elapsed then
+        ngx.log(ngx.ERR, "failed to acquire lock: ", err)
+        return
+    end
+
+    -- 原有代码开始
+    local redis_key = "waf:waf_traffic_stats:" .. ngx.today()
+    local new_data_str = getRequestTraffic()
+
     local redis_value, err = redis_cli.get(redis_key)
     local old_data = {}
 
     if redis_value then
         local ok, result = pcall(cjson.decode, redis_value)
         if ok and type(result) == "table" then
-            -- 旧数据转为字典方便累加
             for i = 2, #result do
                 local row = result[i]
                 old_data[row[1]] = { traffic = row[2], attack = row[3], blocked = row[4] }
@@ -977,14 +935,13 @@ function _M.write_waf_traffic_stats_to_redis()
         end
     end
 
-    -- 解析新数据
     local ok, new_data = pcall(cjson.decode, new_data_str)
     if not ok or not new_data then
         ngx.log(4, "waf_traffic_stats 新值解析失败: ", new_data_str)
+        l:unlock()
         return
     end
 
-    -- 合并数据
     local result = {}
     result[1] = { "hour", "traffic", "attack_traffic", "blocked_traffic" }
 
@@ -997,7 +954,7 @@ function _M.write_waf_traffic_stats_to_redis()
 
         local old = old_data[hour] or { traffic = 0, attack = 0, blocked = 0 }
 
-        insert(result, {
+        table.insert(result, {
             hour,
             old.traffic + traffic,
             old.attack + attack,
@@ -1005,24 +962,23 @@ function _M.write_waf_traffic_stats_to_redis()
         })
     end
 
-    -- 写回 Redis
     local merged_str = cjson.encode(result)
     local ok, err = redis_cli.set(redis_key, merged_str, 3600)
     if not ok then
         ngx.log(4, "写入 waf_traffic_stats Redis 失败: ", err)
-    else
-        -- ngx.log(8, "成功写入合并后 waf_traffic_stats: ", merged_str)
+        l:unlock()
+        return
     end
 
-    -- 清空 ngx.shared.dict_req_count 中对应的小时级统计项
     local dict = ngx.shared.dict_req_count
     local hours = time.get_hours()
-
     for _, hour in ipairs(hours) do
         dict:delete(hour)
         dict:delete(constants.KEY_ATTACK_PREFIX .. hour)
         dict:delete(constants.KEY_BLOCKED_PREFIX .. hour)
     end
+
+    l:unlock()
 end
 
 function _M.write_waf_traffic_stats_redis_to_mysql()
@@ -1081,86 +1037,74 @@ function _M.write_sql_to_queue(key, sql)
 end
 
 function _M.write_attack_log_redis_to_mysql()
-    local redis_pattern = "waf:attack_log:*"
+    local key = "waf:attack_log:list"
+    local batch_size = 100
 
-    -- 使用 scan 命令代替 keys 命令
-    local attack_log_keys, err = redis_cli.scan(redis_pattern)
-
-    if not attack_log_keys then
-        ngx.log(4, "failed to get attack log keys from redis: ", err)
+    -- 先读取队列的前 batch_size 条
+    local logs, err = redis_cli.lrange(key, 0, batch_size - 1)
+    if not logs or #logs == 0 then
         return
     end
 
-    for _, redis_key in ipairs(attack_log_keys) do
-        local redis_value, err = redis_cli.get(redis_key)
-
-        if not redis_value then
-            ngx.log(4, "failed to get attack log from redis: ", err)
-            goto continue
-        end
-
-        local log_data, err = cjson.decode(redis_value)
-
+    local values = {}
+    for _, json_str in ipairs(logs) do
+        local log_data, err = cjson.decode(json_str)
         if not log_data then
-            ngx.log(4, "failed to decode attack log json: ", err)
+            ngx.log(ngx.ERR, "Invalid JSON in redis list: ", err)
             goto continue
         end
 
-        local request_id = log_data.request_id or ""
-        local ip = log_data.ip or ""
-        local ip_country_code = log_data.ip_country_code or ""
-        local ip_country_cn = log_data.ip_country_cn or ""
-        local ip_country_en = log_data.ip_country_en or ""
-        local ip_province_code = log_data.ip_province_code or ""
-        local ip_province_cn = log_data.ip_province_cn or ""
-        local ip_province_en = log_data.ip_province_en or ""
-        local ip_city_code = log_data.ip_city_code or ""
-        local ip_city_cn = log_data.ip_city_cn or ""
-        local ip_city_en = log_data.ip_city_en or ""
-        local ip_longitude = log_data.ip_longitude or ""
-        local ip_latitude = log_data.ip_latitude or ""
-        local http_method = log_data.http_method or ""
-        local server_name = log_data.server or "" -- 修改：使用 log_data.server
-        local user_agent = log_data.user_agent or ""
-        local referer = log_data.referer or ""
-        local request_protocol = log_data.request_protocol or ""
-        local request_uri = log_data.request_uri or ""
-        local request_body = log_data.request_body or "" -- 修改：使用 log_data.request_body
-        local http_status = log_data.http_status or ""
-        local response_body = log_data.response_body or ""
-        local request_time = log_data.attack_time or nil -- 修改：使用 log_data.attack_time
-        local attack_type = log_data.attack_type or ""
-        local severity_level = log_data.severity_level or ""
-        local security_module = log_data.securityModule or "" -- 修改：使用 log_data.securityModule
-        local hit_rule = log_data.hit_rule or ""
-        local action = log_data.action or ""
-
-        local sql_str = format(
-            SQL_INSERT_ATTACK_LOG ..
-            '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %u, %s, %s, %s, %s, %s, %s, %s)',
-            quote_sql_str(request_id), quote_sql_str(ip), quote_sql_str(ip_country_code), quote_sql_str(ip_country_cn),
-            quote_sql_str(ip_country_en),
-            quote_sql_str(ip_province_code), quote_sql_str(ip_province_cn), quote_sql_str(ip_province_en),
-            quote_sql_str(ip_city_code), quote_sql_str(ip_city_cn), quote_sql_str(ip_city_en),
-            ip_longitude, ip_latitude, quote_sql_str(http_method), quote_sql_str(server_name), quote_sql_str(user_agent),
-            quote_sql_str(referer), quote_sql_str(request_protocol), quote_sql_str(request_uri),
-            quote_sql_str(request_body), http_status, quote_sql_str(response_body), quote_sql_str(request_time),
-            quote_sql_str(attack_type), quote_sql_str(severity_level), quote_sql_str(security_module),
-            quote_sql_str(hit_rule), quote_sql_str(action))
-
-        local res, err = mysql.query(sql_str)
-        if not res then
-            ngx.log(4, "failed to write attack log to mysql: ", err)
-            goto continue
-        end
-
-        -- 删除 Redis key
-        local ok, err = redis_cli.del(redis_key)
-        if not ok then
-            ngx.log(4, "failed to delete attack log key from redis: ", err)
-        end
+        table.insert(values, format(
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            quote_sql_str(log_data.request_id or ""),
+            quote_sql_str(log_data.ip or ""),
+            quote_sql_str(log_data.ip_country_code or ""),
+            quote_sql_str(log_data.ip_country_cn or ""),
+            quote_sql_str(log_data.ip_country_en or ""),
+            quote_sql_str(log_data.ip_province_code or ""),
+            quote_sql_str(log_data.ip_province_cn or ""),
+            quote_sql_str(log_data.ip_province_en or ""),
+            quote_sql_str(log_data.ip_city_code or ""),
+            quote_sql_str(log_data.ip_city_cn or ""),
+            quote_sql_str(log_data.ip_city_en or ""),
+            safe_number(log_data.ip_longitude),
+            safe_number(log_data.ip_latitude),
+            quote_sql_str(log_data.http_method or ""),
+            quote_sql_str(log_data.server or ""),
+            quote_sql_str(log_data.user_agent or ""),
+            quote_sql_str(log_data.referer or ""),
+            quote_sql_str(log_data.request_protocol or ""),
+            quote_sql_str(log_data.request_uri or ""),
+            quote_sql_str(log_data.request_body or ""),
+            quote_sql_str(log_data.http_status or "200"),
+            quote_sql_str(log_data.response_body or ""),
+            quote_sql_str(log_data.attack_time or ngx.localtime()),
+            quote_sql_str(log_data.attack_type or ""),
+            quote_sql_str(log_data.severity_level or ""),
+            quote_sql_str(log_data.securityModule or ""),
+            quote_sql_str(string.sub(log_data.hit_rule or "", 1, 500)),
+            quote_sql_str(log_data.action or "")
+        ))
 
         ::continue::
+    end
+
+    if #values == 0 then
+        return
+    end
+
+    local sql_str = SQL_INSERT_ATTACK_LOG .. table.concat(values, ",")
+
+    local res, err = mysql.query(sql_str)
+    if not res then
+        ngx.log(ngx.ERR, "Failed to insert attack logs to MySQL: ", err)
+        return
+    end
+
+    -- 成功插入后，从队列左边删除这 batch_size 条数据
+    local ok, err = redis_cli.ltrim(key, #logs, -1)
+    if not ok then
+        ngx.log(ngx.ERR, "Failed to ltrim redis list after insert: ", err)
     end
 end
 
