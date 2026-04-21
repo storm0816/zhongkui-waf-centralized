@@ -6,7 +6,14 @@
 
 #### 集群角色说明
 
-集群模式通过`conf/system.json`中的`redis`、`centralized`、`master`三个开关区分角色。`redis.state`和`centralized.state`同时为`on`时，表示当前实例运行在集群集中模式；此时`master.state`为`on`表示 master 节点，`master.state`为`off`表示普通 node 节点。未同时开启`redis`和`centralized`时，实例按单机模式运行。
+集群角色由`conf/system.json`中的`redis`、`centralized`、`master`三个开关共同决定：
+
+| `redis.state` | `centralized.state` | `master.state` | 角色/模式 |
+|---|---|---|---|
+| `on` | `on` | `on` | master 节点（集群） |
+| `on` | `on` | `off` | node 节点（集群） |
+| `off` 或 `on` | `off` | 任意 | 单机模式 |
+| `off` | `on` | 任意 | 单机模式（未启用 Redis） |
 
 master 节点职责：
 
