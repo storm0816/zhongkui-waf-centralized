@@ -8,7 +8,6 @@
   "geoip": {
     "language": "zh-CN",
     "disallowCountrys": [
-      "AL"
     ]
   },
   "fileContentCheck": {

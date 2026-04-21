@@ -4,9 +4,70 @@
 - 黑名单通过 master，进行分发，节点黑名单过滤，新增 master 黑名单。
 - dashboard 前端页面所有数据汇总
 
+#### 集群角色说明
+
+集群模式通过`conf/system.json`中的`redis`、`centralized`、`master`三个开关区分角色。`redis.state`和`centralized.state`同时为`on`时，表示当前实例运行在集群集中模式；此时`master.state`为`on`表示 master 节点，`master.state`为`off`表示普通 node 节点。未同时开启`redis`和`centralized`时，实例按单机模式运行。
+
+master 节点职责：
+
+- 从本机`conf/global_rules/ipBlackList`发布 master 黑名单到 Redis，供所有节点拉取。
+- 汇总 Redis 中的攻击日志、WAF 状态、流量统计、IP 阻断日志、攻击类型统计和节点心跳，并写入 MySQL。
+- 负责集群 dashboard 所需的汇总数据落库。
+
+node 节点职责：
+
+- 执行本机 WAF 拦截逻辑。
+- 从 Redis 拉取 master 下发的黑名单并加载到本机 worker 内存。
+- 将本机攻击日志、阻断日志、流量统计、攻击类型统计和节点心跳上报到 Redis。
+- 不执行 Redis 到 MySQL 的汇总落库任务。
+
+master 节点配置示例：
+
+```json
+{
+  "redis": {
+    "state": "on"
+  },
+  "centralized": {
+    "state": "on"
+  },
+  "master": {
+    "state": "on"
+  }
+}
+```
+
+node 节点配置示例：
+
+```json
+{
+  "redis": {
+    "state": "on"
+  },
+  "centralized": {
+    "state": "on"
+  },
+  "master": {
+    "state": "off"
+  }
+}
+```
+
+单机模式配置示例：
+
+```json
+{
+  "centralized": {
+    "state": "off"
+  }
+}
+```
+
+注意：`conf/system.json`是标准 JSON 文件，不能直接写注释，否则 WAF 启动时会解析失败。部署时建议为 master 和 node 分别维护独立的`system.json`模板。
+
 ## ZhongKui-WAF
 
-钟馗是中国传统文化中的一个神话人物，被誉为“捉鬼大师”，专门驱逐邪恶之物。`Zhongkui-WAF`的命名灵感来源于这一神话人物，寓意着该软件能够像钟馗一样，有效地保护 Web 应用免受各种恶意攻击和威胁。
+钟馗是中国传统文化中的一个神话人物，被誉为"捉鬼大师"，专门驱逐邪恶之物。`Zhongkui-WAF`的命名灵感来源于这一神话人物，寓意着该软件能够像钟馗一样，有效地保护 Web 应用免受各种恶意攻击和威胁。
 
 `Zhongkui-WAF`基于`lua-nginx-module`，可以多维度检查和拦截恶意网络请求，具有简单易用、高性能、轻量级的特点。它的配置简单，你可以根据实际情况设置不同的安全规则和策略。
 
@@ -40,28 +101,19 @@
 
 ### 安装
 
-可以执行安装脚本`install.sh`，自动安装`OpenResty`、`ZhongKui`、`libmaxminddb`、`luafilesystem`和`geoipupdate`。也可以自行逐个安装。
+执行安装脚本`install.sh`，自动安装`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`：
 
-#### OpenResty
+```bash
+chmod +x install.sh
+./install.sh
+```
 
-由于`Zhongkui-WAF`基于`lua-nginx-module`，所以要先安装`Nginx`或`OpenResty`，强烈推荐使用`OpenResty`。
-
-如果你使用`Nginx`，则需要安装以下第三方模块：
-
-1. 安装`LuaJIT`和`lua-nginx-module`模块
-2. 下载[lua-resty-redis 库](https://github.com/openresty/lua-resty-redis)到`path-to-zhongkui-waf/lib/resty`目录
-3. 安装[lua-cjson 库](https://kyne.au/%7Emark/software/lua-cjson.php)
-
-#### zhongkui-waf
-
-假设`OpenResty`安装路径为：`/usr/local/openresty`，下载`zhongkui-waf`文件并放置在`/usr/local/openresty/zhongkui-waf`目录。
-
-修改`nginx.conf`，在`http`模块下添加`zhongkui-waf`相关配置：
+安装完成后，修改`nginx.conf`，在`http`模块下添加`zhongkui-waf`相关配置：
 
 ```nginx
-include /usr/local/openresty/zhongkui-waf/admin/conf/waf.conf;
-include /usr/local/openresty/zhongkui-waf/admin/conf/admin.conf;
-include /usr/local/openresty/zhongkui-waf/admin/conf/sites.conf;
+    include /opt/openresty/zhongkui-waf/admin/conf/waf.conf;
+    include /opt/openresty/zhongkui-waf/admin/conf/admin.conf;
+    include /opt/openresty/zhongkui-waf/admin/conf/sites.conf;
 ```
 
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
@@ -77,55 +129,22 @@ lua_shared_dict dict_req_count 5m;
 lua_shared_dict dict_req_count_citys 10m;
 lua_shared_dict dict_sql_queue 10m;
 
-lua_package_path "/usr/local/openresty/zhongkui-waf/?.lua;/usr/local/openresty/zhongkui-waf/lib/?.lua;/usr/local/openresty/zhongkui-waf/admin/lua/?.lua;;";
-init_by_lua_file  /usr/local/openresty/zhongkui-waf/init.lua;
-init_worker_by_lua_file /usr/local/openresty/zhongkui-waf/init_worker.lua;
-access_by_lua_file /usr/local/openresty/zhongkui-waf/waf.lua;
-body_filter_by_lua_file /usr/local/openresty/zhongkui-waf/body_filter.lua;
-header_filter_by_lua_file /usr/local/openresty/zhongkui-waf/header_filter.lua;
-log_by_lua_file /usr/local/openresty/zhongkui-waf/log_and_traffic.lua;
+lua_package_path "/opt/openresty/zhongkui-waf/?.lua;/opt/openresty/zhongkui-waf/lib/?.lua;/opt/openresty/zhongkui-waf/admin/lua/?.lua;;";
+init_by_lua_file  /opt/openresty/zhongkui-waf/init.lua;
+init_worker_by_lua_file /opt/openresty/zhongkui-waf/init_worker.lua;
+access_by_lua_file /opt/openresty/zhongkui-waf/waf.lua;
+body_filter_by_lua_file /opt/openresty/zhongkui-waf/body_filter.lua;
+header_filter_by_lua_file /opt/openresty/zhongkui-waf/header_filter.lua;
+log_by_lua_file /opt/openresty/zhongkui-waf/log_and_traffic.lua;
 ```
 
-#### libmaxminddb 库
-
-IP 地理位置识别需要下载 MaxMind 的 IP 地址数据文件及安装该 IP 数据文件的读取库。
-
-1. 从 MaxMind 官网下载[GeoLite2 City](https://www.maxmind.com/en/accounts/current/geoip/downloads)数据文件，后续可使用[官方工具](https://github.com/maxmind/geoipupdate)对该数据文件自动更新。
-
-2. 安装`libmaxminddb`库
-
-   ```bash
-   wget -P /usr/local/src https://github.com/maxmind/libmaxminddb/releases/download/1.7.1/libmaxminddb-1.7.1.tar.gz
-   tar -zxvf libmaxminddb-1.7.1.tar.gz
-   cd libmaxminddb-1.7.1
-   ./configure
-   make && make install
-   echo /usr/local/lib >> /etc/ld.so.conf.d/local.conf
-   ldconfig
-   ```
-
-   Windows 系统用户要自行编译，生成`libmaxminddb.dll`文件，具体参考`maxmind/libmaxminddb`官方文档[using-cmake](https://github.com/maxmind/libmaxminddb#using-cmake)。
-
-#### luaossl 库
+重启`OpenResty`：
 
 ```bash
-wget -O /usr/local/src/luaossl-rel-20220711.tar.gz https://github.com/wahern/luaossl/archive/refs/tags/rel-20220711.tar.gz
-tar -zxf luaossl-rel-20220711.tar.gz
-cd ./luaossl-rel-20220711
-make all5.1 includedir=/usr/local/openresty/luajit/include/luajit-2.1 && make install5.1
+systemctl restart openresty
 ```
 
-#### LuaFileSystem 库
-
-```shell
-wget -O /usr/local/src/luafilesystem-master.zip https://github.com/lunarmodules/luafilesystem/archive/refs/heads/master.zip
-unzip luafilesystem-master.zip
-cd ./luafilesystem-master
-make INCS=/usr/local/openresty/luajit/include/luajit-2.1
-mv ./src/lfs.so /usr/local/openresty/lualib/lfs.so
-```
-
-安装完成后重启`OpenResty`，使用测试命令：
+使用测试命令验证安装：
 
 ```bash
 curl http://localhost/?t=../../etc/passwd
@@ -170,10 +189,10 @@ Disallow: /zhongkuiwaf/honey/trap
 # 添加nginx用户
 sudo useradd nginx
 # 使用sudo visudo命令将下面这行规则添加进去，将nginx用户添加到sudoers，仅允许其执行nginx命令
-# nginx ALL=NOPASSWD: /usr/local/openresty/nginx/sbin/nginx
+# nginx ALL=NOPASSWD: /opt/openresty/nginx/sbin/nginx
 # 修改zhongkui-waf和日志目录归属用户
-sudo chown -R nginx:nginx /usr/local/openresty/zhongkui-waf
-sudo chown -R nginx:nginx /usr/local/openresty/nginx/logs/hack
+sudo chown -R nginx:nginx /opt/openresty/zhongkui-waf
+sudo chown -R nginx:nginx /opt/openresty/nginx/logs/hack
 ```
 
 修改`nginx.conf`：

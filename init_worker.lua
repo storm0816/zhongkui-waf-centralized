@@ -24,6 +24,9 @@ local dict_hits = ngx.shared.dict_config_rules_hits
 
 local is_global_option_on = config.is_global_option_on
 local is_system_option_on = config.is_system_option_on
+local is_centralized_mode = config.is_centralized_mode
+local is_master_node = config.is_master_node
+local is_standalone_mode = config.is_standalone_mode
 local get_system_config = config.get_system_config
 local read_file_to_table = file_utils.read_file_to_table
 
@@ -179,21 +182,27 @@ end
 
 if is_global_option_on("waf") then
     local worker_id = ngx.worker.id()
+    -- 后台汇总、落库、上报类定时任务只允许 worker 0 执行，避免多 worker 重复处理。
+    local is_timer_owner = worker_id == 0
+    local centralized_mode = is_centralized_mode()
+    local master_node = is_master_node()
+    local standalone_mode = is_standalone_mode()
 
     if is_system_option_on('rulesSort') then
         local delay = get_system_config('rulesSort').period
 
-        if worker_id == 0 then
+        if is_timer_owner then
             utils.start_timer_every(delay, sort_timer_handler)
         end
 
         utils.start_timer_every(delay, get_rules_timer_handler)
     end
 
-    if is_system_option_on("mysql") then
-        if worker_id == 0 then
+    if is_timer_owner then
+        if is_system_option_on("mysql") and (master_node or standalone_mode) then
             utils.start_timer(0, sql.check_table)
-            if is_system_option_on("master") and is_system_option_on("centralized") then
+
+            if master_node then
                 -- 如果是主从模式，则定时将 Redis 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(120, sql.write_attack_log_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_status_redis_to_mysql)
@@ -202,32 +211,39 @@ if is_global_option_on("waf") then
                 utils.start_timer_every(120, sql.write_attack_type_traffic_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_traffic_stats_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_cluster_nodes_to_mysql)
-            else
+            elseif standalone_mode then
                 -- 如果是单机模式，则定时将 内存中的 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
             end
+        end
+
+        if (standalone_mode and is_system_option_on("mysql")) or centralized_mode then
             utils.start_timer_every(2, sql.update_waf_status)
             utils.start_timer_every(2, sql.update_traffic_stats)
         end
     end
 
     -- 异步加载 落地文件ipblacklist 导入到 Redis，启动时的初始化
-    if is_system_option_on("master") then
+    if is_timer_owner and master_node then
         ngx.timer.at(0.5, init_redis_blacklist)
     end
 
     -- 将 Redis blacklist 导入到 ipmatcher
-    if is_system_option_on("redis") and is_system_option_on('centralized') then
+    if centralized_mode then
+        -- 黑名单 matcher 存在 worker 内存中，每个 worker 都需要定时拉取 master 黑名单。
         ngx.timer.at(1, load_ip_blacklist_from_redis)
         -- 定时将文件加载到redis中
         utils.start_timer_every(10, load_ip_blacklist_from_redis)
-        -- 定时将攻击拦击名单加载到redis中
-        utils.start_timer_every(10, sql.write_sql_queue_to_redis)
-        -- 定时将攻击类型流量统计写入 Redis中
-        utils.start_timer_every(10, sql.write_attack_type_traffic_to_redis)
-        utils.start_timer_every(10, sql.write_waf_traffic_stats_to_redis)
-        -- 定时将节点信息写入 Redis 中
-        utils.start_timer_every(30, sql.report_node_info)
+
+        if is_timer_owner then
+            -- 定时将攻击拦击名单加载到redis中
+            utils.start_timer_every(10, sql.write_sql_queue_to_redis)
+            -- 定时将攻击类型流量统计写入 Redis中
+            utils.start_timer_every(10, sql.write_attack_type_traffic_to_redis)
+            utils.start_timer_every(10, sql.write_waf_traffic_stats_to_redis)
+            -- 定时将节点信息写入 Redis 中
+            utils.start_timer_every(30, sql.report_node_info)
+        end
     end
 end

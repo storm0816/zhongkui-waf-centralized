@@ -27,6 +27,7 @@ local cjson_encode = cjson.encode
 local pairs = pairs
 local ipairs = ipairs
 local tonumber = tonumber
+local type = type
 
 local _M = {}
 
@@ -34,13 +35,38 @@ local config = { system = {}, global = {} }
 
 _M.ipgroups = {}
 
+local function is_option_on(options, option)
+    local item = options and options[option]
+    return type(item) == "table" and item.state == "on"
+end
+
 -- Returns true if the global config option is "on",otherwise false
 function _M.is_global_option_on(option)
-    return config.global.config[option].state == "on"
+    return is_option_on(config.global.config, option)
 end
 
 function _M.is_system_option_on(option)
-    return config.system[option].state == "on"
+    return is_option_on(config.system, option)
+end
+
+-- 集群角色由 system.json 中 redis、centralized、master 三个开关共同决定。
+function _M.is_centralized_mode()
+    return _M.is_system_option_on("centralized") and _M.is_system_option_on("redis")
+end
+
+-- master 节点负责发布集群黑名单，并汇总 Redis 数据写入 MySQL。
+function _M.is_master_node()
+    return _M.is_centralized_mode() and _M.is_system_option_on("master")
+end
+
+-- node 节点负责本机拦截、上报统计、拉取 master 下发的数据。
+function _M.is_cluster_node()
+    return _M.is_centralized_mode() and not _M.is_master_node()
+end
+
+-- 未启用 Redis 集中模式时，按单机模式直接处理本地队列和 MySQL 写入。
+function _M.is_standalone_mode()
+    return not _M.is_centralized_mode()
 end
 
 function _M.is_site_option_on(option)

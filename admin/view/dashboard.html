@@ -489,8 +489,8 @@
 							$('#captcha_pass_times').text(captcha_pass_times);
 							$('#http4xx').text(http4xx);
 							$('#http5xx').text(http5xx);
-							$('#http4xxPercent').text((http4xxPercent.toFixed(2) > 0 ? http4xxPercent.toFixed(2) : 0) + '%');
-							$('#http5xxPercent').text((http5xxPercent.toFixed(2) > 0 ? http5xxPercent.toFixed(2) : 0) + '%');
+							$('#http4xxPercent').text((http4xxPercent.toFixed(2) > 0 ? http4xxPercent.toFixed(2) : 0)*100 + '%');
+							$('#http5xxPercent').text((http5xxPercent.toFixed(2) > 0 ? http5xxPercent.toFixed(2) : 0)*100 + '%');
 						}
 
 						if (sourceRegion) {

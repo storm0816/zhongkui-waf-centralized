@@ -24,7 +24,7 @@ function _M.get_connection()
 
     db:set_timeout(timeout)
 
-    local ok, err, errcode, sql_state = db:connect{
+    local ok, err, errcode, sql_state = db:connect {
         host = host,
         port = port or 3306,
         database = database,
@@ -59,17 +59,27 @@ function _M.query(sql, rows)
     return res
 end
 
-
 function _M.close_connection(db)
-    -- put it into the connection pool of size 100,
-    -- with 10 seconds max idle timeout
-    local ok, err = db:set_keepalive(10000, poolSize or 10)
-    if not ok then
-        ngx.log(ngx.ERR, "failed to set keepalive: ", err)
+    if not db then
+        return nil, "db is nil"
     end
 
-    return ok, err
-end
+    -- 先尝试放回连接池
+    local ok, err = db:set_keepalive(10000, poolSize or 10)
+    if ok then
+        return ok, nil
+    end
 
+    -- 当前连接状态不可复用时，直接关闭，别再报错污染日志
+    ngx.log(ngx.WARN, "failed to set keepalive, fallback to close: ", err)
+
+    local ok2, err2 = db:close()
+    if not ok2 then
+        ngx.log(ngx.ERR, "failed to close mysql connection: ", err2)
+        return nil, err2
+    end
+
+    return true, nil
+end
 
 return _M
