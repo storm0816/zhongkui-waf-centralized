@@ -209,36 +209,3 @@ user nginx;
 ```
 
 你也可以用 root 用户启动 nginx，但不推荐。
-
-### 交流群
-
-欢迎大家进群交流，如果遇到 bug 或有新的需求，请优先提交 Issues。
-
-QQ 群：903430639
-
-### 捐赠
-
-如果你觉得这个项目还不错，点击[这里](https://afdian.net/a/bukale)或扫描下方二维码为作者买杯咖啡吧！
-
-![donate_wechat](https://github.com/bukaleyang/zhongkui-waf/blob/master/images/donate_wechat.png)
-
-### Copyright and License
-
-ZhongKui-WAF is licensed under the Apache License, Version 2.
-
-Copyright 2023 bukale bukale2022@163.com
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-需要同步的文件
-conf/global_rules/
