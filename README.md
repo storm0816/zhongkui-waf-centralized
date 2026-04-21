@@ -15,6 +15,25 @@
 | `off` 或 `on` | `off` | 任意 | 单机模式 |
 | `off` | `on` | 任意 | 单机模式（未启用 Redis） |
 
+#### 黑名单同步机制
+
+master 节点会将黑名单写入 Redis（key: `waf:masterIpBlackList`），采用结构化 payload：
+
+```json
+{
+  "version": "1713686400123",
+  "updated_at": "2026-04-21 16:00:00",
+  "source": "master-hostname",
+  "items": ["1.2.3.4", "10.0.0.0/24"]
+}
+```
+
+node 节点定时拉取该 payload，并按`version`做增量更新：
+
+- 若`version`未变化：跳过重载，避免频繁重建`ipmatcher`。
+- 若`version`变化：更新本机 matcher，并记录最新版本。
+- 仍兼容旧格式（仅 IP 数组）数据，平滑升级不需要停机迁移。
+
 master 节点职责：
 
 - 从本机`conf/global_rules/ipBlackList`发布 master 黑名单到 Redis，供所有节点拉取。

@@ -15,6 +15,9 @@ local nkeys = require "table.nkeys"
 local md5 = ngx.md5
 local pairs = pairs
 local tonumber = tonumber
+local type = type
+local floor = math.floor
+local getenv = os.getenv
 
 local cjson_decode = cjson.decode
 local cjson_encode = cjson.encode
@@ -31,6 +34,8 @@ local get_system_config = config.get_system_config
 local read_file_to_table = file_utils.read_file_to_table
 
 local prefix = "waf_rules_hits:"
+local master_blacklist_redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
+local master_blacklist_version_dict_key = "cluster:master:blacklist:version"
 
 local function sort(key_str, t)
     for _, rt in pairs(t) do
@@ -110,74 +115,117 @@ end
 
 -- 初始化 Redis 黑名单的函数
 local function init_redis_blacklist()
-    local redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
-
     -- 加载黑名单数据
     local ip_blacklist = config.file_ip_blacklist()
-    local redis_value, err = cjson_encode(ip_blacklist)
+    local version = tostring(floor(ngx.now() * 1000))
+    local payload = {
+        version = version,
+        updated_at = ngx.localtime(),
+        source = getenv("HOSTNAME") or "master",
+        items = ip_blacklist or {}
+    }
+    local redis_value, err = cjson_encode(payload)
 
     if not redis_value then
         ngx.log(4, "failed to encode json for redis: ", err)
         return
     end
     -- 设置key 不过期，  -1长期有效
-    local ok, err = redis_cli.set(redis_key, redis_value, -1)
+    local ok, err = redis_cli.set(master_blacklist_redis_key, redis_value, -1)
     if not ok then
         ngx.log(4, "failed to write attack log to redis: ", err)
+        return
     end
+
+    dict_config:set(master_blacklist_version_dict_key, version)
 end
 
 local function add_ip_group(group, ips)
-    if ips and nkeys(ips) > 0 then
-        -- 添加调试日志
-        -- ngx.log(8, "Attempting to add IP group: ", group, " with IPs: ", cjson.encode(ips))
-        -- 过滤无效或空的 IP 地址
-        local valid_ips = {}
-        for _, ip in ipairs(ips) do
-            if type(ip) == "string" and #ip > 0 then
-                table.insert(valid_ips, ip)
-            end
+    if type(ips) ~= "table" then
+        return false
+    end
+
+    -- 过滤无效或空的 IP 地址
+    local valid_ips = {}
+    for _, ip in ipairs(ips) do
+        if type(ip) == "string" and #ip > 0 then
+            table.insert(valid_ips, ip)
+        end
+    end
+
+    -- 空黑名单时清理 matcher，避免保留旧数据。
+    if nkeys(valid_ips) == 0 then
+        config.ipgroups[group] = nil
+        return true
+    end
+
+    local matcher, err = ipmatcher.new(valid_ips)
+    if not matcher then
+        ngx.log(4, 'error to add ip group ' .. group, err)
+        return false
+    end
+
+    config.ipgroups[group] = matcher
+    return true
+end
+
+local function parse_master_blacklist_payload(redis_value)
+    local ok, data = pcall(cjson_decode, redis_value)
+    if not ok or type(data) ~= "table" then
+        return nil, nil, nil, "invalid json payload"
+    end
+
+    -- 新格式: { version, updated_at, source, items }
+    if type(data.items) == "table" then
+        local version = data.version and tostring(data.version) or ''
+        if version == '' then
+            version = "legacy-" .. md5(redis_value)
         end
 
-        local matcher, err = ipmatcher.new(valid_ips)
-        if not matcher then
-            ngx.log(4, 'error to add ip group ' .. group, err)
-            return
-        end
-        config.ipgroups[group] = matcher
-        -- ngx.log(8, "Successfully added ip group: ", group)
+        return data.items, version, data.updated_at, data.source
     end
+
+    -- 兼容旧格式: 直接存储 IP 数组
+    if data[1] ~= nil then
+        return data, "legacy-" .. md5(redis_value), nil, "legacy"
+    end
+    if next(data) == nil then
+        return {}, "legacy-" .. md5(redis_value), nil, "legacy"
+    end
+
+    return nil, nil, nil, "missing items field"
 end
 
 local function load_ip_blacklist_from_redis()
-    local ip_blacklist = {}
-    local i = 1
-    local redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
-
-    local redis_value, err = redis_cli.get(redis_key)
+    local redis_value, err = redis_cli.get(master_blacklist_redis_key)
     if not redis_value then
         ngx.log(4, "failed to get redis_value from redis: ", err)
         return
     end
 
-    local ip_list, err = cjson.decode(redis_value)
-    if not ip_list then
-        ngx.log(4, "failed to decode json from redis: ", err)
+    local ip_blacklist, version, updated_at, source = parse_master_blacklist_payload(redis_value)
+    if not ip_blacklist then
+        ngx.log(4, "failed to parse master blacklist payload")
         return
     end
 
-    if type(ip_list) == "table" then
-        for _, ip in ipairs(ip_list) do
-            ip_blacklist[i] = ip
-            i = i + 1
-        end
-    else
-        ngx.log(4, "Invalid ip_list format: ", type(ip_list))
+    local local_version = dict_config:get(master_blacklist_version_dict_key)
+    if local_version and tostring(local_version) == tostring(version) then
+        return
     end
 
-    -- 在这里调用 add_ip_group 函数，将 IP 黑名单添加到 ipmatcher 中
-    -- ngx.log(8, "ip_blacklist: ", cjson_encode(ip_blacklist))
-    add_ip_group(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, ip_blacklist)
+    local ok = add_ip_group(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, ip_blacklist)
+    if not ok then
+        ngx.log(4, "failed to refresh master blacklist matcher")
+        return
+    end
+
+    dict_config:set(master_blacklist_version_dict_key, tostring(version))
+    if updated_at then
+        ngx.log(ngx.INFO, "master blacklist updated, version=", version, ", source=", source or "unknown", ", updated_at=", updated_at)
+    else
+        ngx.log(ngx.INFO, "master blacklist updated, version=", version, ", source=", source or "unknown")
+    end
 end
 
 if is_global_option_on("waf") then
