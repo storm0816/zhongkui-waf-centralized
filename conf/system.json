@@ -14,7 +14,7 @@
         "state": "on",
         "host": "10.15.108.11",
         "port": "33061",
-        "user": "zhongkui",
+        "user": "zhongkui_mac",
         "password": "#rwcTjKk&6xR",
         "database": "zhongkui_waf",
         "poolSize": "10",

@@ -13,6 +13,7 @@ local sub = string.sub
 
 local random = math.random
 local get_system_config = config.get_system_config
+local is_cluster_node = config.is_cluster_node
 local read_file_to_string = file.read_file_to_string
 local write_string_to_file = file.write_string_to_file
 local get_client_ip = ip_utils.get_client_ip
@@ -27,6 +28,15 @@ local _M = {}
 local PASSWORD_PATH = config.ZHONGKUI_PATH .. '/admin/admin/data/user.json'
 local SALT_LENGTH = 20
 local AUTH_TOKEN_EXPIRE_TIME = 1800
+
+function _M.deny_console_on_node()
+    if is_cluster_node() then
+        ngx.status = ngx.HTTP_FORBIDDEN
+        ngx.header.content_type = "text/plain; charset=utf-8"
+        ngx.say("当前节点为 node，不提供控制台。请访问 master 节点控制台。")
+        return ngx.exit(ngx.HTTP_FORBIDDEN)
+    end
+end
 
 -- 生成指定长度的随机盐
 local function generate_salt(length)
@@ -99,6 +109,8 @@ function _M.clear_auth_token()
 end
 
 function _M.do_request()
+    _M.deny_console_on_node()
+
     local response = { code = 200, data = {}, msg = "" }
     local uri = ngx.var.uri
 

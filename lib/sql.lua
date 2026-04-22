@@ -1243,11 +1243,15 @@ function _M.write_attack_log_redis_to_mysql()
 end
 
 local function get_local_ip()
-    local f = io.popen("hostname -I")
-    if not f then return "unknown" end
+    local f = io.popen("hostname -I 2>/dev/null || hostname -i 2>/dev/null")
+    if not f then
+        return "unknown"
+    end
     local line = f:read("*l")
     f:close()
-    if not line then return "unknown" end
+    if not line then
+        return "unknown"
+    end
     local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
     return ip or "unknown"
 end

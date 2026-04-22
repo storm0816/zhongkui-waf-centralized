@@ -57,7 +57,7 @@ cp conf/system-node.json conf/system.json
 
 推荐所有节点使用同一套代码版本，只在部署阶段选择角色配置。这样可以避免 master/node 代码分叉，也方便后续升级和回滚。
 
-控制台建议只在 master 节点开放。node 节点只负责本机 WAF 拦截、拉取 master 黑名单、上报 Redis 数据，不建议 include `admin/conf/admin.conf`，避免在子节点误改配置。
+控制台只建议在 master 节点开放。node 节点只负责本机 WAF 拦截、拉取 master 黑名单、上报 Redis 数据，不建议 include `admin/conf/admin.conf`，避免在子节点误改配置。代码层也做了兜底：如果 node 误 include 了`admin.conf`，访问控制台会直接返回 403。
 
 node 配置中保留`mysql.state = off`只是为了让代码按统一配置结构读取；node 不需要 MySQL 账号密码，也不会执行 Redis 到 MySQL 的汇总落库任务。
 
@@ -92,6 +92,40 @@ node 节点职责：
 - 从 Redis 拉取 master 下发的黑名单并加载到本机 worker 内存。
 - 将本机攻击日志、阻断日志、流量统计、攻击类型统计和节点心跳上报到 Redis。
 - 不执行 Redis 到 MySQL 的汇总落库任务。
+
+### Redis Key 规范
+
+集群模式下，跨节点共享的 Redis key 统一使用`waf:`前缀。master 负责消费汇总类 key 并写入 MySQL，node 负责写入上报类 key。
+
+| Key/Pattern | 类型 | 写入方 | 读取/消费方 | TTL | 用途 |
+|---|---|---|---|---|---|
+| `waf:masterIpBlackList` | String(JSON) | master | node | 不过期 | master 下发的全局黑名单，包含`version`、`updated_at`、`source`、`items` |
+| `waf:cluster:nodes:<node_ip>` | Hash | master/node | master | `system.expire` | 节点心跳，上报`ip`、`version`、`hostname`、`timestamp` |
+| `waf:attack_log:<ip><request_id>` | String(JSON) | node | master | `redis.expire_time` | 攻击日志队列，master 落库成功后删除 |
+| `waf:traffic_stats:<region_prefix><yyyy-mm-dd>` | String(JSON) | node | master | `redis.expire_time` | 地域维度流量统计，master 汇总到`traffic_stats` |
+| `waf:waf_status_hmap:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | WAF 总览指标，如请求数、攻击数、拦截数 |
+| `waf:ip_balck_sql_values:<queue_name>:<timestamp>` | String(SQL values) | node | master | `redis.expire_time` | IP 封禁日志队列，保留历史拼写`balck`以兼容当前代码 |
+| `waf:attack_type_traffic_map:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | 攻击类型统计，field 为攻击类型，value 为次数 |
+| `waf:waf_traffic_stats:<yyyy-mm-dd>` | String(CSV) | node | master | 3600 秒 | 按小时请求/攻击/拦截统计 |
+
+本地运行和安全能力相关 key：
+
+| Key/Pattern | 类型 | 写入方 | 读取方 | TTL | 用途 |
+|---|---|---|---|---|---|
+| `black_ip:<ip>` | String/Number | WAF 动作模块 | WAF 访问控制 | 由封禁策略决定 | 自动拉黑 IP |
+| `captcha:<hash>` | String/Number | 人机验证模块 | 人机验证模块 | 由验证码策略决定 | 验证码挑战状态 |
+| `captcha_accesstoken:<hash>` | String | 人机验证模块 | 人机验证模块 | 由验证码策略决定 | 验证通过后的访问 token |
+
+排查示例：
+
+```bash
+redis-cli --scan --pattern 'waf:cluster:nodes:*'
+redis-cli --scan --pattern 'waf:attack_log:*'
+redis-cli --scan --pattern 'waf:attack_type_traffic_map:*'
+redis-cli GET waf:masterIpBlackList
+```
+
+约定：新增集群共享 key 时优先使用`waf:<module>:<biz_id>`或`waf:<module>:<yyyy-mm-dd>`格式，并在本节同步说明。已有线上 key 不轻易改名，避免 master/node 版本不一致时丢数据。
 
 master 节点配置示例：
 

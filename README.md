@@ -34,20 +34,33 @@
 
 ### 安装
 
-执行安装脚本`install.sh`，自动安装`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码。
+常用参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--role master\|node` | `master` | 指定当前机器部署为 master 或 node |
+| `--init-local-mysql` | 关闭 | master 机器上同时安装并初始化本机 MySQL |
+| `--mysql-user USER` | `zhongkui_mac` | 配合`--init-local-mysql`使用，指定要创建并写入配置的 MySQL 账号 |
+
+使用 root 执行安装脚本`install.sh`，自动安装基础编译工具、`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码，并自动把项目`waf/`目录下的离线安装包同步到`/usr/local/src`，缺失的包才会尝试联网下载。
+
+安装前先赋予执行权限：
 
 ```bash
 chmod +x install.sh
-./install.sh --role master
-# 或
-./install.sh --role node
 ```
 
-如果需要在 master 机器上同时初始化本机 MySQL，可额外添加`--init-local-mysql`：
+常见部署场景：
 
-```bash
-./install.sh --role master --init-local-mysql
-```
+| 场景 | 安装命令 | 安装前需要确认 |
+|---|---|---|
+| master 使用外部 MySQL 和外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的`mysql`和`redis`连接信息 |
+| master 使用外部 MySQL，本机/外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的对应连接信息，不要加`--init-local-mysql` |
+| master 同时初始化本机 MySQL | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac` | Redis 仍需提前在`conf/system-master.json`中配置；MySQL 会自动切到`127.0.0.1:3306` |
+| node 节点 | `sudo ./install.sh --role node` | 先修改`conf/system-node.json`中的 Redis 连接信息；node 不需要 MySQL |
+| 单机模式 | `sudo ./install.sh --role master` | 先将`conf/system-master.json`中的`centralized.state`改为`off`，并按需配置 MySQL/Redis |
+
+`--init-local-mysql`只用于 master 机器需要安装并初始化本机 MySQL 的场景。它会创建本机数据库`zhongkui_waf`和`--mysql-user`指定的账号，并把当前运行配置中的 MySQL 连接切换到`127.0.0.1:3306`。如果使用外部 MySQL，不要加这个参数。
 
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 

@@ -13,7 +13,9 @@ echo "
 
 ROLE="master"
 INIT_LOCAL_MYSQL="off"
+MYSQL_USER="zhongkui_mac"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC_DIR="/usr/local/src"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -29,13 +31,25 @@ while [ $# -gt 0 ]; do
             INIT_LOCAL_MYSQL="on"
             shift
             ;;
+        --mysql-user)
+            if [ $# -lt 2 ]; then
+                echo -e "\033[31m[--mysql-user 需要指定账号]\033[0m"
+                exit 1
+            fi
+            MYSQL_USER="$2"
+            shift 2
+            ;;
+        --mysql-user=*)
+            MYSQL_USER="${1#*=}"
+            shift
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql]"
+            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER]"
             exit 0
             ;;
         *)
             echo -e "\033[31m[未知参数: $1]\033[0m"
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql]"
+            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER]"
             exit 1
             ;;
     esac
@@ -46,7 +60,28 @@ if [ "$ROLE" != "master" ] && [ "$ROLE" != "node" ]; then
     exit 1
 fi
 
+if [ -z "$MYSQL_USER" ]; then
+    echo -e "\033[31m[mysql-user 不能为空]\033[0m"
+    exit 1
+fi
+
 echo -e "\033[34m[部署角色: $ROLE]\033[0m"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo -e "\033[31m[请使用 root 用户执行 install.sh]\033[0m"
+    exit 1
+fi
+
+echo -e "\033[34m[检查基础依赖]\033[0m"
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y build-essential wget unzip tar ca-certificates openssl libssl-dev pkg-config sudo cron
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y gcc gcc-c++ make wget unzip tar ca-certificates openssl openssl-devel pkgconfig sudo cronie
+else
+    echo -e "\033[31m[未识别包管理器，请先安装 gcc/make/wget/unzip/tar/openssl-devel/pkg-config/sudo]\033[0m"
+    exit 1
+fi
 
 # 创建 webuser 用户
 if ! id -u webuser >/dev/null 2>&1; then
@@ -60,13 +95,32 @@ OPENRESTY_PATH=/opt/openresty
 ZHONGKUI_PATH=$OPENRESTY_PATH/zhongkui-waf
 GEOIP_DATABASE_PATH=/opt/openresty/share/GeoIP
 
-cd /usr/local/src
+mkdir -p "$SRC_DIR"
+if [ -d "$SCRIPT_DIR/waf" ]; then
+    echo -e "\033[34m[同步 waf 目录离线安装包到 $SRC_DIR]\033[0m"
+    for pkg in \
+        openresty-1.25.3.2.tar.gz \
+        libmaxminddb-1.7.1.tar.gz \
+        libinjection-master.zip \
+        luaossl-rel-20220711.tar.gz \
+        luafilesystem-master.zip \
+        GeoLite2-City.mmdb
+    do
+        if [ -f "$SCRIPT_DIR/waf/$pkg" ] && [ ! -f "$SRC_DIR/$pkg" ]; then
+            cp "$SCRIPT_DIR/waf/$pkg" "$SRC_DIR/$pkg"
+            echo -e "\033[34m[已复制 $pkg]\033[0m"
+        fi
+    done
+fi
+
+cd "$SRC_DIR"
 if [ ! -f "openresty-1.25.3.2.tar.gz" ]; then
     echo -e "\033[34m[未发现 openresty-1.25.3.2.tar.gz 文件，开始下载]\033[0m"
     wget https://openresty.org/download/openresty-1.25.3.2.tar.gz
 else
     echo -e "\033[34m[发现 openresty-1.25.3.2.tar.gz 文件，跳过下载]\033[0m"
 fi
+rm -rf openresty-1.25.3.2
 tar zxf openresty-1.25.3.2.tar.gz
 cd openresty-1.25.3.2
 
@@ -93,7 +147,7 @@ make && make install
 echo -e "\033[34m[openresty安装成功]\033[0m"
 
 
-cd /usr/local/src
+cd "$SRC_DIR"
 if [ -d "$SCRIPT_DIR/conf" ] && [ -f "$SCRIPT_DIR/init.lua" ]; then
     echo -e "\033[34m[使用当前目录代码安装 ZhongKui-WAF]\033[0m"
     if [ -d "$ZHONGKUI_PATH" ] && [ "$(cd "$SCRIPT_DIR" && pwd)" != "$ZHONGKUI_PATH" ]; then
@@ -108,11 +162,12 @@ if [ -d "$SCRIPT_DIR/conf" ] && [ -f "$SCRIPT_DIR/init.lua" ]; then
 else
     if [ ! -f "zhongkui-waf-master.zip" ]; then
         echo -e "\033[34m[未发现 zhongkui-waf-master.zip 文件，开始下载]\033[0m"
-        wget -O /usr/local/src/zhongkui-waf-master.zip https://github.com/bukaleyang/zhongkui-waf/archive/refs/heads/master.zip --no-check-certificate
+        wget -O "$SRC_DIR/zhongkui-waf-master.zip" https://github.com/bukaleyang/zhongkui-waf/archive/refs/heads/master.zip --no-check-certificate
     else
         echo -e "\033[34m[发现 zhongkui-waf-master.zip 文件，跳过下载]\033[0m"
     fi
-    unzip zhongkui-waf-master.zip
+    rm -rf zhongkui-waf-master
+    unzip -q zhongkui-waf-master.zip
     if [ -d "$ZHONGKUI_PATH" ]; then
         BACKUP_PATH="${ZHONGKUI_PATH}.bak.$(date +%Y%m%d%H%M%S)"
         mv "$ZHONGKUI_PATH" "$BACKUP_PATH"
@@ -135,13 +190,14 @@ echo -e "\033[34m[hack目录已创建]\033[0m"
 echo -e "\033[34m[zhongkui-waf安装成功]\033[0m"
 
 
-cd /usr/local/src
+cd "$SRC_DIR"
 if [ ! -f "libmaxminddb-1.7.1.tar.gz" ]; then
     echo -e "\033[34m[未发现 libmaxminddb-1.7.1.tar.gz 文件，开始下载]\033[0m"
     wget https://github.com/maxmind/libmaxminddb/releases/download/1.7.1/libmaxminddb-1.7.1.tar.gz
 else
     echo -e "\033[34m[发现 libmaxminddb-1.7.1.tar.gz 文件，跳过下载]\033[0m"
 fi
+rm -rf libmaxminddb-1.7.1
 tar -zxf libmaxminddb-1.7.1.tar.gz
 cd ./libmaxminddb-1.7.1
 ./configure
@@ -151,36 +207,31 @@ ldconfig
 echo -e "\033[34m[libmaxminddb安装成功]\033[0m"
 
 
-cd /usr/local/src
+cd "$SRC_DIR"
 if [ ! -f "libinjection-master.zip" ]; then
     echo -e "\033[34m[未发现 libinjection-master.zip 文件，开始下载]\033[0m"
-    wget -O /usr/local/src/libinjection-master.zip https://github.com/client9/libinjection/archive/refs/heads/master.zip
+    wget -O "$SRC_DIR/libinjection-master.zip" https://github.com/client9/libinjection/archive/refs/heads/master.zip
 else
     echo -e "\033[34m[发现 libinjection-master.zip 文件，跳过下载]\033[0m"
 fi
-unzip libinjection-master.zip
+rm -rf libinjection-master
+unzip -q libinjection-master.zip
 cd ./libinjection-master
 make all
 mv ./src/libinjection.so $OPENRESTY_PATH/lualib/libinjection.so
 echo -e "\033[34m[libinjection安装成功]\033[0m"
 
 
-cd /usr/local/src
+cd "$SRC_DIR"
 if [ ! -f "luaossl-rel-20220711.tar.gz" ]; then
     echo -e "\033[34m[未发现 luaossl-rel-20220711.tar.gz 文件，开始下载]\033[0m"
-    wget -O /usr/local/src/luaossl-rel-20220711.tar.gz https://github.com/wahern/luaossl/archive/refs/tags/rel-20220711.tar.gz
+    wget -O "$SRC_DIR/luaossl-rel-20220711.tar.gz" https://github.com/wahern/luaossl/archive/refs/tags/rel-20220711.tar.gz
 else
     echo -e "\033[34m[发现 luaossl-rel-20220711.tar.gz 文件，跳过下载]\033[0m"
 fi
+rm -rf luaossl-rel-20220711
 tar -zxf luaossl-rel-20220711.tar.gz
 cd ./luaossl-rel-20220711
-
-# 安装 OpenSSL 开发库（如果尚未安装）
-if command -v apt-get >/dev/null 2>&1; then
-    apt-get update && apt-get install -y libssl-dev pkg-config
-elif command -v yum >/dev/null 2>&1; then
-    yum install -y openssl-devel pkgconfig
-fi
 
 # 使用 pkg-config 获取 OpenSSL 编译参数
 if command -v pkg-config >/dev/null 2>&1; then
@@ -201,14 +252,15 @@ make install5.1
 echo -e "\033[34m[luaossl安装成功]\033[0m"
 
 
-cd /usr/local/src
+cd "$SRC_DIR"
 if [ ! -f "luafilesystem-master.zip" ]; then
     echo -e "\033[34m[未发现 luafilesystem-master.zip 文件，开始下载]\033[0m"
-    wget -O /usr/local/src/luafilesystem-master.zip https://github.com/lunarmodules/luafilesystem/archive/refs/heads/master.zip
+    wget -O "$SRC_DIR/luafilesystem-master.zip" https://github.com/lunarmodules/luafilesystem/archive/refs/heads/master.zip
 else
     echo -e "\033[34m[发现 luafilesystem-master.zip 文件，跳过下载]\033[0m"
 fi
-unzip luafilesystem-master.zip
+rm -rf luafilesystem-master
+unzip -q luafilesystem-master.zip
 cd ./luafilesystem-master
 make INCS=-I$OPENRESTY_PATH/luajit/include/luajit-2.1
 mv ./src/lfs.so $OPENRESTY_PATH/lualib/lfs.so
@@ -220,15 +272,16 @@ echo -e "\033[34m[luafilesystem安装成功]\033[0m"
 mkdir -p $GEOIP_DATABASE_PATH
 
 # 检查是否存在 GeoLite2-City.mmdb 文件
-if [ -f "/usr/local/src/GeoLite2-City.mmdb" ]; then
+if [ -f "$SRC_DIR/GeoLite2-City.mmdb" ]; then
     echo -e "\033[34m[发现 GeoLite2-City.mmdb 文件，直接复制]\033[0m"
-    cp /usr/local/src/GeoLite2-City.mmdb $GEOIP_DATABASE_PATH/
+    cp "$SRC_DIR/GeoLite2-City.mmdb" $GEOIP_DATABASE_PATH/
 else
     echo -e "\033[34m[未发现 GeoLite2-City.mmdb 文件，安装 geoipupdate]\033[0m"
-    cd /usr/local/src
-    if [ ! -x "geoipupdate_6.0.0_linux_386.tar.gz" ]; then
+    cd "$SRC_DIR"
+    if [ ! -f "geoipupdate_6.0.0_linux_386.tar.gz" ]; then
         wget https://github.com/maxmind/geoipupdate/releases/download/v6.0.0/geoipupdate_6.0.0_linux_386.tar.gz
     fi
+    rm -rf geoipupdate_6.0.0_linux_386
     tar -zxf geoipupdate_6.0.0_linux_386.tar.gz
     mv ./geoipupdate_6.0.0_linux_386/geoipupdate /usr/local/bin/geoipupdate
 
@@ -333,7 +386,6 @@ if [ "$ROLE" = "master" ] && [ "$INIT_LOCAL_MYSQL" = "on" ]; then
 
     # 创建 MySQL 用户和数据库
     MYSQL_PASSWORD="#rwcTjKk&6xR"
-    MYSQL_USER="zhongkui"
     MYSQL_DATABASE="zhongkui_waf"
 
     # 执行 MySQL 命令
@@ -342,6 +394,11 @@ if [ "$ROLE" = "master" ] && [ "$INIT_LOCAL_MYSQL" = "on" ]; then
     mysql -u root -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE};"
     mysql -u root -e "GRANT ALL PRIVILEGES ON ${MYSQL_DATABASE}.* TO '${MYSQL_USER}'@'127.0.0.1';"
     mysql -u root -e "FLUSH PRIVILEGES;"
+    sed -i '/"mysql"[[:space:]]*:/,/"redis"[[:space:]]*:/ {
+        s/"host": *"[^"]*"/"host": "127.0.0.1"/
+        s/"port": *"[^"]*"/"port": "3306"/
+        s/"user": *"[^"]*"/"user": "'"$MYSQL_USER"'"/
+    }' "$ZHONGKUI_PATH/conf/system.json"
 
     echo -e "\033[34m[MySQL 数据库配置完成]\033[0m"
 else
