@@ -29,6 +29,8 @@ local _M = {}
 local database = get_system_config('mysql').database
 
 local BATCH_SIZE = 300
+local DEFAULT_NODE_EXPIRE = 120
+local DEFAULT_NODE_RETENTION = 86400
 
 local SQL_CHECK_TABLE =
 [[SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE table_schema='%s' AND table_name='%s']]
@@ -297,6 +299,29 @@ local function normalize_hour_to_datetime(access_time)
     return access_time
 end
 
+local function get_cluster_node_expire_seconds()
+    local system_cfg = get_system_config("system") or {}
+    local expire = tonumber(system_cfg.expire)
+    if not expire or expire <= 0 then
+        expire = DEFAULT_NODE_EXPIRE
+    end
+    return floor(expire)
+end
+
+local function get_cluster_node_retention_seconds()
+    local system_cfg = get_system_config("system") or {}
+    local retention = tonumber(system_cfg.node_retention)
+    if not retention or retention <= 0 then
+        retention = DEFAULT_NODE_RETENTION
+    end
+
+    local min_retention = get_cluster_node_expire_seconds() * 2
+    if retention < min_retention then
+        retention = min_retention
+    end
+    return floor(retention)
+end
+
 local SQL_GET_REQUEST_TRAFFIC_BY_HOUR = [[
     SELECT DATE_FORMAT(access_time, '%Y-%m-%d %H') AS hour,
            SUM(total_requests) AS traffic,
@@ -316,7 +341,8 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
         hostname VARCHAR(128) COMMENT '节点主机名',
         last_seen DATETIME COMMENT '最近活跃时间',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-        UNIQUE KEY uniq_ip (ip)
+        UNIQUE KEY uniq_ip (ip),
+        INDEX idx_last_seen (last_seen)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ]]
 
@@ -328,6 +354,11 @@ local SQL_INSERT_CLUSTER_NODE = [[
         version = VALUES(version),
         hostname = VALUES(hostname),
         last_seen = VALUES(last_seen)
+]]
+
+local SQL_DELETE_STALE_CLUSTER_NODES = [[
+    DELETE FROM waf_cluster_node
+    WHERE last_seen < NOW() - INTERVAL %d SECOND
 ]]
 
 
@@ -376,19 +407,25 @@ function _M.check_table(premature)
         end
     end
 
-    -- 兼容老版本表结构：attack_log 可能没有 request_id 唯一索引，这里补齐一次。
-    local idx_name = "idx_unique_attack_log_request_id"
-    local idx_res, idx_err = mysql.query(format(SQL_CHECK_INDEX,
-        quote_sql_str(database), quote_sql_str("attack_log"), quote_sql_str(idx_name)))
-    if idx_res and idx_res[1] and idx_res[1].c == '0' then
-        local alter_sql = "ALTER TABLE attack_log ADD UNIQUE INDEX " .. idx_name .. " (request_id)"
-        local ok, alter_err = mysql.query(alter_sql)
-        if not ok then
-            ngx.log(ngx.ERR, "failed to add unique index on attack_log.request_id: ", alter_err)
+    local function ensure_index(table_name, index_name, ddl)
+        local idx_res, idx_err = mysql.query(format(SQL_CHECK_INDEX,
+            quote_sql_str(database), quote_sql_str(table_name), quote_sql_str(index_name)))
+        if idx_res and idx_res[1] and idx_res[1].c == '0' then
+            local ok = mysql.query(ddl)
+            if not ok then
+                ngx.log(ngx.ERR, "failed to add index ", index_name, " on ", table_name)
+            end
+        elseif not idx_res then
+            ngx.log(ngx.ERR, "failed to check index ", index_name, " on ", table_name, ": ", idx_err)
         end
-    elseif not idx_res then
-        ngx.log(ngx.ERR, "failed to check attack_log unique index: ", idx_err)
     end
+
+    -- 兼容老版本表结构：attack_log 可能没有 request_id 唯一索引，这里补齐一次。
+    ensure_index("attack_log", "idx_unique_attack_log_request_id",
+        "ALTER TABLE attack_log ADD UNIQUE INDEX idx_unique_attack_log_request_id (request_id)")
+    -- 兼容老版本表结构：waf_cluster_node 可能没有 last_seen 索引，这里补齐一次。
+    ensure_index("waf_cluster_node", "idx_last_seen",
+        "ALTER TABLE waf_cluster_node ADD INDEX idx_last_seen (last_seen)")
 end
 
 function _M.update_traffic_stats()
@@ -1226,8 +1263,8 @@ end
 function _M.report_node_info()
     local node_id = get_local_ip()
     local key = "waf:cluster:nodes:" .. node_id
-    local cfg = get_system_config("system")
-    local expire = cfg.expire or 120
+    local cfg = get_system_config("system") or {}
+    local expire = get_cluster_node_expire_seconds()
 
     local info = {
         ip = node_id,
@@ -1277,6 +1314,21 @@ function _M.write_cluster_nodes_to_mysql()
         if not res then
             ngx.log(ngx.ERR, "failed to insert node info: ", err)
         end
+    end
+end
+
+function _M.cleanup_offline_cluster_nodes()
+    local retention = get_cluster_node_retention_seconds()
+    local sql = format(SQL_DELETE_STALE_CLUSTER_NODES, retention)
+    local res = mysql.query(sql)
+    if not res then
+        ngx.log(ngx.ERR, "failed to cleanup stale cluster nodes, retention=", retention)
+        return
+    end
+
+    local affected = res.affected_rows or 0
+    if affected > 0 then
+        ngx.log(ngx.INFO, "cleanup stale cluster nodes success, affected=", affected, ", retention=", retention)
     end
 end
 

@@ -259,6 +259,8 @@ if is_global_option_on("waf") then
                 utils.start_timer_every(120, sql.write_attack_type_traffic_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_traffic_stats_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_cluster_nodes_to_mysql)
+                -- 清理长期离线节点，避免节点表持续膨胀。
+                utils.start_timer_every(300, sql.cleanup_offline_cluster_nodes)
             elseif standalone_mode then
                 -- 如果是单机模式，则定时将 内存中的 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)

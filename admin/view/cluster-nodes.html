@@ -86,10 +86,7 @@
             title: '操作',
             align: 'center',
             templet: function (d) {
-              var expire = 120;
-              var now = new Date().getTime() / 1000;
-              var last = new Date(d.last_seen).getTime() / 1000;
-              if (now - last > expire) {
+              if (Number(d.is_online) === 0) {
                 return '<button class="layui-btn layui-btn-danger layui-btn-xs btn-del" data-ip="' + d.ip + '">删除</button>';
               }
               return '';
@@ -100,11 +97,8 @@
         limits: [10, 20, 50, 100],
         limit: 10,
         done: function (res, curr, count) {
-          var expire = 120;
-          var now = new Date().getTime() / 1000;
           res.data.forEach(function (row, index) {
-            var last = new Date(row.last_seen).getTime() / 1000;
-            if (now - last > expire) {
+            if (Number(row.is_online) === 0) {
               $('tr[data-index=' + index + ']').addClass('offline-row');
             }
           });

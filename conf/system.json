@@ -45,6 +45,7 @@
     },
     "system": {
         "version": "1.0.0",
-        "expire": 120
+        "expire": 120,
+        "node_retention": 86400
     }
 }

@@ -54,12 +54,13 @@ local function listNodes()
 
     if response.count > 0 then
         local sql_data = string.format([[
-            SELECT ip, version, hostname, last_seen
+            SELECT ip, version, hostname, last_seen,
+                   CASE WHEN last_seen >= NOW() - INTERVAL %d SECOND THEN 1 ELSE 0 END AS is_online
             FROM waf_cluster_node
             %s
             ORDER BY last_seen DESC
             LIMIT %d OFFSET %d
-        ]], filter, limit, offset)
+        ]], expire, filter, limit, offset)
 
         res, err = mysql.query(sql_data)
         if res then
@@ -71,6 +72,7 @@ local function listNodes()
         end
     end
 
+    response.expire = expire
     return response
 end
 
@@ -99,7 +101,8 @@ local function get_node_stats()
         data = {
             total = total,
             online = online,
-            offline = math.max(total - online, 0)
+            offline = math.max(total - online, 0),
+            expire = expire
         }
     }
 end
