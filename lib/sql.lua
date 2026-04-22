@@ -33,6 +33,12 @@ local BATCH_SIZE = 300
 local SQL_CHECK_TABLE =
 [[SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE table_schema='%s' AND table_name='%s']]
 
+local SQL_CHECK_INDEX = [[
+    SELECT COUNT(*) AS c
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE table_schema = %s AND table_name = %s AND index_name = %s
+]]
+
 local SQL_CREATE_TABLE_WAF_STATUS = [[
     CREATE TABLE `waf_status` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -176,6 +182,7 @@ local SQL_CREATE_TABLE_ATTACK_LOG = [[
         `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`)
     ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4;
+    CREATE UNIQUE INDEX idx_unique_attack_log_request_id ON attack_log (request_id);
 ]]
 
 local SQL_INSERT_ATTACK_LOG = [[
@@ -184,6 +191,10 @@ local SQL_INSERT_ATTACK_LOG = [[
         ip_longitude, ip_latitude, http_method, server_name, user_agent, referer, request_protocol, request_uri,
         request_body, http_status, response_body, request_time, attack_type, severity_level, security_module, hit_rule, action)
     VALUES
+]]
+
+local SQL_EXISTS_ATTACK_LOG_BY_REQUEST_ID = [[
+    SELECT 1 FROM attack_log WHERE request_id = %s LIMIT 1
 ]]
 
 local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
@@ -267,6 +278,25 @@ local SQL_INSERT_WAF_TRAFFIC_STATS = [[
         attack_requests = VALUES(attack_requests)
 ]]
 
+local function is_duplicate_entry_error(err)
+    if not err then
+        return false
+    end
+    return string.find(err, "Duplicate entry", 1, true) ~= nil
+end
+
+local function normalize_hour_to_datetime(access_time)
+    if not access_time then
+        return nil
+    end
+
+    if string.match(access_time, "^%d%d%d%d%-%d%d%-%d%d %d%d$") then
+        return access_time .. ":00:00"
+    end
+
+    return access_time
+end
+
 local SQL_GET_REQUEST_TRAFFIC_BY_HOUR = [[
     SELECT DATE_FORMAT(access_time, '%Y-%m-%d %H') AS hour,
            SUM(total_requests) AS traffic,
@@ -344,6 +374,20 @@ function _M.check_table(premature)
                 ngx.log(4, 'failed to create table ' .. name .. ' ', err)
             end
         end
+    end
+
+    -- 兼容老版本表结构：attack_log 可能没有 request_id 唯一索引，这里补齐一次。
+    local idx_name = "idx_unique_attack_log_request_id"
+    local idx_res, idx_err = mysql.query(format(SQL_CHECK_INDEX,
+        quote_sql_str(database), quote_sql_str("attack_log"), quote_sql_str(idx_name)))
+    if idx_res and idx_res[1] and idx_res[1].c == '0' then
+        local alter_sql = "ALTER TABLE attack_log ADD UNIQUE INDEX " .. idx_name .. " (request_id)"
+        local ok, alter_err = mysql.query(alter_sql)
+        if not ok then
+            ngx.log(ngx.ERR, "failed to add unique index on attack_log.request_id: ", alter_err)
+        end
+    elseif not idx_res then
+        ngx.log(ngx.ERR, "failed to check attack_log unique index: ", idx_err)
     end
 end
 
@@ -812,8 +856,10 @@ function _M.write_ip_block_log_redis_to_mysql()
 
         local res, err = mysql.query(sql_str .. redis_value)
         if not res then
-            ngx.log(4, "failed to write ip block log to mysql: ", err)
-            goto continue
+            if not is_duplicate_entry_error(err) then
+                ngx.log(4, "failed to write ip block log to mysql: ", err)
+                goto continue
+            end
         end
 
         -- 删除 Redis key
@@ -866,32 +912,46 @@ function _M.write_attack_type_traffic_to_redis()
 end
 
 function _M.write_attack_type_traffic_redis_to_mysql()
-    local redis_key = "waf:attack_type_traffic_map:" .. ngx.today()
-
-    local hash_data, err = redis_cli.hgetall(redis_key)
-    if not hash_data then
-        ngx.log(ngx.ERR, "failed to hgetall attack_type_traffic from redis: ", err)
+    local redis_pattern = "waf:attack_type_traffic_map:*"
+    local redis_keys, err = redis_cli.scan(redis_pattern)
+    if not redis_keys then
+        ngx.log(ngx.ERR, "failed to scan attack_type_traffic redis keys: ", err)
         return
     end
 
-    -- Redis 返回的是扁平数组：{ "type1", "count1", "type2", "count2", ... }
-    for i = 1, #hash_data, 2 do
-        local attack_type = tostring(hash_data[i])
-        local attack_count = tonumber(hash_data[i + 1]) or 0
+    for _, redis_key in ipairs(redis_keys) do
+        local request_date = redis_key:match("^waf:attack_type_traffic_map:(%d%d%d%d%-%d%d%-%d%d)$")
+        if not request_date then
+            request_date = ngx.today()
+        end
 
-        if attack_count > 0 then
-            local sql = string.format(
-                "INSERT INTO attack_type_traffic (attack_type, attack_count, request_date) " ..
-                "VALUES (%s, %d, CURDATE()) " ..
-                "ON DUPLICATE KEY UPDATE attack_count = %d",
-                quote_sql_str(attack_type), attack_count, attack_count
-            )
+        local hash_data, hgetall_err = redis_cli.hgetall(redis_key)
+        if not hash_data then
+            ngx.log(ngx.ERR, "failed to hgetall attack_type_traffic from redis key ", redis_key, ": ", hgetall_err)
+            goto continue
+        end
 
-            local res, err = mysql.query(sql)
-            if not res then
-                ngx.log(ngx.ERR, "failed to insert attack_type_traffic into mysql: ", err)
+        -- Redis 返回的是扁平数组：{ "type1", "count1", "type2", "count2", ... }
+        for i = 1, #hash_data, 2 do
+            local attack_type = tostring(hash_data[i])
+            local attack_count = tonumber(hash_data[i + 1]) or 0
+
+            if attack_count > 0 then
+                local sql = string.format(
+                    "INSERT INTO attack_type_traffic (attack_type, attack_count, request_date) " ..
+                    "VALUES (%s, %d, %s) " ..
+                    "ON DUPLICATE KEY UPDATE attack_count = VALUES(attack_count)",
+                    quote_sql_str(attack_type), attack_count, quote_sql_str(request_date)
+                )
+
+                local res, insert_err = mysql.query(sql)
+                if not res then
+                    ngx.log(ngx.ERR, "failed to insert attack_type_traffic into mysql: ", insert_err)
+                end
             end
         end
+
+        ::continue::
     end
 
     -- 删除 Redis 中的 hash key（可选，按需）
@@ -899,6 +959,21 @@ function _M.write_attack_type_traffic_redis_to_mysql()
     -- if not ok then
     --     ngx.log(ngx.ERR, "failed to delete attack_type_traffic redis key: ", err)
     -- end
+end
+
+local function attack_log_exists(request_id)
+    if not request_id or request_id == "" then
+        return false
+    end
+
+    local sql = format(SQL_EXISTS_ATTACK_LOG_BY_REQUEST_ID, quote_sql_str(request_id))
+    local res, err = mysql.query(sql)
+    if not res then
+        ngx.log(ngx.ERR, "failed to query attack_log by request_id: ", err)
+        return false
+    end
+
+    return res[1] ~= nil
 end
 
 function _M.get_attack_type_traffic()
@@ -998,13 +1073,13 @@ function _M.write_waf_traffic_stats_redis_to_mysql()
 
     for i = 2, #data do -- 跳过 header 行
         local row = data[i]
-        local access_time = row[1]
+        local access_time = normalize_hour_to_datetime(row[1])
         local total_requests = tonumber(row[2]) or 0
         local attack_requests = tonumber(row[3]) or 0
         local blocked_requests = tonumber(row[4]) or 0
 
-        -- 可选：只写入有数据的记录
-        if total_requests > 0 or attack_requests > 0 or blocked_requests > 0 then
+        -- 只写入有效时间且有数据的记录
+        if access_time and (total_requests > 0 or attack_requests > 0 or blocked_requests > 0) then
             local sql = format(SQL_INSERT_WAF_TRAFFIC_STATS,
                 quote_sql_str(access_time),
                 total_requests,
@@ -1063,6 +1138,15 @@ function _M.write_attack_log_redis_to_mysql()
         end
 
         local request_id = log_data.request_id or ""
+
+        if attack_log_exists(request_id) then
+            local ok_del, del_err = redis_cli.del(redis_key)
+            if not ok_del then
+                ngx.log(ngx.ERR, "failed to delete duplicated attack log key from redis: ", del_err)
+            end
+            goto continue
+        end
+
         local ip = log_data.ip or ""
         local ip_country_code = log_data.ip_country_code or ""
         local ip_country_cn = log_data.ip_country_cn or ""
@@ -1103,6 +1187,7 @@ function _M.write_attack_log_redis_to_mysql()
             quote_sql_str(request_body), http_status, quote_sql_str(response_body), quote_sql_str(request_time),
             quote_sql_str(attack_type), quote_sql_str(severity_level), quote_sql_str(security_module),
             quote_sql_str(hit_rule), quote_sql_str(action))
+        sql_str = sql_str .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
 
         local res, err = mysql.query(sql_str)
         if not res then
@@ -1110,11 +1195,11 @@ function _M.write_attack_log_redis_to_mysql()
             goto continue
         end
 
-        -- -- 删除 Redis key
-        -- local ok, err = redis_cli.del(redis_key)
-        -- if not ok then
-        --     ngx.log(4, "failed to delete attack log key from redis: ", err)
-        -- end
+        -- 写入成功后删除 Redis key，避免重复落库。
+        local ok_del, del_err = redis_cli.del(redis_key)
+        if not ok_del then
+            ngx.log(ngx.ERR, "failed to delete attack log key from redis: ", del_err)
+        end
 
         ::continue::
     end

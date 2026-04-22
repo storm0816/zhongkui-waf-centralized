@@ -91,6 +91,18 @@ node 节点配置示例：
 
 注意：`conf/system.json`是标准 JSON 文件，不能直接写注释，否则 WAF 启动时会解析失败。部署时建议为 master 和 node 分别维护独立的`system.json`模板。
 
+#### 第三步（已完成）：汇总链路幂等与数据一致性
+
+| 模块 | 调整点 | 作用 |
+|---|---|---|
+| 攻击日志落库 | `attack_log.request_id`增加唯一索引`idx_unique_attack_log_request_id`；写入时增加`ON DUPLICATE KEY UPDATE`；成功后删除 Redis 队列 key | 防止重复写入，重复消费时自动幂等 |
+| 老环境迁移 | 启动初始化阶段自动检查`attack_log`唯一索引，缺失时补齐 | 兼容历史库，升级无需手工改表 |
+| 攻击类型统计 | MySQL 同步时扫描`waf:attack_type_traffic_map:*`所有日期 key，并按 key 日期写入 | 修复仅同步当天数据导致的统计缺失 |
+| IP 封禁日志 | 写库时识别并跳过重复键错误（Duplicate entry） | 减少重复数据导致的任务中断 |
+| 流量按小时统计 | 将`YYYY-MM-DD HH`统一归一为`YYYY-MM-DD HH:00:00`后再写库 | 避免时间格式不一致导致统计异常 |
+
+对应关键实现文件：`lib/sql.lua`（含建表、迁移检查、Redis->MySQL 同步逻辑）。
+
 ## ZhongKui-WAF
 
 钟馗是中国传统文化中的一个神话人物，被誉为"捉鬼大师"，专门驱逐邪恶之物。`Zhongkui-WAF`的命名灵感来源于这一神话人物，寓意着该软件能够像钟馗一样，有效地保护 Web 应用免受各种恶意攻击和威胁。
