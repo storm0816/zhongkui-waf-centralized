@@ -5,7 +5,7 @@
         "jsonFormat": "off"
     },
     "geoip": {
-        "file": "/opt/share/GeoIP/GeoLite2-City.mmdb",
+        "file": "/opt/openresty/share/GeoIP/GeoLite2-City.mmdb",
         "language": "zh-CN"
     },
     "html": "",
