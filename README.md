@@ -34,19 +34,19 @@
 
 ### 安装
 
-执行安装脚本`install.sh`，自动安装`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`：
+执行安装脚本`install.sh`，自动安装`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码。
 
 ```bash
 chmod +x install.sh
-./install.sh
+./install.sh --role master
+# 或
+./install.sh --role node
 ```
 
-安装完成后，修改`nginx.conf`，在`http`模块下添加`zhongkui-waf`相关配置：
+如果需要在 master 机器上同时初始化本机 MySQL，可额外添加`--init-local-mysql`：
 
-```nginx
-    include /opt/openresty/zhongkui-waf/admin/conf/waf.conf;
-    include /opt/openresty/zhongkui-waf/admin/conf/admin.conf;
-    include /opt/openresty/zhongkui-waf/admin/conf/sites.conf;
+```bash
+./install.sh --role master --init-local-mysql
 ```
 
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。

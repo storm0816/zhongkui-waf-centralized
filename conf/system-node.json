@@ -11,23 +11,16 @@
     "html": "",
     "secret": "2215D605B798A5CCEB6D5C900EE3585B",
     "mysql": {
-        "state": "on",
-        "host": "10.15.108.11",
-        "port": "33071",
-        "user": "zhongkui",
-        "password": "MJI(0okn",
-        "database": "zhongkui_waf",
-        "poolSize": "10",
-        "timeout": 5000
+        "state": "off"
     },
     "redis": {
         "state": "on",
         "host": "10.15.108.11",
-        "password": "dzhinternet^!",
+        "password": "Push@789",
         "timeouts": "1000,1000,1000",
         "poolSize": 10,
         "ssl": "off",
-        "port": 13972,
+        "port": 16381,
         "expire_time": 1800
     },
     "rulesSort": {
@@ -45,7 +38,7 @@
     },
     "system": {
         "version": "1.0.0",
-        "expire": 120
+        "expire": 120,
+        "node_retention": 86400
     }
-    
 }

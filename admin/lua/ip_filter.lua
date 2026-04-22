@@ -163,6 +163,14 @@ function _M.do_request()
             content = args['content']
 
             if id and content then
+                -- 黑白名单按“每行一条”解析，不允许逗号分隔，避免加载时报格式错误。
+                if string.find(content, ",", 1, true) or string.find(content, "，", 1, true) then
+                    response.code = 500
+                    response.msg = "名单格式错误：请每行填写一条IP/网段，不要使用逗号分隔"
+                    ngx.say(cjson_encode(response))
+                    return
+                end
+
                 if id == 1 then
                     write_string_to_file(IP_WHITELIST_PATH, trim(content))
                 elseif id == 2 then

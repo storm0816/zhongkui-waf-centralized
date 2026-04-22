@@ -70,13 +70,16 @@
 			<div class="layui-row layui-col-space10">
 				<div class="layui-col-md12">名单列表</div>
 			</div>
-			<div class="layui-row layui-col-space10">
-				<div class="layui-col-md12">
-					<div class="layui-form-text">
-						<textarea name="content" placeholder="IP或网段，每行一个，不能为空。" style="height: 210px;" class="layui-textarea"></textarea>
+				<div class="layui-row layui-col-space10">
+					<div class="layui-col-md12">
+						<div class="layui-form-text">
+							<textarea name="content" placeholder="IP或网段，每行一个，不能为空；不要使用逗号分隔。" style="height: 210px;" class="layui-textarea"></textarea>
+							<div class="layui-form-mid layui-word-aux" style="padding-left: 0;">
+								填写示例：<code>1.2.3.4</code> 或 <code>10.0.0.0/24</code>。多条请换行，不要用逗号（`,` 或 `，`）。
+							</div>
+						</div>
 					</div>
 				</div>
-			</div>
 			<div class="layui-row layui-col-space10">
 				<div class="layui-col-md12">
 					<div style="float: right;">
@@ -311,8 +314,24 @@
 				// ip名单列表提交保存
 				form.on('submit(filter-iplist-save)', function(data) {
 					var field = data.field;
+					var content = (field.content || '').trim();
+					var lines = content.split('\n');
+					var hasComma = false;
 
-					$.post('/ip/filter/rule/update', {id: field.id, content: field.content.trim()}, function(data) {
+					$.each(lines, function(i, line) {
+						var item = (line || '').trim();
+						if (item.length > 0 && (item.indexOf(',') >= 0 || item.indexOf('，') >= 0)) {
+							hasComma = true;
+							return false;
+						}
+					});
+
+					if (hasComma) {
+						popup.failure("名单格式错误：每行一条IP/网段，不能使用逗号分隔");
+						return false;
+					}
+
+					$.post('/ip/filter/rule/update', {id: field.id, content: content}, function(data) {
 						if (data && data.code == 200) {
 							table.reloadData('id-table-iplist');
 							layer.closeLast('page');

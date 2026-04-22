@@ -17,6 +17,50 @@
 | `off` 或 `on` | `off` | 任意 | 单机模式 |
 | `off` | `on` | 任意 | 单机模式（未启用 Redis） |
 
+### 配置文件模板
+
+项目底层代码保持一套，master 和 node 通过配置文件区分角色。运行时程序只读取`conf/system.json`，部署时按角色选择模板复制为`conf/system.json`。
+
+| 文件 | 用途 |
+|---|---|
+| `conf/system-master.json` | master 节点模板，开启`redis`、`centralized`、`master`，并开启 MySQL 汇总落库 |
+| `conf/system-node.json` | node 节点模板，开启`redis`、`centralized`，关闭`master`；`mysql.state`为`off`，不配置 MySQL 连接信息 |
+| `conf/system.json` | 当前实例实际运行配置，启动时只读取这个文件 |
+
+master 节点部署时：
+
+```bash
+./install.sh --role master
+```
+
+node 节点部署时：
+
+```bash
+./install.sh --role node
+```
+
+安装脚本会优先安装当前目录中的代码，自动复制对应模板为`conf/system.json`，并生成 OpenResty 的`nginx.conf`。master 会 include `admin/conf/admin.conf`开放控制台，node 不会 include 控制台配置。
+
+默认不会在本机安装和初始化 MySQL。master 使用`conf/system-master.json`中的 MySQL 配置连接数据库；如果需要在 master 机器上同时初始化本机 MySQL，可以执行：
+
+```bash
+./install.sh --role master --init-local-mysql
+```
+
+如果是手工部署，也可以直接复制模板：
+
+```bash
+cp conf/system-master.json conf/system.json
+# 或
+cp conf/system-node.json conf/system.json
+```
+
+推荐所有节点使用同一套代码版本，只在部署阶段选择角色配置。这样可以避免 master/node 代码分叉，也方便后续升级和回滚。
+
+控制台建议只在 master 节点开放。node 节点只负责本机 WAF 拦截、拉取 master 黑名单、上报 Redis 数据，不建议 include `admin/conf/admin.conf`，避免在子节点误改配置。
+
+node 配置中保留`mysql.state = off`只是为了让代码按统一配置结构读取；node 不需要 MySQL 账号密码，也不会执行 Redis 到 MySQL 的汇总落库任务。
+
 ### 黑名单同步机制
 
 master 节点会将黑名单写入 Redis（key: `waf:masterIpBlackList`），采用结构化 payload：
