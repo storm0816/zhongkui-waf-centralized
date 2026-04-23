@@ -41,8 +41,11 @@
 | `--role master\|node` | `master` | 指定当前机器部署为 master 或 node |
 | `--init-local-mysql` | 关闭 | master 机器上同时安装并初始化本机 MySQL |
 | `--mysql-user USER` | `zhongkui_mac` | 配合`--init-local-mysql`使用，指定要创建并写入配置的 MySQL 账号 |
+| `--init-local-redis` | 关闭 | 使用`waf/redis16381.zip`安装并启动本机 Redis |
+| `--redis-port PORT` | `16381` | 配合`--init-local-redis`使用，指定本机 Redis 端口 |
+| `--redis-password PASSWORD` | `Push@789` | 配合`--init-local-redis`使用，指定本机 Redis 密码 |
 
-使用 root 执行安装脚本`install.sh`，自动安装基础编译工具、`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码，并自动把项目`waf/`目录下的离线安装包同步到`/usr/local/src`，缺失的包才会尝试联网下载。
+使用 root 执行安装脚本`install.sh`，自动安装基础编译工具、`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码，并自动把项目`waf/`目录下的离线安装包同步到`/usr/local/src`，缺失的包才会尝试联网下载。Redis 默认使用外部服务，只有显式添加`--init-local-redis`时才会安装包内 Redis。
 
 安装前先赋予执行权限：
 
@@ -55,12 +58,14 @@ chmod +x install.sh
 | 场景 | 安装命令 | 安装前需要确认 |
 |---|---|---|
 | master 使用外部 MySQL 和外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的`mysql`和`redis`连接信息 |
-| master 使用外部 MySQL，本机/外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的对应连接信息，不要加`--init-local-mysql` |
-| master 同时初始化本机 MySQL | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac` | Redis 仍需提前在`conf/system-master.json`中配置；MySQL 会自动切到`127.0.0.1:3306` |
+| master 使用外部 MySQL，本机 Redis | `sudo ./install.sh --role master --init-local-redis --redis-password Push@789` | MySQL 连接仍从`conf/system-master.json`读取；Redis 会自动切到`127.0.0.1:16381` |
+| master 同时初始化本机 MySQL 和本机 Redis | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac --init-local-redis --redis-password Push@789` | MySQL 会自动切到`127.0.0.1:3306`，Redis 会自动切到`127.0.0.1:16381` |
 | node 节点 | `sudo ./install.sh --role node` | 先修改`conf/system-node.json`中的 Redis 连接信息；node 不需要 MySQL |
 | 单机模式 | `sudo ./install.sh --role master` | 先将`conf/system-master.json`中的`centralized.state`改为`off`，并按需配置 MySQL/Redis |
 
 `--init-local-mysql`只用于 master 机器需要安装并初始化本机 MySQL 的场景。它会创建本机数据库`zhongkui_waf`和`--mysql-user`指定的账号，并把当前运行配置中的 MySQL 连接切换到`127.0.0.1:3306`。如果使用外部 MySQL，不要加这个参数。
+
+`--init-local-redis`只用于当前机器需要启动包内 Redis 的场景。Redis 安装目录为`/opt/openresty/redis16381`，systemd 服务名为`redis16381`，默认端口`16381`。如果使用外部 Redis，不要加这个参数。当前`waf/redis16381.zip`中的 Redis 二进制为 Linux x86-64 版本，ARM 服务器不能直接使用该离线包。
 
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 

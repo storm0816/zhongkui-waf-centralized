@@ -33,6 +33,12 @@ master 节点部署时：
 ./install.sh --role master
 ```
 
+如果 master 需要使用包内 Redis，可以额外添加`--init-local-redis`：
+
+```bash
+./install.sh --role master --init-local-redis --redis-password Push@789
+```
+
 node 节点部署时：
 
 ```bash

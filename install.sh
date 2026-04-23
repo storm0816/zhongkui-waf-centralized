@@ -13,7 +13,10 @@ echo "
 
 ROLE="master"
 INIT_LOCAL_MYSQL="off"
+INIT_LOCAL_REDIS="off"
 MYSQL_USER="zhongkui_mac"
+REDIS_PORT="16381"
+REDIS_PASSWORD="Push@789"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="/usr/local/src"
 
@@ -31,6 +34,10 @@ while [ $# -gt 0 ]; do
             INIT_LOCAL_MYSQL="on"
             shift
             ;;
+        --init-local-redis)
+            INIT_LOCAL_REDIS="on"
+            shift
+            ;;
         --mysql-user)
             if [ $# -lt 2 ]; then
                 echo -e "\033[31m[--mysql-user 需要指定账号]\033[0m"
@@ -43,13 +50,37 @@ while [ $# -gt 0 ]; do
             MYSQL_USER="${1#*=}"
             shift
             ;;
+        --redis-port)
+            if [ $# -lt 2 ]; then
+                echo -e "\033[31m[--redis-port 需要指定端口]\033[0m"
+                exit 1
+            fi
+            REDIS_PORT="$2"
+            shift 2
+            ;;
+        --redis-port=*)
+            REDIS_PORT="${1#*=}"
+            shift
+            ;;
+        --redis-password)
+            if [ $# -lt 2 ]; then
+                echo -e "\033[31m[--redis-password 需要指定密码]\033[0m"
+                exit 1
+            fi
+            REDIS_PASSWORD="$2"
+            shift 2
+            ;;
+        --redis-password=*)
+            REDIS_PASSWORD="${1#*=}"
+            shift
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER]"
+            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD]"
             exit 0
             ;;
         *)
             echo -e "\033[31m[未知参数: $1]\033[0m"
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER]"
+            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD]"
             exit 1
             ;;
     esac
@@ -65,6 +96,11 @@ if [ -z "$MYSQL_USER" ]; then
     exit 1
 fi
 
+if [ -z "$REDIS_PORT" ] || [ -z "$REDIS_PASSWORD" ]; then
+    echo -e "\033[31m[redis-port 和 redis-password 不能为空]\033[0m"
+    exit 1
+fi
+
 echo -e "\033[34m[部署角色: $ROLE]\033[0m"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -75,11 +111,11 @@ fi
 echo -e "\033[34m[检查基础依赖]\033[0m"
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    apt-get install -y build-essential wget unzip tar ca-certificates openssl libssl-dev pkg-config sudo cron
+    apt-get install -y build-essential wget unzip tar ca-certificates openssl libssl-dev libpcre3-dev zlib1g-dev pkg-config sudo cron
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y gcc gcc-c++ make wget unzip tar ca-certificates openssl openssl-devel pkgconfig sudo cronie
+    yum install -y gcc gcc-c++ make wget unzip tar ca-certificates openssl openssl-devel pcre-devel zlib-devel pkgconfig sudo cronie
 else
-    echo -e "\033[31m[未识别包管理器，请先安装 gcc/make/wget/unzip/tar/openssl-devel/pkg-config/sudo]\033[0m"
+    echo -e "\033[31m[未识别包管理器，请先安装 gcc/make/wget/unzip/tar/openssl-devel/pcre-devel/zlib-devel/pkg-config/sudo]\033[0m"
     exit 1
 fi
 
@@ -104,6 +140,7 @@ if [ -d "$SCRIPT_DIR/waf" ]; then
         libinjection-master.zip \
         luaossl-rel-20220711.tar.gz \
         luafilesystem-master.zip \
+        redis16381.zip \
         GeoLite2-City.mmdb
     do
         if [ -f "$SCRIPT_DIR/waf/$pkg" ] && [ ! -f "$SRC_DIR/$pkg" ]; then
@@ -360,6 +397,66 @@ EOF
 echo -e "\033[34m[nginx.conf 已生成，当前角色: $ROLE]\033[0m"
 
 # =================OpenResty nginx.conf 配置end=================
+
+# =================Redis 配置start=================
+
+if [ "$INIT_LOCAL_REDIS" = "on" ]; then
+    echo -e "\033[34m[安装本机 Redis]\033[0m"
+
+    if [ ! -f "$SRC_DIR/redis16381.zip" ]; then
+        echo -e "\033[31m[未找到 Redis 离线包: $SRC_DIR/redis16381.zip]\033[0m"
+        exit 1
+    fi
+
+    REDIS_PATH="$OPENRESTY_PATH/redis16381"
+    rm -rf "$REDIS_PATH"
+    unzip -q "$SRC_DIR/redis16381.zip" -d "$OPENRESTY_PATH"
+    chmod +x "$REDIS_PATH"/redis-*
+    rm -f "$REDIS_PATH/redis.pid"
+
+    sed -i \
+        -e 's/^bind .*/bind 0.0.0.0/' \
+        -e 's/^port .*/port '"$REDIS_PORT"'/' \
+        -e 's/^requirepass .*/requirepass "'"$REDIS_PASSWORD"'"/' \
+        -e 's/^pidfile .*/pidfile "redis.pid"/' \
+        -e 's|^logfile .*|logfile "./redis.log"|' \
+        -e 's|^dir .*|dir ./|' \
+        "$REDIS_PATH/redis.conf"
+
+    cat > /usr/lib/systemd/system/redis16381.service <<EOF
+[Unit]
+Description=ZhongKui Redis
+After=network.target
+
+[Service]
+Type=forking
+WorkingDirectory=$REDIS_PATH
+PIDFile=$REDIS_PATH/redis.pid
+ExecStart=$REDIS_PATH/redis-server $REDIS_PATH/redis.conf
+ExecStop=$REDIS_PATH/redis-cli -h 127.0.0.1 -p $REDIS_PORT -a '$REDIS_PASSWORD' shutdown
+Restart=on-failure
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable redis16381
+    systemctl restart redis16381
+
+    sed -i '/"redis"[[:space:]]*:/,/"rulesSort"[[:space:]]*:/ {
+        s/"host": *"[^"]*"/"host": "127.0.0.1"/
+        s/"password": *"[^"]*"/"password": "'"$REDIS_PASSWORD"'"/
+        s/"port": *[0-9][0-9]*/"port": '"$REDIS_PORT"'/
+    }' "$ZHONGKUI_PATH/conf/system.json"
+
+    echo -e "\033[34m[Redis 安装完成: 127.0.0.1:$REDIS_PORT]\033[0m"
+else
+    echo -e "\033[34m[跳过本机 Redis 安装；请确认 conf/system.json 中的 Redis 配置可用]\033[0m"
+fi
+
+# =================Redis 配置end=================
 
 # =================MySQL 数据库配置start=================
 
