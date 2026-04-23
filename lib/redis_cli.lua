@@ -10,6 +10,7 @@ local tonumber = tonumber
 local tostring = tostring
 local ipairs = ipairs
 local lower = string.lower
+local concat = table.concat
 local ngxmatch = ngx.re.match
 local get_system_config = config.get_system_config
 
@@ -319,6 +320,38 @@ function _M.expire(key, seconds)
         res, err = red:expire(key, seconds)
         if not res then
             ngx.log(ngx.ERR, "failed to expire key: ", key, err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+function _M.acquire_lock(key, token, ttl)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:set(key, token, "NX", "EX", ttl)
+        if not res then
+            ngx.log(ngx.ERR, "failed to acquire redis lock: ", key, " err=", err)
+        end
+        _M.close_connection(red)
+    end
+    return res == "OK", err
+end
+
+function _M.release_lock(key, token)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:eval(concat({
+            "if redis.call('get', KEYS[1]) == ARGV[1] then",
+            "return redis.call('del', KEYS[1])",
+            "else",
+            "return 0",
+            "end",
+        }, " "), 1, key, token)
+        if not res then
+            ngx.log(ngx.ERR, "failed to release redis lock: ", key, " err=", err)
         end
         _M.close_connection(red)
     end

@@ -3,6 +3,7 @@
 
 local timerat = ngx.timer.at
 local every = ngx.timer.every
+local unpack = unpack or table.unpack
 
 local _M = {}
 
@@ -20,6 +21,24 @@ function _M.start_timer_every(delay, callback, ...)
     local ok, err = every(delay, callback, ...)
     if not ok then
         ngx.log(ngx.ERR, "failed to create the timer: ", err)
+        return
+    end
+
+    return ok, err
+end
+
+function _M.start_timer_every_after(initial_delay, interval, callback, ...)
+    local args = { ... }
+    local ok, err = timerat(initial_delay, function(premature)
+        if premature then
+            return
+        end
+
+        callback(false, unpack(args))
+        _M.start_timer_every(interval, callback, unpack(args))
+    end)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to create delayed timer: ", err)
         return
     end
 

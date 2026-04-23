@@ -461,6 +461,14 @@
 
 				attackTypeChart.setOption(attactTypeOption);
 
+				function formatPercent(value) {
+					value = Number(value);
+					if (!isFinite(value) || value <= 0) {
+						return '0%';
+					}
+					return (value * 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+				}
+
 				$.get('/dashboard', function (res) {
 					if (res && res.code == 200) {
 						var data = res.data;
@@ -489,8 +497,8 @@
 							$('#captcha_pass_times').text(captcha_pass_times);
 							$('#http4xx').text(http4xx);
 							$('#http5xx').text(http5xx);
-							$('#http4xxPercent').text((http4xxPercent.toFixed(2) > 0 ? http4xxPercent.toFixed(2) : 0)*100 + '%');
-							$('#http5xxPercent').text((http5xxPercent.toFixed(2) > 0 ? http5xxPercent.toFixed(2) : 0)*100 + '%');
+							$('#http4xxPercent').text(formatPercent(http4xxPercent));
+							$('#http5xxPercent').text(formatPercent(http5xxPercent));
 						}
 
 						if (sourceRegion) {

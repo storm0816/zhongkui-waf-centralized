@@ -18,6 +18,7 @@ local tonumber = tonumber
 local type = type
 local floor = math.floor
 local getenv = os.getenv
+local random = math.random
 
 local cjson_decode = cjson.decode
 local cjson_encode = cjson.encode
@@ -36,6 +37,34 @@ local read_file_to_table = file_utils.read_file_to_table
 local prefix = "waf_rules_hits:"
 local master_blacklist_redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
 local master_blacklist_version_dict_key = "cluster:master:blacklist:version"
+
+local function run_with_redis_lock(lock_name, lock_ttl, callback, premature, ...)
+    if premature then
+        return
+    end
+
+    local token = (getenv("HOSTNAME") or "unknown") .. ":" .. ngx.worker.pid() .. ":" .. ngx.now() .. ":" .. random()
+    local ok, err = redis_cli.acquire_lock(lock_name, token, lock_ttl)
+    if not ok then
+        if err then
+            ngx.log(ngx.ERR, "failed to acquire timer lock: ", lock_name, " err=", err)
+        end
+        return
+    end
+
+    local success, run_err = pcall(callback, false, ...)
+    if not success then
+        ngx.log(ngx.ERR, "timer callback failed: ", lock_name, " err=", run_err)
+    end
+
+    redis_cli.release_lock(lock_name, token)
+end
+
+local function start_master_timer(name, interval, first_delay, lock_ttl, callback)
+    utils.start_timer_every_after(first_delay, interval, function(premature)
+        run_with_redis_lock("waf:lock:master_timer:" .. name, lock_ttl, callback, premature)
+    end)
+end
 
 local function sort(key_str, t)
     for _, rt in pairs(t) do
@@ -251,17 +280,17 @@ if is_global_option_on("waf") then
             utils.start_timer(0, sql.check_table)
 
             if master_node then
-                -- 如果是主从模式，则定时将 Redis 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
-                utils.start_timer_every(120, sql.write_attack_log_redis_to_mysql)
-                utils.start_timer_every(120, sql.write_waf_status_redis_to_mysql)
-                utils.start_timer_every(120, sql.write_traffic_stats_redis_to_mysql)
-                utils.start_timer_every(120, sql.write_ip_block_log_redis_to_mysql)
-                utils.start_timer_every(120, sql.write_attack_type_traffic_redis_to_mysql)
-                utils.start_timer_every(120, sql.write_waf_traffic_stats_redis_to_mysql)
+                -- master 聚合任务做错峰和 Redis 锁保护，避免多任务同时压 Redis/MySQL。
+                start_master_timer("attack_log_to_mysql", 120, 10, 110, sql.write_attack_log_redis_to_mysql)
+                start_master_timer("waf_status_to_mysql", 120, 30, 110, sql.write_waf_status_redis_to_mysql)
+                start_master_timer("traffic_stats_to_mysql", 120, 50, 110, sql.write_traffic_stats_redis_to_mysql)
+                start_master_timer("ip_block_log_to_mysql", 120, 70, 110, sql.write_ip_block_log_redis_to_mysql)
+                start_master_timer("attack_type_traffic_to_mysql", 120, 90, 110, sql.write_attack_type_traffic_redis_to_mysql)
+                start_master_timer("waf_traffic_stats_to_mysql", 120, 110, 110, sql.write_waf_traffic_stats_redis_to_mysql)
                 -- 节点心跳每 30s 上报一次，这里也按 30s 落库，避免 120s 边界抖动导致页面误判离线。
-                utils.start_timer_every(30, sql.write_cluster_nodes_to_mysql)
+                start_master_timer("cluster_nodes_to_mysql", 30, 5, 25, sql.write_cluster_nodes_to_mysql)
                 -- 清理长期离线节点，避免节点表持续膨胀。
-                utils.start_timer_every(300, sql.cleanup_offline_cluster_nodes)
+                start_master_timer("cleanup_offline_cluster_nodes", 300, 150, 280, sql.cleanup_offline_cluster_nodes)
             elseif standalone_mode then
                 -- 如果是单机模式，则定时将 内存中的 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)

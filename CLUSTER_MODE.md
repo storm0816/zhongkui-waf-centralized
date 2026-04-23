@@ -90,6 +90,7 @@ master 节点职责：
 
 - 从本机`conf/global_rules/ipBlackList`发布 master 黑名单到 Redis，供所有节点拉取。
 - 汇总 Redis 中的攻击日志、WAF 状态、流量统计、IP 阻断日志、攻击类型统计和节点心跳，并写入 MySQL。
+- master 汇总落库任务默认错峰执行，并使用 Redis 锁保护，避免多个汇总任务同时压 Redis/MySQL。
 - 负责集群 dashboard 所需的汇总数据落库。
 
 node 节点职责：
@@ -113,6 +114,7 @@ node 节点职责：
 | `waf:ip_balck_sql_values:<queue_name>:<timestamp>` | String(SQL values) | node | master | `redis.expire_time` | IP 封禁日志队列，保留历史拼写`balck`以兼容当前代码 |
 | `waf:attack_type_traffic_map:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | 攻击类型统计，field 为攻击类型，value 为次数 |
 | `waf:waf_traffic_stats:<yyyy-mm-dd>` | String(CSV) | node | master | 3600 秒 | 按小时请求/攻击/拦截统计 |
+| `waf:lock:master_timer:<task_name>` | String | master | master | 25-280 秒 | master 定时汇总任务锁，防止重复消费和任务重叠 |
 
 本地运行和安全能力相关 key：
 
@@ -132,6 +134,19 @@ redis-cli GET waf:masterIpBlackList
 ```
 
 约定：新增集群共享 key 时优先使用`waf:<module>:<biz_id>`或`waf:<module>:<yyyy-mm-dd>`格式，并在本节同步说明。已有线上 key 不轻易改名，避免 master/node 版本不一致时丢数据。
+
+### 生产降压策略
+
+第一阶段先保持现有 Redis key 结构不变，只对 master 汇总任务做保护：
+
+| 策略 | 当前做法 | 作用 |
+|---|---|---|
+| 只有 master 写 MySQL | node 只写 Redis，master 统一落库 | 避免 100+ node 直接压 MySQL |
+| 汇总任务错峰 | 攻击日志、状态、流量、封禁、攻击类型等任务按 10-110 秒错开启动 | 避免每 120 秒同一时刻集中扫描 Redis 和写 MySQL |
+| Redis 锁保护 | 每个 master 汇总任务执行前获取`waf:lock:master_timer:<task_name>` | 避免 reload、误开多 master 或任务执行过慢时重复消费 |
+| 节点心跳单独周期 | 节点心跳 30 秒落库，其他汇总默认 120 秒 | 在线状态更稳，同时不把日志同步周期调得过短 |
+
+后续第二阶段再将攻击日志、封禁日志从 scan key 模式升级为 Redis List/Stream 队列消费，进一步降低 Redis 全库扫描压力。
 
 master 节点配置示例：
 

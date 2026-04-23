@@ -72,6 +72,8 @@ chmod +x install.sh
 
 在线节点页面默认使用`system.expire + system.node_offline_grace`作为离线判定窗口（默认`120 + 180 = 300`秒），用于降低短暂抖动导致的误判离线。
 
+生产集群建议保持 node 只写 Redis、master 汇总写 MySQL。master 汇总任务已做错峰和 Redis 锁保护，默认日志/统计类汇总周期为 120 秒，节点心跳落库周期为 30 秒；不要为了页面实时性把生产同步周期调得过短。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx
