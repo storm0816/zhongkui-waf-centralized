@@ -226,29 +226,6 @@ mkdir -p $OPENRESTY_PATH/nginx/logs/hack
 echo -e "\033[34m[hack目录已创建]\033[0m"
 echo -e "\033[34m[zhongkui-waf安装成功]\033[0m"
 
-# 首次安装时，sites.conf 可能为空，导致没有业务监听端口。
-# 为空时写入默认健康检查站点，保证 80 端口可用。
-if [ ! -s "$ZHONGKUI_PATH/admin/conf/sites.conf" ]; then
-    cat > "$ZHONGKUI_PATH/admin/conf/sites.conf" <<'EOF'
-server {
-    listen 80 default_server;
-    server_name _;
-
-    location = /healthz {
-        default_type text/plain;
-        return 200 "ok\n";
-    }
-
-    location / {
-        default_type text/plain;
-        return 200 "ZhongKui WAF is running. No business site is configured yet.\n";
-    }
-}
-EOF
-    echo -e "\033[34m[sites.conf 为空，已生成默认 80 端口站点]\033[0m"
-fi
-
-
 cd "$SRC_DIR"
 if [ ! -f "libmaxminddb-1.7.1.tar.gz" ]; then
     echo -e "\033[34m[未发现 libmaxminddb-1.7.1.tar.gz 文件，开始下载]\033[0m"
@@ -412,25 +389,16 @@ if [ "$ROLE" = "master" ]; then
     ADMIN_INCLUDE="    include $ZHONGKUI_PATH/admin/conf/admin.conf;"
 fi
 
-cat > $OPENRESTY_PATH/nginx/conf/nginx.conf <<EOF
-worker_processes auto;
+NGINX_TEMPLATE="$ZHONGKUI_PATH/waf/nginx.conf.default"
+if [ ! -f "$NGINX_TEMPLATE" ]; then
+    echo -e "\033[31m[未找到 nginx.conf 模板: $NGINX_TEMPLATE]\033[0m"
+    exit 1
+fi
 
-events {
-    worker_connections 10240;
-}
-
-http {
-    include       mime.types;
-    default_type  application/octet-stream;
-
-    sendfile        on;
-    keepalive_timeout 65;
-
-    include $ZHONGKUI_PATH/admin/conf/waf.conf;
-$ADMIN_INCLUDE
-    include $ZHONGKUI_PATH/admin/conf/sites.conf;
-}
-EOF
+sed \
+    -e "s#__ZHONGKUI_PATH__#$ZHONGKUI_PATH#g" \
+    -e "s#__ADMIN_INCLUDE__#$ADMIN_INCLUDE#g" \
+    "$NGINX_TEMPLATE" > "$OPENRESTY_PATH/nginx/conf/nginx.conf"
 
 echo -e "\033[34m[nginx.conf 已生成，当前角色: $ROLE]\033[0m"
 
