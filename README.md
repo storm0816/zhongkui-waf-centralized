@@ -4,7 +4,7 @@
 
 `Zhongkui-WAF`基于`lua-nginx-module`，可以多维度检查和拦截恶意网络请求，具有简单易用、高性能、轻量级的特点。它的配置简单，你可以根据实际情况设置不同的安全规则和策略。
 
-![dashboard](https://github.com/bukaleyang/zhongkui-waf/blob/master/images/dashboard.png)
+![dashboard](https://github.com/storm0816/zhongkui-waf-centralized/tree/master/images/dashboard.png)
 
 ### 主要特性
 
