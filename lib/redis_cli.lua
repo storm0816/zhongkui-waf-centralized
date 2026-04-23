@@ -203,6 +203,93 @@ function _M.bath_del(key_table, key_prefix)
     return results, err
 end
 
+function _M.rpush(key, value, expire_time)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:rpush(key, value)
+        if not res then
+            ngx.log(ngx.ERR, "failed to rpush key: ", key, " err=", err)
+        elseif expire_time and expire_time > 0 then
+            red:expire(key, expire_time)
+        end
+
+        _M.close_connection(red)
+    end
+
+    return res, err
+end
+
+function _M.bath_rpush(key, values, expire_time)
+    local red, _ = _M.get_connection()
+    local results, err = nil, nil
+    if red then
+        red:init_pipeline()
+
+        for _, value in ipairs(values) do
+            red:rpush(key, value)
+        end
+        if expire_time and expire_time > 0 then
+            red:expire(key, expire_time)
+        end
+
+        results, err = red:commit_pipeline()
+        if not results then
+            ngx.log(ngx.ERR, "failed to batch rpush key: ", key, " err=", err)
+        end
+
+        _M.close_connection(red)
+    end
+
+    return results, err
+end
+
+function _M.lpop(key)
+    local red, err = _M.get_connection()
+    local value = nil
+    if red then
+        value, err = red:lpop(key)
+        if value == ngx.null then
+            value = nil
+        elseif not value then
+            ngx.log(ngx.ERR, "failed to lpop key: ", key, " err=", err)
+        end
+
+        _M.close_connection(red)
+    end
+
+    return value, err
+end
+
+function _M.batch_lpop(key, count)
+    local red, _ = _M.get_connection()
+    local values, err = {}, nil
+    if red then
+        red:init_pipeline()
+        for _ = 1, count do
+            red:lpop(key)
+        end
+
+        local results
+        results, err = red:commit_pipeline()
+        if not results then
+            ngx.log(ngx.ERR, "failed to batch lpop key: ", key, " err=", err)
+            _M.close_connection(red)
+            return nil, err
+        end
+
+        for _, value in ipairs(results) do
+            if value ~= ngx.null then
+                values[#values + 1] = value
+            end
+        end
+
+        _M.close_connection(red)
+    end
+
+    return values, err
+end
+
 function _M.hmset(key, tbl, expire_time)
     local red, _ = _M.get_connection()
     local ok, err = nil, nil
@@ -331,7 +418,10 @@ function _M.acquire_lock(key, token, ttl)
     local res = nil
     if red then
         res, err = red:set(key, token, "NX", "EX", ttl)
-        if not res then
+        if not res or res == ngx.null then
+            res = nil
+        end
+        if not res and err then
             ngx.log(ngx.ERR, "failed to acquire redis lock: ", key, " err=", err)
         end
         _M.close_connection(red)

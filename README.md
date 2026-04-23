@@ -74,6 +74,8 @@ chmod +x install.sh
 
 生产集群建议保持 node 只写 Redis、master 汇总写 MySQL。master 汇总任务已做错峰和 Redis 锁保护，默认日志/统计类汇总周期为 120 秒，节点心跳落库周期为 30 秒；不要为了页面实时性把生产同步周期调得过短。
 
+攻击日志和封禁日志在集群模式下使用 Redis List 队列上报，key 分别为`waf:queue:attack_log`和`waf:queue:ip_block_log`。master 批量消费队列写入 MySQL，避免日志类数据依赖 Redis 全库扫描。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

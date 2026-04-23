@@ -30,8 +30,6 @@ local language = get_system_config('geoip').language ~= '' and get_system_config
 
 local function write_attack_log_to_redis(log_data)
     local redis_cli = require "redis_cli"
-    local ip = log_data.ip
-    local redis_key = "waf:attack_log:" .. ip .. log_data.request_id
     local redis_value, err = cjson_encode(log_data)
 
     if not redis_value then
@@ -39,9 +37,9 @@ local function write_attack_log_to_redis(log_data)
         return
     end
 
-    local ok, err = redis_cli.set(redis_key, redis_value, get_system_config('redis').expire_time)
+    local ok, err = redis_cli.rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, redis_value, get_system_config('redis').expire_time)
     if not ok then
-        ngx.log(ngx.ERR, "failed to write attack log to redis: ", err)
+        ngx.log(ngx.ERR, "failed to push attack log to redis queue: ", err)
     end
 end
 

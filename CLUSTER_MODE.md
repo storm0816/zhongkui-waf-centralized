@@ -108,10 +108,10 @@ node 节点职责：
 |---|---|---|---|---|---|
 | `waf:masterIpBlackList` | String(JSON) | master | node | 不过期 | master 下发的全局黑名单，包含`version`、`updated_at`、`source`、`items` |
 | `waf:cluster:nodes:<node_ip>` | Hash | master/node | master | `system.expire` | 节点心跳，上报`ip`、`version`、`hostname`、`timestamp` |
-| `waf:attack_log:<ip><request_id>` | String(JSON) | node | master | `redis.expire_time` | 攻击日志队列，master 落库成功后删除 |
+| `waf:queue:attack_log` | List(JSON) | node | master | `redis.expire_time` | 攻击日志队列，master 批量消费写入`attack_log` |
 | `waf:traffic_stats:<region_prefix><yyyy-mm-dd>` | String(JSON) | node | master | `redis.expire_time` | 地域维度流量统计，master 汇总到`traffic_stats` |
 | `waf:waf_status_hmap:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | WAF 总览指标，如请求数、攻击数、拦截数 |
-| `waf:ip_balck_sql_values:<queue_name>:<timestamp>` | String(SQL values) | node | master | `redis.expire_time` | IP 封禁日志队列，保留历史拼写`balck`以兼容当前代码 |
+| `waf:queue:ip_block_log` | List(SQL values) | node | master | `redis.expire_time` | IP 封禁日志队列，master 批量消费写入`ip_block_log` |
 | `waf:attack_type_traffic_map:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | 攻击类型统计，field 为攻击类型，value 为次数 |
 | `waf:waf_traffic_stats:<yyyy-mm-dd>` | String(CSV) | node | master | 3600 秒 | 按小时请求/攻击/拦截统计 |
 | `waf:lock:master_timer:<task_name>` | String | master | master | 25-280 秒 | master 定时汇总任务锁，防止重复消费和任务重叠 |
@@ -128,7 +128,8 @@ node 节点职责：
 
 ```bash
 redis-cli --scan --pattern 'waf:cluster:nodes:*'
-redis-cli --scan --pattern 'waf:attack_log:*'
+redis-cli LLEN waf:queue:attack_log
+redis-cli LLEN waf:queue:ip_block_log
 redis-cli --scan --pattern 'waf:attack_type_traffic_map:*'
 redis-cli GET waf:masterIpBlackList
 ```
@@ -146,7 +147,7 @@ redis-cli GET waf:masterIpBlackList
 | Redis 锁保护 | 每个 master 汇总任务执行前获取`waf:lock:master_timer:<task_name>` | 避免 reload、误开多 master 或任务执行过慢时重复消费 |
 | 节点心跳单独周期 | 节点心跳 30 秒落库，其他汇总默认 120 秒 | 在线状态更稳，同时不把日志同步周期调得过短 |
 
-后续第二阶段再将攻击日志、封禁日志从 scan key 模式升级为 Redis List/Stream 队列消费，进一步降低 Redis 全库扫描压力。
+第二阶段已将攻击日志、封禁日志从 scan key 模式升级为 Redis List 队列消费。master 只消费`waf:queue:attack_log`和`waf:queue:ip_block_log`，避免日志类数据继续依赖 Redis 全库扫描。
 
 master 节点配置示例：
 

@@ -195,10 +195,6 @@ local SQL_INSERT_ATTACK_LOG = [[
     VALUES
 ]]
 
-local SQL_EXISTS_ATTACK_LOG_BY_REQUEST_ID = [[
-    SELECT 1 FROM attack_log WHERE request_id = %s LIMIT 1
-]]
-
 local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
     CREATE TABLE `ip_block_log` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -821,29 +817,22 @@ function _M.write_sql_queue_to_redis()
         return
     end
 
-    local insert_time_total = floor(len / BATCH_SIZE) + 1
-    local insert_time = 0
-
     local buffer = newtab(BATCH_SIZE, 0)
 
     local index = 1
     local value = dict_sql_queue:lpop(key)
 
-    while (insert_time <= insert_time_total and value) do
+    while value do
         buffer[index] = value
         value = dict_sql_queue:lpop(key)
 
         if index == BATCH_SIZE or value == nil then
-            local sql_values = concat(buffer, ',')
-
-            if sql_values then
-                -- mysql.query(sql_str .. sql_values)
-                local redis_key = "waf:ip_balck_sql_values:" .. key .. ":" .. ngx.now()
-                local ok, err = redis_cli.set(redis_key, sql_values, get_system_config('redis').expire_time) -- 设置过期时间为 1 小时
-                if not ok then
-                    ngx.log(4, "failed to write sql_values to redis: ", err)
+            local ok, err = redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG, buffer, get_system_config('redis').expire_time)
+            if not ok then
+                ngx.log(4, "failed to push ip block log to redis queue: ", err)
+                for _, item in ipairs(buffer) do
+                    dict_sql_queue:rpush(key, item)
                 end
-                insert_time = insert_time + 1
             end
 
             index = 1
@@ -871,42 +860,18 @@ local function getRequestTraffic()
 end
 
 function _M.write_ip_block_log_redis_to_mysql()
-    local redis_pattern = "waf:ip_balck_sql_values:*"
+    local queue_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG, BATCH_SIZE)
 
-    -- 使用 scan 命令代替 keys 命令
-    local ip_block_log_keys, err = redis_cli.scan(redis_pattern)
-
-    if not ip_block_log_keys then
-        ngx.log(4, "failed to get ip block log keys from redis: ", err)
-        return
+    if queue_values and queue_values[1] then
+        local sql_str = SQL_INSERT_IP_BLOCK_LOG .. concat(queue_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
+        local res, err = mysql.query(sql_str)
+        if not res and not is_duplicate_entry_error(err) then
+            ngx.log(4, "failed to write ip block log queue to mysql: ", err)
+            redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG, queue_values, get_system_config('redis').expire_time)
+            return
+        end
     end
 
-    for _, redis_key in ipairs(ip_block_log_keys) do
-        local redis_value, err = redis_cli.get(redis_key)
-
-        if not redis_value then
-            ngx.log(4, "failed to get ip block log from redis: ", err)
-            goto continue
-        end
-
-        local sql_str = SQL_INSERT_IP_BLOCK_LOG
-
-        local res, err = mysql.query(sql_str .. redis_value)
-        if not res then
-            if not is_duplicate_entry_error(err) then
-                ngx.log(4, "failed to write ip block log to mysql: ", err)
-                goto continue
-            end
-        end
-
-        -- 删除 Redis key
-        local ok, err = redis_cli.del(redis_key)
-        if not ok then
-            ngx.log(4, "failed to delete ip block log key from redis: ", err)
-        end
-
-        ::continue::
-    end
 end
 
 function _M.write_attack_type_traffic_to_redis()
@@ -996,21 +961,6 @@ function _M.write_attack_type_traffic_redis_to_mysql()
     -- if not ok then
     --     ngx.log(ngx.ERR, "failed to delete attack_type_traffic redis key: ", err)
     -- end
-end
-
-local function attack_log_exists(request_id)
-    if not request_id or request_id == "" then
-        return false
-    end
-
-    local sql = format(SQL_EXISTS_ATTACK_LOG_BY_REQUEST_ID, quote_sql_str(request_id))
-    local res, err = mysql.query(sql)
-    if not res then
-        ngx.log(ngx.ERR, "failed to query attack_log by request_id: ", err)
-        return false
-    end
-
-    return res[1] ~= nil
 end
 
 function _M.get_attack_type_traffic()
@@ -1148,98 +1098,79 @@ function _M.write_sql_to_queue(key, sql)
     dict_sql_queue:rpush(key, sql)
 end
 
-function _M.write_attack_log_redis_to_mysql()
-    local redis_pattern = "waf:attack_log:*"
-
-    -- 使用 scan 命令代替 keys 命令
-    local attack_log_keys, err = redis_cli.scan(redis_pattern)
-
-    if not attack_log_keys then
-        ngx.log(4, "failed to get attack log keys from redis: ", err)
-        return
+local function build_attack_log_sql_value(redis_value)
+    local log_data, err = cjson.decode(redis_value)
+    if not log_data then
+        return nil, err
     end
 
-    for _, redis_key in ipairs(attack_log_keys) do
-        local redis_value, err = redis_cli.get(redis_key)
+    local request_id = log_data.request_id or ""
+    local ip = log_data.ip or ""
+    local ip_country_code = log_data.ip_country_code or ""
+    local ip_country_cn = log_data.ip_country_cn or ""
+    local ip_country_en = log_data.ip_country_en or ""
+    local ip_province_code = log_data.ip_province_code or ""
+    local ip_province_cn = log_data.ip_province_cn or ""
+    local ip_province_en = log_data.ip_province_en or ""
+    local ip_city_code = log_data.ip_city_code or ""
+    local ip_city_cn = log_data.ip_city_cn or ""
+    local ip_city_en = log_data.ip_city_en or ""
+    local ip_longitude = tonumber(log_data.ip_longitude) or 0
+    local ip_latitude = tonumber(log_data.ip_latitude) or 0
+    local http_method = log_data.http_method or ""
+    local server_name = log_data.server or ""
+    local user_agent = log_data.user_agent or ""
+    local referer = log_data.referer or ""
+    local request_protocol = log_data.request_protocol or ""
+    local request_uri = log_data.request_uri or ""
+    local request_body = log_data.request_body or ""
+    local http_status = tonumber(log_data.http_status) or 0
+    local response_body = log_data.response_body or ""
+    local request_time = log_data.attack_time or nil
+    local attack_type = log_data.attack_type or ""
+    local severity_level = log_data.severity_level or ""
+    local security_module = log_data.securityModule or ""
+    local hit_rule = log_data.hit_rule or ""
+    local action = log_data.action or ""
 
-        if not redis_value then
-            ngx.log(4, "failed to get attack log from redis: ", err)
-            goto continue
+    return format(
+        '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %u, %s, %s, %s, %s, %s, %s, %s)',
+        quote_sql_str(request_id), quote_sql_str(ip), quote_sql_str(ip_country_code), quote_sql_str(ip_country_cn),
+        quote_sql_str(ip_country_en),
+        quote_sql_str(ip_province_code), quote_sql_str(ip_province_cn), quote_sql_str(ip_province_en),
+        quote_sql_str(ip_city_code), quote_sql_str(ip_city_cn), quote_sql_str(ip_city_en),
+        ip_longitude, ip_latitude, quote_sql_str(http_method), quote_sql_str(server_name), quote_sql_str(user_agent),
+        quote_sql_str(referer), quote_sql_str(request_protocol), quote_sql_str(request_uri),
+        quote_sql_str(request_body), http_status, quote_sql_str(response_body), quote_sql_str(request_time),
+        quote_sql_str(attack_type), quote_sql_str(severity_level), quote_sql_str(security_module),
+        quote_sql_str(hit_rule), quote_sql_str(action))
+end
+
+function _M.write_attack_log_redis_to_mysql()
+    local raw_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_ATTACK_LOG, BATCH_SIZE)
+    local sql_values = newtab(BATCH_SIZE, 0)
+    local index = 1
+
+    for _, value in ipairs(raw_values or {}) do
+        local sql_value, err = build_attack_log_sql_value(value)
+        if sql_value then
+            sql_values[index] = sql_value
+            index = index + 1
+        else
+            ngx.log(4, "failed to decode attack log queue json: ", err)
         end
+    end
 
-        local log_data, err = cjson.decode(redis_value)
-
-        if not log_data then
-            ngx.log(4, "failed to decode attack log json: ", err)
-            goto continue
-        end
-
-        local request_id = log_data.request_id or ""
-
-        if attack_log_exists(request_id) then
-            local ok_del, del_err = redis_cli.del(redis_key)
-            if not ok_del then
-                ngx.log(ngx.ERR, "failed to delete duplicated attack log key from redis: ", del_err)
-            end
-            goto continue
-        end
-
-        local ip = log_data.ip or ""
-        local ip_country_code = log_data.ip_country_code or ""
-        local ip_country_cn = log_data.ip_country_cn or ""
-        local ip_country_en = log_data.ip_country_en or ""
-        local ip_province_code = log_data.ip_province_code or ""
-        local ip_province_cn = log_data.ip_province_cn or ""
-        local ip_province_en = log_data.ip_province_en or ""
-        local ip_city_code = log_data.ip_city_code or ""
-        local ip_city_cn = log_data.ip_city_cn or ""
-        local ip_city_en = log_data.ip_city_en or ""
-        local ip_longitude = log_data.ip_longitude or ""
-        local ip_latitude = log_data.ip_latitude or ""
-        local http_method = log_data.http_method or ""
-        local server_name = log_data.server or "" -- 修改：使用 log_data.server
-        local user_agent = log_data.user_agent or ""
-        local referer = log_data.referer or ""
-        local request_protocol = log_data.request_protocol or ""
-        local request_uri = log_data.request_uri or ""
-        local request_body = log_data.request_body or "" -- 修改：使用 log_data.request_body
-        local http_status = log_data.http_status or ""
-        local response_body = log_data.response_body or ""
-        local request_time = log_data.attack_time or nil -- 修改：使用 log_data.attack_time
-        local attack_type = log_data.attack_type or ""
-        local severity_level = log_data.severity_level or ""
-        local security_module = log_data.securityModule or "" -- 修改：使用 log_data.securityModule
-        local hit_rule = log_data.hit_rule or ""
-        local action = log_data.action or ""
-
-        local sql_str = format(
-            SQL_INSERT_ATTACK_LOG ..
-            '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %u, %s, %s, %s, %s, %s, %s, %s)',
-            quote_sql_str(request_id), quote_sql_str(ip), quote_sql_str(ip_country_code), quote_sql_str(ip_country_cn),
-            quote_sql_str(ip_country_en),
-            quote_sql_str(ip_province_code), quote_sql_str(ip_province_cn), quote_sql_str(ip_province_en),
-            quote_sql_str(ip_city_code), quote_sql_str(ip_city_cn), quote_sql_str(ip_city_en),
-            ip_longitude, ip_latitude, quote_sql_str(http_method), quote_sql_str(server_name), quote_sql_str(user_agent),
-            quote_sql_str(referer), quote_sql_str(request_protocol), quote_sql_str(request_uri),
-            quote_sql_str(request_body), http_status, quote_sql_str(response_body), quote_sql_str(request_time),
-            quote_sql_str(attack_type), quote_sql_str(severity_level), quote_sql_str(security_module),
-            quote_sql_str(hit_rule), quote_sql_str(action))
-        sql_str = sql_str .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
-
+    if sql_values[1] then
+        local sql_str = SQL_INSERT_ATTACK_LOG .. concat(sql_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
         local res, err = mysql.query(sql_str)
         if not res then
-            ngx.log(4, "failed to write attack log to mysql: ", err)
-            goto continue
+            ngx.log(4, "failed to write attack log queue to mysql: ", err)
+            redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, raw_values, get_system_config('redis').expire_time)
+            return
         end
-
-        -- 写入成功后删除 Redis key，避免重复落库。
-        local ok_del, del_err = redis_cli.del(redis_key)
-        if not ok_del then
-            ngx.log(ngx.ERR, "failed to delete attack log key from redis: ", del_err)
-        end
-
-        ::continue::
     end
+
 end
 
 local function get_local_ip()
