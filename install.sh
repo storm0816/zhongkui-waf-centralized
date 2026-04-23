@@ -226,6 +226,28 @@ mkdir -p $OPENRESTY_PATH/nginx/logs/hack
 echo -e "\033[34m[hack目录已创建]\033[0m"
 echo -e "\033[34m[zhongkui-waf安装成功]\033[0m"
 
+# 首次安装时，sites.conf 可能为空，导致没有业务监听端口。
+# 为空时写入默认健康检查站点，保证 80 端口可用。
+if [ ! -s "$ZHONGKUI_PATH/admin/conf/sites.conf" ]; then
+    cat > "$ZHONGKUI_PATH/admin/conf/sites.conf" <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        default_type text/plain;
+        return 200 "ZhongKui WAF is running. No business site is configured yet.\n";
+    }
+}
+EOF
+    echo -e "\033[34m[sites.conf 为空，已生成默认 80 端口站点]\033[0m"
+fi
+
 
 cd "$SRC_DIR"
 if [ ! -f "libmaxminddb-1.7.1.tar.gz" ]; then

@@ -46,6 +46,7 @@
 | `--redis-password PASSWORD` | `Push@789` | 配合`--init-local-redis`使用，指定本机 Redis 密码 |
 
 使用 root 执行安装脚本`install.sh`，自动安装基础编译工具、`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码，并自动把项目`waf/`目录下的离线安装包同步到`/usr/local/src`，缺失的包才会尝试联网下载。Redis 默认使用外部服务，只有显式添加`--init-local-redis`时才会安装包内 Redis。
+如果首次安装时`admin/conf/sites.conf`为空，安装脚本会自动写入默认站点并监听`80`端口（`/healthz`返回`ok`），避免“安装成功但没有业务监听端口”。
 
 安装前先赋予执行权限：
 
