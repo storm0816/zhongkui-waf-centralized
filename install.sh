@@ -254,6 +254,15 @@ fi
 rm -rf libinjection-master
 unzip -q libinjection-master.zip
 cd ./libinjection-master
+
+# libinjection 上游构建链包含 Python2 脚本。
+# 新系统默认 python=python3 时会在生成 fingerprints 阶段报语法错。
+# 这里优先使用压缩包内已生成的数据文件，避免触发 Python2 生成流程。
+if [ -f "./src/Makefile" ] && [ -f "./src/fingerprints.txt" ] && [ -f "./src/sqlparse_data.json" ] && [ -f "./src/libinjection_sqli_data.h" ]; then
+    sed -i 's/^sqlparse_data.json: sqlparse_map.py fingerprints$/sqlparse_data.json: sqlparse_map.py fingerprints.txt/' ./src/Makefile
+    touch ./src/fingerprints.txt ./src/sqlparse_data.json ./src/libinjection_sqli_data.h
+fi
+
 make all
 mv ./src/libinjection.so $OPENRESTY_PATH/lualib/libinjection.so
 echo -e "\033[34m[libinjection安装成功]\033[0m"
