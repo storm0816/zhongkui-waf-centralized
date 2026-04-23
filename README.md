@@ -78,6 +78,8 @@ chmod +x install.sh
 
 流量统计和攻击类型统计在集群模式下使用 dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）。master 按脏集合拉取并落库，避免每轮全量扫描统计 key。
 
+当 MySQL 短暂不可用时，master 会把失败项标记到 retry set（`waf:retry:traffic_stats`、`waf:retry:attack_type_dates`），并由定时任务自动回放到 dirty set，恢复后自动补写，减少统计类数据漏写风险。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

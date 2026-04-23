@@ -115,6 +115,8 @@ node 节点职责：
 | `waf:attack_type_traffic_map:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | 攻击类型统计，field 为攻击类型，value 为次数 |
 | `waf:dirty:traffic_stats` | Set | node | master | `redis.expire_time` | traffic_stats 脏 key 集合，master 增量消费 |
 | `waf:dirty:attack_type_dates` | Set | node | master | 86400 秒 | attack_type 脏日期集合，master 增量消费 |
+| `waf:retry:traffic_stats` | Set | master | master | 86400 秒 | traffic_stats 落库失败重试集合，定时回放到 dirty set |
+| `waf:retry:attack_type_dates` | Set | master | master | 86400 秒 | attack_type 落库失败重试集合，定时回放到 dirty set |
 | `waf:waf_traffic_stats:<yyyy-mm-dd>` | String(CSV) | node | master | 3600 秒 | 按小时请求/攻击/拦截统计 |
 | `waf:lock:master_timer:<task_name>` | String | master | master | 25-280 秒 | master 定时汇总任务锁，防止重复消费和任务重叠 |
 
@@ -134,6 +136,8 @@ redis-cli LLEN waf:queue:attack_log
 redis-cli LLEN waf:queue:ip_block_log
 redis-cli SMEMBERS waf:dirty:traffic_stats
 redis-cli SMEMBERS waf:dirty:attack_type_dates
+redis-cli SMEMBERS waf:retry:traffic_stats
+redis-cli SMEMBERS waf:retry:attack_type_dates
 redis-cli GET waf:masterIpBlackList
 ```
 
@@ -153,6 +157,8 @@ redis-cli GET waf:masterIpBlackList
 第二阶段已将攻击日志、封禁日志从 scan key 模式升级为 Redis List 队列消费。master 只消费`waf:queue:attack_log`和`waf:queue:ip_block_log`，避免日志类数据继续依赖 Redis 全库扫描。
 
 第三阶段将统计链路改为 dirty set 增量同步：node 写入`traffic_stats`和`attack_type_traffic`后，同时标记`waf:dirty:traffic_stats`或`waf:dirty:attack_type_dates`；master 按 dirty set 拉取并落库，不再按模式全量扫描统计 key。
+
+第四阶段补充统计链路失败重试：当 traffic_stats 或 attack_type 写 MySQL 失败时，master 会把失败项写入`waf:retry:traffic_stats`或`waf:retry:attack_type_dates`；定时任务`replay_retry_markers`会将仍存在源数据的失败项回放到 dirty set，MySQL 恢复后自动补写。
 
 master 节点配置示例：
 

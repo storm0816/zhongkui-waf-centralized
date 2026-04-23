@@ -31,6 +31,7 @@ local database = get_system_config('mysql').database
 local BATCH_SIZE = 300
 local DEFAULT_NODE_EXPIRE = 120
 local DEFAULT_NODE_RETENTION = 86400
+local RETRY_SET_EXPIRE = 86400
 
 local SQL_CHECK_TABLE =
 [[SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE table_schema='%s' AND table_name='%s']]
@@ -583,6 +584,7 @@ function _M.write_traffic_stats_redis_to_mysql()
 
         if not redis_value then
             redis_cli.srem(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS, redis_key)
+            redis_cli.srem(constants.KEY_REDIS_RETRY_TRAFFIC_STATS, redis_key)
             goto continue
         end
 
@@ -620,6 +622,7 @@ function _M.write_traffic_stats_redis_to_mysql()
         local res, err = mysql.query(sql)
         if not res then
             ngx.log(4, "failed to write traffic stats to mysql: ", err)
+            redis_cli.sadd(constants.KEY_REDIS_RETRY_TRAFFIC_STATS, redis_key, RETRY_SET_EXPIRE)
             goto continue
         end
 
@@ -628,6 +631,7 @@ function _M.write_traffic_stats_redis_to_mysql()
             ngx.log(4, "failed to delete traffic stats key from redis: ", err)
         else
             redis_cli.srem(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS, redis_key)
+            redis_cli.srem(constants.KEY_REDIS_RETRY_TRAFFIC_STATS, redis_key)
         end
         ::continue::
     end
@@ -936,6 +940,7 @@ function _M.write_attack_type_traffic_redis_to_mysql()
         local hash_data, hgetall_err = redis_cli.hgetall(redis_key)
         if not hash_data then
             ngx.log(ngx.ERR, "failed to hgetall attack_type_traffic from redis key ", redis_key, ": ", hgetall_err)
+            redis_cli.sadd(constants.KEY_REDIS_RETRY_ATTACK_TYPE_DATES, request_date, RETRY_SET_EXPIRE)
             goto continue
         end
 
@@ -963,9 +968,45 @@ function _M.write_attack_type_traffic_redis_to_mysql()
 
         if not write_failed then
             redis_cli.srem(constants.KEY_REDIS_DIRTY_ATTACK_TYPE_DATES, request_date)
+            redis_cli.srem(constants.KEY_REDIS_RETRY_ATTACK_TYPE_DATES, request_date)
+        else
+            redis_cli.sadd(constants.KEY_REDIS_RETRY_ATTACK_TYPE_DATES, request_date, RETRY_SET_EXPIRE)
         end
 
         ::continue::
+    end
+end
+
+function _M.replay_retry_markers()
+    local redis_expire = get_system_config('redis').expire_time or RETRY_SET_EXPIRE
+
+    local traffic_retry_keys, traffic_retry_err = redis_cli.smembers(constants.KEY_REDIS_RETRY_TRAFFIC_STATS)
+    if not traffic_retry_keys then
+        ngx.log(ngx.ERR, "failed to get retry traffic stats keys: ", traffic_retry_err)
+    else
+        for _, redis_key in ipairs(traffic_retry_keys) do
+            local value = redis_cli.get(redis_key)
+            if value then
+                redis_cli.sadd(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS, redis_key, redis_expire)
+            else
+                redis_cli.srem(constants.KEY_REDIS_RETRY_TRAFFIC_STATS, redis_key)
+            end
+        end
+    end
+
+    local attack_retry_dates, attack_retry_err = redis_cli.smembers(constants.KEY_REDIS_RETRY_ATTACK_TYPE_DATES)
+    if not attack_retry_dates then
+        ngx.log(ngx.ERR, "failed to get retry attack_type dates: ", attack_retry_err)
+    else
+        for _, request_date in ipairs(attack_retry_dates) do
+            local redis_key = "waf:attack_type_traffic_map:" .. request_date
+            local hash_data = redis_cli.hgetall(redis_key)
+            if hash_data and hash_data[1] then
+                redis_cli.sadd(constants.KEY_REDIS_DIRTY_ATTACK_TYPE_DATES, request_date, RETRY_SET_EXPIRE)
+            else
+                redis_cli.srem(constants.KEY_REDIS_RETRY_ATTACK_TYPE_DATES, request_date)
+            end
+        end
     end
 end
 

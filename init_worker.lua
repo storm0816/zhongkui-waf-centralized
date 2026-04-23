@@ -287,6 +287,7 @@ if is_global_option_on("waf") then
                 start_master_timer("ip_block_log_to_mysql", 120, 70, 110, sql.write_ip_block_log_redis_to_mysql)
                 start_master_timer("attack_type_traffic_to_mysql", 120, 90, 110, sql.write_attack_type_traffic_redis_to_mysql)
                 start_master_timer("waf_traffic_stats_to_mysql", 120, 110, 110, sql.write_waf_traffic_stats_redis_to_mysql)
+                start_master_timer("replay_retry_markers", 120, 115, 110, sql.replay_retry_markers)
                 -- 节点心跳每 30s 上报一次，这里也按 30s 落库，避免 120s 边界抖动导致页面误判离线。
                 start_master_timer("cluster_nodes_to_mysql", 30, 5, 25, sql.write_cluster_nodes_to_mysql)
                 -- 清理长期离线节点，避免节点表持续膨胀。
