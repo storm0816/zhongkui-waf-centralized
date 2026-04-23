@@ -68,6 +68,8 @@ chmod +x install.sh
 
 `--init-local-redis`只用于当前机器需要启动包内 Redis 的场景。Redis 安装目录为`/opt/openresty/redis16381`，systemd 服务名为`redis16381`，默认端口`16381`。如果使用外部 Redis，不要加这个参数。当前`waf/redis16381.zip`中的 Redis 二进制为 Linux x86-64 版本，ARM 服务器不能直接使用该离线包。
 
+`luaossl`安装后的核心二进制文件名是`_openssl.so`（不是`openssl.so`），默认应位于`/opt/openresty/lualib/_openssl.so`。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

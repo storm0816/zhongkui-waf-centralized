@@ -316,7 +316,14 @@ make all5.1 \
     CC="gcc" \
     CFLAGS="$OPENSSL_CFLAGS" \
     LDFLAGS="$OPENSSL_LDFLAGS" && \
-make install5.1
+make install5.1 \
+    lua51cpath=$OPENRESTY_PATH/lualib \
+    lua51path=$OPENRESTY_PATH/lualib
+
+if [ ! -f "$OPENRESTY_PATH/lualib/_openssl.so" ] || [ ! -f "$OPENRESTY_PATH/lualib/openssl.lua" ]; then
+    echo -e "\033[31m[luaossl安装失败，未找到 _openssl.so 或 openssl.lua]\033[0m"
+    exit 1
+fi
 echo -e "\033[34m[luaossl安装成功]\033[0m"
 
 
@@ -582,6 +589,53 @@ systemctl enable openresty
 systemctl start openresty
 
 echo -e "\033[34m[openresty systemd服务配置成功]\033[0m"
+
+# =================安装后校验start=================
+
+echo -e "\033[34m[执行安装后校验]\033[0m"
+
+fail_check() {
+    echo -e "\033[31m[校验失败] $1\033[0m"
+    exit 1
+}
+
+for required_file in \
+    "$OPENRESTY_PATH/nginx/sbin/nginx" \
+    "$OPENRESTY_PATH/nginx/conf/nginx.conf" \
+    "$ZHONGKUI_PATH/conf/system.json" \
+    "$OPENRESTY_PATH/lualib/libinjection.so" \
+    "$OPENRESTY_PATH/lualib/lfs.so" \
+    "$OPENRESTY_PATH/lualib/_openssl.so" \
+    "$OPENRESTY_PATH/lualib/openssl.lua" \
+    "$GEOIP_DATABASE_PATH/GeoLite2-City.mmdb"
+do
+    [ -f "$required_file" ] || fail_check "缺少文件: $required_file"
+done
+
+systemctl is-active --quiet openresty || fail_check "openresty 服务未运行"
+$OPENRESTY_PATH/nginx/sbin/nginx -t >/dev/null 2>&1 || fail_check "nginx 配置检测失败"
+
+grep -q "include $ZHONGKUI_PATH/admin/conf/sites.conf;" "$OPENRESTY_PATH/nginx/conf/nginx.conf" || fail_check "nginx.conf 未包含 sites.conf"
+if [ "$ROLE" = "master" ]; then
+    grep -q "include $ZHONGKUI_PATH/admin/conf/admin.conf;" "$OPENRESTY_PATH/nginx/conf/nginx.conf" || fail_check "master 模式未包含 admin.conf"
+else
+    if grep -q "include $ZHONGKUI_PATH/admin/conf/admin.conf;" "$OPENRESTY_PATH/nginx/conf/nginx.conf"; then
+        fail_check "node 模式不应包含 admin.conf"
+    fi
+fi
+
+if [ "$INIT_LOCAL_REDIS" = "on" ]; then
+    systemctl is-active --quiet redis16381 || fail_check "redis16381 服务未运行"
+    "$OPENRESTY_PATH/redis16381/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" -a "$REDIS_PASSWORD" PING | grep -q PONG || fail_check "本机 Redis PING 失败"
+fi
+
+if [ "$ROLE" = "master" ] && [ "$INIT_LOCAL_MYSQL" = "on" ]; then
+    mysql -u root -e "USE zhongkui_waf; SELECT 1;" >/dev/null 2>&1 || fail_check "本机 MySQL 校验失败"
+fi
+
+echo -e "\033[34m[安装后校验通过]\033[0m"
 echo -e "\033[34m[部署完成，角色: $ROLE]\033[0m"
+
+# =================安装后校验end=================
 
 # =================systemd服务配置end=================
