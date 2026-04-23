@@ -258,7 +258,8 @@ if is_global_option_on("waf") then
                 utils.start_timer_every(120, sql.write_ip_block_log_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_attack_type_traffic_redis_to_mysql)
                 utils.start_timer_every(120, sql.write_waf_traffic_stats_redis_to_mysql)
-                utils.start_timer_every(120, sql.write_cluster_nodes_to_mysql)
+                -- 节点心跳每 30s 上报一次，这里也按 30s 落库，避免 120s 边界抖动导致页面误判离线。
+                utils.start_timer_every(30, sql.write_cluster_nodes_to_mysql)
                 -- 清理长期离线节点，避免节点表持续膨胀。
                 utils.start_timer_every(300, sql.cleanup_offline_cluster_nodes)
             elseif standalone_mode then

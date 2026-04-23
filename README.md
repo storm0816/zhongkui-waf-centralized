@@ -70,6 +70,8 @@ chmod +x install.sh
 
 `luaossl`安装后的核心二进制文件名是`_openssl.so`（不是`openssl.so`），默认应位于`/opt/openresty/lualib/_openssl.so`。
 
+在线节点页面默认使用`system.expire + system.node_offline_grace`作为离线判定窗口（默认`120 + 180 = 300`秒），用于降低短暂抖动导致的误判离线。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

@@ -12,6 +12,7 @@ local ERR = ngx.ERR
 local _M = {}
 
 local DEFAULT_EXPIRE = 120
+local DEFAULT_OFFLINE_GRACE = 120
 local MAX_LIMIT = 100
 
 local function safe_get_expire()
@@ -21,6 +22,21 @@ local function safe_get_expire()
         expire = DEFAULT_EXPIRE
     end
     return expire
+end
+
+local function safe_get_offline_grace()
+    local sys_conf = get_system_config("system") or {}
+    local grace = tonumber(sys_conf.node_offline_grace)
+    if not grace or grace < 0 then
+        grace = DEFAULT_OFFLINE_GRACE
+    end
+    return grace
+end
+
+local function get_online_window()
+    local expire = safe_get_expire()
+    local grace = safe_get_offline_grace()
+    return expire + grace, expire, grace
 end
 
 -- 节点列表
@@ -35,11 +51,11 @@ local function listNodes()
     if limit > MAX_LIMIT then limit = MAX_LIMIT end
 
     local offset = pager.get_begin(page, limit)
-    local expire = safe_get_expire()
+    local online_window, expire, grace = get_online_window()
 
     local filter = ""
     if tostring(args.offline) == "1" then
-        filter = string.format("WHERE last_seen < NOW() - INTERVAL %d SECOND", expire)
+        filter = string.format("WHERE last_seen < NOW() - INTERVAL %d SECOND", online_window)
     end
 
     local sql_count = "SELECT COUNT(*) AS total FROM waf_cluster_node " .. filter
@@ -60,7 +76,7 @@ local function listNodes()
             %s
             ORDER BY last_seen DESC
             LIMIT %d OFFSET %d
-        ]], expire, filter, limit, offset)
+        ]], online_window, filter, limit, offset)
 
         res, err = mysql.query(sql_data)
         if res then
@@ -72,19 +88,21 @@ local function listNodes()
         end
     end
 
-    response.expire = expire
+    response.expire = online_window
+    response.base_expire = expire
+    response.offline_grace = grace
     return response
 end
 
 -- 节点统计
 local function get_node_stats()
-    local expire = safe_get_expire()
+    local online_window, expire, grace = get_online_window()
     local sql = string.format([[
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN last_seen >= NOW() - INTERVAL %d SECOND THEN 1 ELSE 0 END) AS online
         FROM waf_cluster_node
-    ]], expire)
+    ]], online_window)
 
     local res, err = mysql.query(sql)
     if not res or not res[1] then
@@ -102,14 +120,16 @@ local function get_node_stats()
             total = total,
             online = online,
             offline = math.max(total - online, 0),
-            expire = expire
+            expire = online_window,
+            base_expire = expire,
+            offline_grace = grace
         }
     }
 end
 
 -- 删除节点（仅允许离线节点）
 local function delete_node(ip)
-    local expire = safe_get_expire()
+    local online_window = get_online_window()
     local sql_check = format("SELECT last_seen FROM waf_cluster_node WHERE ip = %s", quote_sql_str(ip))
     local res = mysql.query(sql_check)
     if not res or not res[1] then
@@ -127,7 +147,7 @@ local function delete_node(ip)
 
     local now_ts = ngx.time()
 
-    if not last_ts or now_ts - last_ts <= expire then
+    if not last_ts or now_ts - last_ts <= online_window then
         return { code = 403, msg = "仅允许删除离线节点" }
     end
 

@@ -193,7 +193,7 @@ node 节点配置示例：
 
 | 模块 | 调整点 | 作用 |
 |---|---|---|
-| 在线判定统一 | 节点列表接口返回`is_online`（基于`last_seen >= NOW() - INTERVAL system.expire SECOND`） | 页面与后端统计使用同一判定口径，避免“看起来不一致” |
+| 在线判定统一 | 节点列表接口返回`is_online`（基于`last_seen >= NOW() - INTERVAL (system.expire + system.node_offline_grace) SECOND`） | 页面与后端统计使用同一判定口径，并增加缓冲避免短暂抖动误判离线 |
 | 页面渲染 | `cluster-nodes.html`改为使用后端`is_online`标记离线行与删除按钮 | 去掉前端写死阈值（120 秒）导致的偏差 |
 | 自动清理 | master 定时执行离线节点清理任务`sql.cleanup_offline_cluster_nodes` | 清理长期离线历史节点，避免`waf_cluster_node`持续膨胀 |
 | 初始化迁移 | `check_table`补充`waf_cluster_node.idx_last_seen`索引检查与自动补齐 | 保证老环境升级后查询和清理性能稳定 |
@@ -202,5 +202,6 @@ node 节点配置示例：
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `expire` | `120` | 节点在线超时阈值（秒） |
+| `expire` | `120` | 节点心跳 TTL（秒）与基础在线窗口（秒） |
+| `node_offline_grace` | `180` | 在线判定额外缓冲（秒）；最终离线阈值=`expire + node_offline_grace` |
 | `node_retention` | `86400` | 节点离线保留时长（秒），master 会清理超过该时长的离线节点 |
