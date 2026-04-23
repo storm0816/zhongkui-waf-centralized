@@ -261,6 +261,47 @@ function _M.lpop(key)
     return value, err
 end
 
+function _M.sadd(key, member, expire_time)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:sadd(key, member)
+        if not res then
+            ngx.log(ngx.ERR, "failed to sadd key: ", key, " err=", err)
+        elseif expire_time and expire_time > 0 then
+            red:expire(key, expire_time)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+function _M.smembers(key)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:smembers(key)
+        if not res then
+            ngx.log(ngx.ERR, "failed to smembers key: ", key, " err=", err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
+function _M.srem(key, member)
+    local red, err = _M.get_connection()
+    local res = nil
+    if red then
+        res, err = red:srem(key, member)
+        if not res then
+            ngx.log(ngx.ERR, "failed to srem key: ", key, " err=", err)
+        end
+        _M.close_connection(red)
+    end
+    return res, err
+end
+
 function _M.batch_lpop(key, count)
     local red, _ = _M.get_connection()
     local values, err = {}, nil

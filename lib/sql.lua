@@ -544,6 +544,8 @@ function _M.update_traffic_stats()
                     local ok, err = redis_cli.set(redis_key, traffic_stats_json, get_system_config('redis').expire_time)
                     if not ok then
                         ngx.log(4, "failed to write traffic stats to redis: ", err)
+                    else
+                        redis_cli.sadd(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS, redis_key, get_system_config('redis').expire_time)
                     end
 
                     reset_traffic_stats(dict, prefix)
@@ -569,11 +571,10 @@ function _M.update_traffic_stats()
 end
 
 function _M.write_traffic_stats_redis_to_mysql()
-    local redis_pattern = "waf:traffic_stats:*"
-    local traffic_stats_keys, err = redis_cli.scan(redis_pattern)
+    local traffic_stats_keys, err = redis_cli.smembers(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS)
 
     if not traffic_stats_keys then
-        ngx.log(4, "failed to get traffic stats keys from redis: ", err)
+        ngx.log(4, "failed to get dirty traffic stats keys from redis: ", err)
         return
     end
 
@@ -581,7 +582,7 @@ function _M.write_traffic_stats_redis_to_mysql()
         local redis_value, err = redis_cli.get(redis_key)
 
         if not redis_value then
-            ngx.log(ngx.info, "failed to get traffic stats from redis: ", err)
+            redis_cli.srem(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS, redis_key)
             goto continue
         end
 
@@ -625,6 +626,8 @@ function _M.write_traffic_stats_redis_to_mysql()
         local ok, err = redis_cli.del(redis_key)
         if not ok then
             ngx.log(4, "failed to delete traffic stats key from redis: ", err)
+        else
+            redis_cli.srem(constants.KEY_REDIS_DIRTY_TRAFFIC_STATS, redis_key)
         end
         ::continue::
     end
@@ -879,6 +882,7 @@ function _M.write_attack_type_traffic_to_redis()
     local dict = ngx.shared.dict_req_count
     local keys = dict:get_keys()
     local prefix = constants.KEY_ATTACK_TYPE_PREFIX .. ngx.today()
+    local touched = false
 
     if not keys or #keys == 0 then
         return
@@ -893,6 +897,8 @@ function _M.write_attack_type_traffic_to_redis()
                 local ok, err = redis_cli.hincrby(redis_key, attack_type, count)
                 if not ok then
                     ngx.log(ngx.ERR, "failed to hincrby attack_type: ", attack_type, " err: ", err)
+                else
+                    touched = true
                 end
             end
         end
@@ -905,6 +911,10 @@ function _M.write_attack_type_traffic_to_redis()
         ngx.log(ngx.ERR, "failed to expire attack_type_traffic redis_key: ", err)
     end
 
+    if touched then
+        redis_cli.sadd(constants.KEY_REDIS_DIRTY_ATTACK_TYPE_DATES, ngx.today(), expire)
+    end
+
     -- ✅ 清空 ngx.shared.dict_req_count 中该前缀的所有键
     for _, key in ipairs(keys) do
         if ngxfind(key, prefix) then
@@ -914,18 +924,14 @@ function _M.write_attack_type_traffic_to_redis()
 end
 
 function _M.write_attack_type_traffic_redis_to_mysql()
-    local redis_pattern = "waf:attack_type_traffic_map:*"
-    local redis_keys, err = redis_cli.scan(redis_pattern)
-    if not redis_keys then
-        ngx.log(ngx.ERR, "failed to scan attack_type_traffic redis keys: ", err)
+    local dates, err = redis_cli.smembers(constants.KEY_REDIS_DIRTY_ATTACK_TYPE_DATES)
+    if not dates then
+        ngx.log(ngx.ERR, "failed to read dirty attack_type dates from redis: ", err)
         return
     end
 
-    for _, redis_key in ipairs(redis_keys) do
-        local request_date = redis_key:match("^waf:attack_type_traffic_map:(%d%d%d%d%-%d%d%-%d%d)$")
-        if not request_date then
-            request_date = ngx.today()
-        end
+    for _, request_date in ipairs(dates) do
+        local redis_key = "waf:attack_type_traffic_map:" .. request_date
 
         local hash_data, hgetall_err = redis_cli.hgetall(redis_key)
         if not hash_data then
@@ -933,6 +939,7 @@ function _M.write_attack_type_traffic_redis_to_mysql()
             goto continue
         end
 
+        local write_failed = false
         -- Redis 返回的是扁平数组：{ "type1", "count1", "type2", "count2", ... }
         for i = 1, #hash_data, 2 do
             local attack_type = tostring(hash_data[i])
@@ -949,18 +956,17 @@ function _M.write_attack_type_traffic_redis_to_mysql()
                 local res, insert_err = mysql.query(sql)
                 if not res then
                     ngx.log(ngx.ERR, "failed to insert attack_type_traffic into mysql: ", insert_err)
+                    write_failed = true
                 end
             end
         end
 
+        if not write_failed then
+            redis_cli.srem(constants.KEY_REDIS_DIRTY_ATTACK_TYPE_DATES, request_date)
+        end
+
         ::continue::
     end
-
-    -- 删除 Redis 中的 hash key（可选，按需）
-    -- local ok, err = redis_cli.del(redis_key)
-    -- if not ok then
-    --     ngx.log(ngx.ERR, "failed to delete attack_type_traffic redis key: ", err)
-    -- end
 end
 
 function _M.get_attack_type_traffic()

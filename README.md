@@ -76,6 +76,8 @@ chmod +x install.sh
 
 攻击日志和封禁日志在集群模式下使用 Redis List 队列上报，key 分别为`waf:queue:attack_log`和`waf:queue:ip_block_log`。master 批量消费队列写入 MySQL，避免日志类数据依赖 Redis 全库扫描。
 
+流量统计和攻击类型统计在集群模式下使用 dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）。master 按脏集合拉取并落库，避免每轮全量扫描统计 key。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

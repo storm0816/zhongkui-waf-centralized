@@ -113,6 +113,8 @@ node 节点职责：
 | `waf:waf_status_hmap:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | WAF 总览指标，如请求数、攻击数、拦截数 |
 | `waf:queue:ip_block_log` | List(SQL values) | node | master | `redis.expire_time` | IP 封禁日志队列，master 批量消费写入`ip_block_log` |
 | `waf:attack_type_traffic_map:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | 攻击类型统计，field 为攻击类型，value 为次数 |
+| `waf:dirty:traffic_stats` | Set | node | master | `redis.expire_time` | traffic_stats 脏 key 集合，master 增量消费 |
+| `waf:dirty:attack_type_dates` | Set | node | master | 86400 秒 | attack_type 脏日期集合，master 增量消费 |
 | `waf:waf_traffic_stats:<yyyy-mm-dd>` | String(CSV) | node | master | 3600 秒 | 按小时请求/攻击/拦截统计 |
 | `waf:lock:master_timer:<task_name>` | String | master | master | 25-280 秒 | master 定时汇总任务锁，防止重复消费和任务重叠 |
 
@@ -130,7 +132,8 @@ node 节点职责：
 redis-cli --scan --pattern 'waf:cluster:nodes:*'
 redis-cli LLEN waf:queue:attack_log
 redis-cli LLEN waf:queue:ip_block_log
-redis-cli --scan --pattern 'waf:attack_type_traffic_map:*'
+redis-cli SMEMBERS waf:dirty:traffic_stats
+redis-cli SMEMBERS waf:dirty:attack_type_dates
 redis-cli GET waf:masterIpBlackList
 ```
 
@@ -148,6 +151,8 @@ redis-cli GET waf:masterIpBlackList
 | 节点心跳单独周期 | 节点心跳 30 秒落库，其他汇总默认 120 秒 | 在线状态更稳，同时不把日志同步周期调得过短 |
 
 第二阶段已将攻击日志、封禁日志从 scan key 模式升级为 Redis List 队列消费。master 只消费`waf:queue:attack_log`和`waf:queue:ip_block_log`，避免日志类数据继续依赖 Redis 全库扫描。
+
+第三阶段将统计链路改为 dirty set 增量同步：node 写入`traffic_stats`和`attack_type_traffic`后，同时标记`waf:dirty:traffic_stats`或`waf:dirty:attack_type_dates`；master 按 dirty set 拉取并落库，不再按模式全量扫描统计 key。
 
 master 节点配置示例：
 
@@ -199,7 +204,7 @@ node 节点配置示例：
 |---|---|---|
 | 攻击日志落库 | `attack_log.request_id`增加唯一索引`idx_unique_attack_log_request_id`；写入时增加`ON DUPLICATE KEY UPDATE`；成功后删除 Redis 队列 key | 防止重复写入，重复消费时自动幂等 |
 | 老环境迁移 | 启动初始化阶段自动检查`attack_log`唯一索引，缺失时补齐 | 兼容历史库，升级无需手工改表 |
-| 攻击类型统计 | MySQL 同步时扫描`waf:attack_type_traffic_map:*`所有日期 key，并按 key 日期写入 | 修复仅同步当天数据导致的统计缺失 |
+| 攻击类型统计 | MySQL 同步按`waf:dirty:attack_type_dates`增量消费日期 key，并按日期写入 | 避免全量扫描 Redis，降低 master 压力 |
 | IP 封禁日志 | 写库时识别并跳过重复键错误（Duplicate entry） | 减少重复数据导致的任务中断 |
 | 流量按小时统计 | 将`YYYY-MM-DD HH`统一归一为`YYYY-MM-DD HH:00:00`后再写库 | 避免时间格式不一致导致统计异常 |
 
