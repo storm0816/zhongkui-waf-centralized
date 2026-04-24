@@ -7,6 +7,7 @@ local ip_utils = require "ip_utils"
 local constants = require "constants"
 local stringutf8 = require "stringutf8"
 local nkeys = require "table.nkeys"
+local isarray = require "table.isarray"
 local ffi = require "ffi"
 local ipmatcher = require "resty.ipmatcher"
 
@@ -31,6 +32,9 @@ local type = type
 local floor = math.floor
 local getenv = os.getenv
 local md5 = ngx.md5
+local sort = table.sort
+local insert = table.insert
+local concat = table.concat
 
 local _M = {}
 
@@ -232,8 +236,41 @@ local function get_cluster_rules_snapshot_payload()
 end
 
 local function apply_cluster_rules_snapshot_hash(payload)
+    local function canonical_encode(v)
+        local vt = type(v)
+        if vt == "nil" then
+            return "null"
+        end
+        if vt == "boolean" or vt == "number" or vt == "string" then
+            return cjson_encode(v)
+        end
+        if vt ~= "table" then
+            return cjson_encode(tostring(v))
+        end
+
+        if isarray(v) then
+            local parts = {}
+            for i = 1, #v do
+                parts[i] = canonical_encode(v[i])
+            end
+            return "[" .. concat(parts, ",") .. "]"
+        end
+
+        local keys = {}
+        for k, _ in pairs(v) do
+            insert(keys, tostring(k))
+        end
+        sort(keys)
+
+        local parts = {}
+        for _, k in ipairs(keys) do
+            insert(parts, cjson_encode(k) .. ":" .. canonical_encode(v[k]))
+        end
+        return "{" .. concat(parts, ",") .. "}"
+    end
+
     payload.hash = CLUSTER_RULES_HASH_PLACEHOLDER
-    local canonical = cjson_encode(payload)
+    local canonical = canonical_encode(payload)
     if not canonical then
         return nil, "failed to encode payload for hash"
     end
@@ -250,7 +287,40 @@ local function verify_cluster_rules_snapshot_hash(payload)
     end
 
     payload.hash = CLUSTER_RULES_HASH_PLACEHOLDER
-    local canonical = cjson_encode(payload)
+    local function canonical_encode(v)
+        local vt = type(v)
+        if vt == "nil" then
+            return "null"
+        end
+        if vt == "boolean" or vt == "number" or vt == "string" then
+            return cjson_encode(v)
+        end
+        if vt ~= "table" then
+            return cjson_encode(tostring(v))
+        end
+
+        if isarray(v) then
+            local parts = {}
+            for i = 1, #v do
+                parts[i] = canonical_encode(v[i])
+            end
+            return "[" .. concat(parts, ",") .. "]"
+        end
+
+        local keys = {}
+        for k, _ in pairs(v) do
+            insert(keys, tostring(k))
+        end
+        sort(keys)
+
+        local parts = {}
+        for _, k in ipairs(keys) do
+            insert(parts, cjson_encode(k) .. ":" .. canonical_encode(v[k]))
+        end
+        return "{" .. concat(parts, ",") .. "}"
+    end
+
+    local canonical = canonical_encode(payload)
     payload.hash = expected
     if not canonical then
         return nil, "failed to encode payload for hash verify"
