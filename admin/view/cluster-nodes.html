@@ -73,14 +73,80 @@
       var table = layui.table;
       var $ = layui.$;
       var layer = layui.layer;
+      var masterRulesVersion = 'unknown';
+
+      function pad2(n) {
+        return n < 10 ? '0' + n : '' + n;
+      }
+
+      function formatDateTime(ts) {
+        var d = new Date(ts);
+        if (isNaN(d.getTime())) {
+          return '-';
+        }
+        return d.getFullYear() + '-' +
+          pad2(d.getMonth() + 1) + '-' +
+          pad2(d.getDate()) + ' ' +
+          pad2(d.getHours()) + ':' +
+          pad2(d.getMinutes()) + ':' +
+          pad2(d.getSeconds());
+      }
+
+      function formatRulePublishTime(version) {
+        if (!version || version === 'unknown') {
+          return '-';
+        }
+        var n = Number(version);
+        if (!isFinite(n) || n <= 0) {
+          return '-';
+        }
+        if (n < 1000000000000) {
+          n = n * 1000;
+        }
+        return formatDateTime(n);
+      }
 
       var tableIns = table.render({
         elem: '#id-table-nodes',
         url: '/clusternode/list',
+        parseData: function (res) {
+          masterRulesVersion = res.master_rules_version || 'unknown';
+          var rows = res.data || [];
+          for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            row.sync_state = (row.rules_version && row.rules_version !== 'unknown'
+              && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion) ? 'ok' : 'lagging';
+          }
+          return res;
+        },
         cols: [[
           { field: 'ip', title: '节点 IP' },
           { field: 'hostname', title: '主机名' },
-          { field: 'version', title: '版本' },
+          {
+            field: 'rules_version',
+            title: '规则版本',
+            minWidth: 120,
+            templet: function (d) {
+              return d.rules_version && d.rules_version !== '' ? d.rules_version : 'unknown';
+            }
+          },
+          {
+            title: '规则发布时间',
+            minWidth: 170,
+            templet: function (d) {
+              return formatRulePublishTime(d.rules_version);
+            }
+          },
+          {
+            title: '同步状态',
+            minWidth: 110,
+            templet: function (d) {
+              if (d.sync_state === 'ok') {
+                return '<span style="color:#16b777;">已同步</span>';
+              }
+              return '<span style="color:#ff5722;">待同步</span>';
+            }
+          },
           { field: 'last_seen', title: '最后上报时间' },
           {
             title: '操作',

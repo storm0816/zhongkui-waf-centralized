@@ -107,8 +107,10 @@ node 节点职责：
 | Key/Pattern | 类型 | 写入方 | 读取/消费方 | TTL | 用途 |
 |---|---|---|---|---|---|
 | `waf:masterIpBlackList` | String(JSON) | master | node | 不过期 | master 下发的全局黑名单，包含`version`、`updated_at`、`source`、`items` |
-| `waf:cluster:nodes:<node_ip>` | Hash | master/node | master | `system.expire` | 节点心跳，上报`ip`、`version`、`hostname`、`timestamp` |
+| `waf:cluster:nodes:<node_ip>` | Hash | master/node | master | `system.expire` | 节点心跳，上报`ip`、`rules_version`（规则版本号）、`hostname`、`timestamp` |
 | `waf:queue:attack_log` | List(JSON) | node | master | `redis.expire_time` | 攻击日志队列，master 批量消费写入`attack_log` |
+| `waf:cluster:rules:snapshot` | String(JSON) | master | node | `max(redis.expire_time*2, 86400)` | 规则快照（含`hash`字段，global+sites+ip_groups），node 先校验 hash 再按版本增量应用 |
+| `waf:cluster:rules:snapshot:version` | String | master | node | `max(redis.expire_time*2, 86400)` | 规则快照版本号，node 先读取该 key，只有版本变化时才拉取快照正文 |
 | `waf:traffic_stats:<region_prefix><yyyy-mm-dd>` | String(JSON) | node | master | `redis.expire_time` | 地域维度流量统计，master 汇总到`traffic_stats` |
 | `waf:waf_status_hmap:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | WAF 总览指标，如请求数、攻击数、拦截数 |
 | `waf:waf_status_synced_hmap:<yyyy-mm-dd>` | Hash | master | master | `max(redis.expire_time*2, 86400)` | WAF 状态同步基线快照，master 用于按增量写 MySQL，避免重复覆盖 |
@@ -160,6 +162,8 @@ redis-cli GET waf:masterIpBlackList
 第三阶段将统计链路改为 dirty set 增量同步：node 写入`traffic_stats`和`attack_type_traffic`后，同时标记`waf:dirty:traffic_stats`或`waf:dirty:attack_type_dates`；master 按 dirty set 拉取并落库，不再按模式全量扫描统计 key。
 
 第四阶段补充统计链路失败重试：当 traffic_stats 或 attack_type 写 MySQL 失败时，master 会把失败项写入`waf:retry:traffic_stats`或`waf:retry:attack_type_dates`；定时任务`replay_retry_markers`会将仍存在源数据的失败项回放到 dirty set，MySQL 恢复后自动补写。
+
+第五阶段（规则集中控制）已接入第一版：后台保存规则后，master 会立即异步发布一次`waf:cluster:rules:snapshot`并更新版本 key；同时保留每 10 秒定时发布兜底。快照中包含`hash`字段（md5），node 拉取后会先校验 hash，再应用新规则。node 默认按 `30s + 0-10s 随机偏移` 周期先读取版本 key，仅在版本变化时拉取快照正文。node 拉取失败时继续使用本地已生效规则，避免运行中断。
 
 master 节点配置示例：
 

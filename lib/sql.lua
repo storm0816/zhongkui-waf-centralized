@@ -38,6 +38,7 @@ local MAX_ATTACK_LOG_RETENTION_BATCH = 50000
 local DEFAULT_ATTACK_LOG_RETENTION_INTERVAL = 300
 local MIN_ATTACK_LOG_RETENTION_INTERVAL = 60
 local ATTACK_LOG_RETENTION_LAST_RUN_KEY = "attack_log_retention:last_run"
+local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
 
 local SQL_CHECK_TABLE =
 [[SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE table_schema='%s' AND table_name='%s']]
@@ -46,6 +47,12 @@ local SQL_CHECK_INDEX = [[
     SELECT COUNT(*) AS c
     FROM INFORMATION_SCHEMA.STATISTICS
     WHERE table_schema = %s AND table_name = %s AND index_name = %s
+]]
+
+local SQL_CHECK_COLUMN = [[
+    SELECT COUNT(*) AS c
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = %s AND table_name = %s AND column_name = %s
 ]]
 
 local SQL_CREATE_TABLE_WAF_STATUS = [[
@@ -389,7 +396,7 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
     CREATE TABLE waf_cluster_node (
         id INT AUTO_INCREMENT PRIMARY KEY,
         ip VARCHAR(64) NOT NULL COMMENT '节点IP',
-        version VARCHAR(32) COMMENT '节点版本',
+        rules_version VARCHAR(32) COMMENT '规则版本',
         hostname VARCHAR(128) COMMENT '节点主机名',
         last_seen DATETIME COMMENT '最近活跃时间',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -400,10 +407,10 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
 
 
 local SQL_INSERT_CLUSTER_NODE = [[
-    INSERT INTO waf_cluster_node (ip, version, hostname, last_seen)
+    INSERT INTO waf_cluster_node (ip, rules_version, hostname, last_seen)
     VALUES (%s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
-        version = VALUES(version),
+        rules_version = VALUES(rules_version),
         hostname = VALUES(hostname),
         last_seen = VALUES(last_seen)
 ]]
@@ -487,6 +494,27 @@ function _M.check_table(premature)
         end
     end
 
+    local function ensure_column(table_name, column_name, ddl, backfill_ddl)
+        local col_res, col_err = mysql.query(format(SQL_CHECK_COLUMN,
+            quote_sql_str(database), quote_sql_str(table_name), quote_sql_str(column_name)))
+        if col_res and col_res[1] and col_res[1].c == '0' then
+            local ok = mysql.query(ddl)
+            if not ok then
+                ngx.log(ngx.ERR, "failed to add column ", column_name, " on ", table_name)
+                return
+            end
+
+            if backfill_ddl then
+                local backfill_ok, backfill_err = mysql.query(backfill_ddl)
+                if not backfill_ok then
+                    ngx.log(ngx.ERR, "failed to backfill column ", column_name, " on ", table_name, ": ", backfill_err)
+                end
+            end
+        elseif not col_res then
+            ngx.log(ngx.ERR, "failed to check column ", column_name, " on ", table_name, ": ", col_err)
+        end
+    end
+
     -- 兼容老版本表结构：attack_log 可能没有 request_id 唯一索引，这里补齐一次。
     ensure_index("attack_log", "idx_unique_attack_log_request_id",
         "ALTER TABLE attack_log ADD UNIQUE INDEX idx_unique_attack_log_request_id (request_id)")
@@ -515,6 +543,10 @@ function _M.check_table(premature)
     -- 兼容老版本表结构：waf_cluster_node 可能没有 last_seen 索引，这里补齐一次。
     ensure_index("waf_cluster_node", "idx_last_seen",
         "ALTER TABLE waf_cluster_node ADD INDEX idx_last_seen (last_seen)")
+    -- 兼容老版本表结构：waf_cluster_node 可能没有 rules_version 列，这里补齐并从 version 回填一次。
+    ensure_column("waf_cluster_node", "rules_version",
+        "ALTER TABLE waf_cluster_node ADD COLUMN rules_version VARCHAR(32) NULL COMMENT '规则版本' AFTER ip",
+        "UPDATE waf_cluster_node SET rules_version = version WHERE (rules_version IS NULL OR rules_version = '') AND version IS NOT NULL")
 end
 
 function _M.update_traffic_stats()
@@ -1385,12 +1417,19 @@ end
 function _M.report_node_info()
     local node_id = get_local_ip()
     local key = "waf:cluster:nodes:" .. node_id
-    local cfg = get_system_config("system") or {}
     local expire = get_cluster_node_expire_seconds()
+    local dict_config = ngx.shared.dict_config
+    local rules_version = "unknown"
+    if dict_config then
+        local v = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
+        if v then
+            rules_version = tostring(v)
+        end
+    end
 
     local info = {
         ip = node_id,
-        version = cfg.version or "unknown",
+        rules_version = rules_version,
         hostname = get_hostname(),
         timestamp = tostring(os.time())
     }
@@ -1426,9 +1465,10 @@ function _M.write_cluster_nodes_to_mysql()
     local nodes = _M.get_all_online_nodes()
 
     for _, node in ipairs(nodes) do
+        local rules_version = node.rules_version or node.version or "unknown"
         local sql = format(SQL_INSERT_CLUSTER_NODE,
             quote_sql_str(node.ip),
-            quote_sql_str(node.version),
+            quote_sql_str(rules_version),
             quote_sql_str(node.hostname),
             quote_sql_str(node.last_seen)
         )

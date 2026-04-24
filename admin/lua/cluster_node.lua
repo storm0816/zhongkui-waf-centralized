@@ -9,6 +9,7 @@ local config = require "config"
 local get_system_config = config.get_system_config
 local ngx_log = ngx.log
 local ERR = ngx.ERR
+local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
 
 local _M = {}
 
@@ -69,9 +70,21 @@ local function listNodes()
     end
     response.count = tonumber(res[1].total) or 0
 
+    local master_rules_version = "unknown"
+    local dict_config = ngx.shared.dict_config
+    if dict_config then
+        local v = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
+        if v then
+            master_rules_version = tostring(v)
+        end
+    end
+
     if response.count > 0 then
         local sql_data = string.format([[
-            SELECT ip, version, hostname, last_seen,
+            SELECT ip,
+                   COALESCE(NULLIF(rules_version, ''), 'unknown') AS rules_version,
+                   hostname,
+                   last_seen,
                    CASE WHEN last_seen >= NOW() - INTERVAL %d SECOND THEN 1 ELSE 0 END AS is_online
             FROM waf_cluster_node
             %s
@@ -92,6 +105,7 @@ local function listNodes()
     response.expire = online_window
     response.base_expire = expire
     response.offline_grace = grace
+    response.master_rules_version = master_rules_version
     return response
 end
 

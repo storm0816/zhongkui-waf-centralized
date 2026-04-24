@@ -82,6 +82,27 @@ chmod +x install.sh
 
 攻击日志上线后会持续增长。系统设置页面已内置“攻击日志归档清理（懒人模式）”：支持自动定时归档清理与“立即执行一次”按钮。详细策略和 SQL 模板见`ATTACK_LOG_RETENTION.md`。
 
+集群规则已支持 master 集中发布：后台保存规则后，master 会立即异步发布一次`waf:cluster:rules:snapshot`并同步版本 key `waf:cluster:rules:snapshot:version`；同时保留定时发布兜底。快照带`hash`（md5）字段，node 先校验 hash 再应用。node 默认按`30s + 0-10s 随机偏移`先拉版本再按需拉取快照，拉取失败时保持当前生效规则不回退。
+
+重部署后建议用以下命令做一轮快速验收（master 节点执行）：
+
+```bash
+# 1) 查看规则版本 key 与快照是否存在
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:cluster:rules:snapshot:version
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:cluster:rules:snapshot | head -c 300
+
+# 2) 查看节点心跳中的规则版本字段（rules_version）
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' --scan --pattern 'waf:cluster:nodes:*'
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' HGETALL waf:cluster:nodes:<node_ip>
+
+# 3) 验证 MySQL 节点表是否落库 rules_version
+mysql -h <mysql_host> -P <mysql_port> -u <mysql_user> -p'<mysql_password>' -D <mysql_db> \
+  -e "SELECT ip,rules_version,last_seen FROM waf_cluster_node ORDER BY last_seen DESC LIMIT 10;"
+
+# 4) 打开在线节点页面，确认“规则版本 / 规则发布时间 / 同步状态”三列已更新
+curl -I http://<master_ip>:1226/
+```
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

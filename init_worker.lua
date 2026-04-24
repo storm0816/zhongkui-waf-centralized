@@ -32,11 +32,18 @@ local is_centralized_mode = config.is_centralized_mode
 local is_master_node = config.is_master_node
 local is_standalone_mode = config.is_standalone_mode
 local get_system_config = config.get_system_config
+local publish_cluster_rules_snapshot = config.publish_cluster_rules_snapshot
+local pull_cluster_rules_snapshot = config.pull_cluster_rules_snapshot
 local read_file_to_table = file_utils.read_file_to_table
 
 local prefix = "waf_rules_hits:"
 local master_blacklist_redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
 local master_blacklist_version_dict_key = "cluster:master:blacklist:version"
+local cluster_rules_publish_interval = 10
+local cluster_rules_pull_interval_base = 30
+local cluster_rules_pull_jitter_max = 10
+local node_report_interval_base = 30
+local node_report_jitter_max = 10
 
 local function run_with_redis_lock(lock_name, lock_ttl, callback, premature, ...)
     if premature then
@@ -64,6 +71,35 @@ local function start_master_timer(name, interval, first_delay, lock_ttl, callbac
     utils.start_timer_every_after(first_delay, interval, function(premature)
         run_with_redis_lock("waf:lock:master_timer:" .. name, lock_ttl, callback, premature)
     end)
+end
+
+local function start_timer_every_with_jitter(base_interval, jitter_max, callback, ...)
+    local interval = base_interval
+    if jitter_max and jitter_max > 0 then
+        interval = base_interval + random() * jitter_max
+    end
+    local initial_delay = 1 + (interval - base_interval)
+    return utils.start_timer_every_after(initial_delay, interval, callback, ...)
+end
+
+local function safe_publish_cluster_rules_snapshot(premature)
+    if premature then
+        return
+    end
+    local ok, err = publish_cluster_rules_snapshot()
+    if not ok and err and err ~= "not master node" then
+        ngx.log(ngx.ERR, "failed to publish cluster rules snapshot: ", err)
+    end
+end
+
+local function safe_pull_cluster_rules_snapshot(premature)
+    if premature then
+        return
+    end
+    local ok, err = pull_cluster_rules_snapshot()
+    if not ok and err and err ~= "not node" then
+        ngx.log(ngx.ERR, "failed to pull cluster rules snapshot: ", err)
+    end
 end
 
 local function sort(key_str, t)
@@ -313,6 +349,22 @@ if is_global_option_on("waf") then
 
     -- 将 Redis blacklist 导入到 ipmatcher
     if centralized_mode then
+        if master_node and is_timer_owner then
+            -- master 定时发布规则快照，node 按版本增量拉取。
+            ngx.timer.at(0.5, safe_publish_cluster_rules_snapshot)
+            utils.start_timer_every(cluster_rules_publish_interval, safe_publish_cluster_rules_snapshot)
+        end
+
+        if not master_node then
+            -- 规则缓存在 worker 内存中，node 的每个 worker 都要拉取最新快照。
+            -- 使用 30s + 0-10s 随机偏移，避免集群节点同一时刻集中拉取。
+            start_timer_every_with_jitter(
+                cluster_rules_pull_interval_base,
+                cluster_rules_pull_jitter_max,
+                safe_pull_cluster_rules_snapshot
+            )
+        end
+
         -- 黑名单 matcher 存在 worker 内存中，每个 worker 都需要定时拉取 master 黑名单。
         ngx.timer.at(1, load_ip_blacklist_from_redis)
         -- 定时将文件加载到redis中
@@ -324,8 +376,8 @@ if is_global_option_on("waf") then
             -- 定时将攻击类型流量统计写入 Redis中
             utils.start_timer_every(10, sql.write_attack_type_traffic_to_redis)
             utils.start_timer_every(10, sql.write_waf_traffic_stats_to_redis)
-            -- 定时将节点信息写入 Redis 中
-            utils.start_timer_every(30, sql.report_node_info)
+            -- 定时将节点信息写入 Redis 中（30s + 0-10s 随机偏移，避免同秒写入）。
+            start_timer_every_with_jitter(node_report_interval_base, node_report_jitter_max, sql.report_node_info)
         end
     end
 end
