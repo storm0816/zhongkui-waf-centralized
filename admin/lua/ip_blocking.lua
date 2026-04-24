@@ -13,6 +13,9 @@ local quote_sql_str = ngx.quote_sql_str
 local cjson_encode = cjson.encode
 
 local _M = {}
+local DEFAULT_PAGE = 1
+local DEFAULT_LIMIT = 10
+local MAX_LIMIT = 100
 
 local SQL_COUNT_IP_BLOCK_LOG = 'SELECT COUNT(*) AS total FROM ip_block_log '
 
@@ -31,8 +34,16 @@ local function listLogs()
 
     local args, err = ngx.req.get_uri_args()
     if args then
-        local page = tonumber(args['page'])
-        local limit = tonumber(args['limit'])
+        local page = tonumber(args['page']) or DEFAULT_PAGE
+        local limit = tonumber(args['limit']) or DEFAULT_LIMIT
+        if page < 1 then
+            page = DEFAULT_PAGE
+        end
+        if limit < 1 then
+            limit = DEFAULT_LIMIT
+        elseif limit > MAX_LIMIT then
+            limit = MAX_LIMIT
+        end
         local offset = pager.get_begin(page, limit)
 
         local ip = args['ip']

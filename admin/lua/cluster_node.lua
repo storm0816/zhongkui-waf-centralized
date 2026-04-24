@@ -1,6 +1,7 @@
 local cjson = require "cjson"
 local mysql = require "mysql_cli"
 local pager = require "lib.pager"
+local user = require "user"
 local quote_sql_str = ngx.quote_sql_str
 local tonumber = tonumber
 local format = string.format
@@ -166,6 +167,15 @@ function _M.do_request()
     ngx.header.content_type = "application/json; charset=utf-8"
     local uri = ngx.var.uri
     local response = {}
+
+    if user.check_auth_token() == false then
+        response.code = 401
+        response.msg = 'User not logged in'
+        ngx.status = 401
+        ngx.say(cjson.encode(response))
+        ngx.exit(401)
+        return
+    end
 
     if uri == "/clusternode/list" then
         response = listNodes()
