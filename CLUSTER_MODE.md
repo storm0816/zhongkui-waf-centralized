@@ -111,6 +111,7 @@ node 节点职责：
 | `waf:queue:attack_log` | List(JSON) | node | master | `redis.expire_time` | 攻击日志队列，master 批量消费写入`attack_log` |
 | `waf:traffic_stats:<region_prefix><yyyy-mm-dd>` | String(JSON) | node | master | `redis.expire_time` | 地域维度流量统计，master 汇总到`traffic_stats` |
 | `waf:waf_status_hmap:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | WAF 总览指标，如请求数、攻击数、拦截数 |
+| `waf:waf_status_synced_hmap:<yyyy-mm-dd>` | Hash | master | master | `max(redis.expire_time*2, 86400)` | WAF 状态同步基线快照，master 用于按增量写 MySQL，避免重复覆盖 |
 | `waf:queue:ip_block_log` | List(SQL values) | node | master | `redis.expire_time` | IP 封禁日志队列，master 批量消费写入`ip_block_log` |
 | `waf:attack_type_traffic_map:<yyyy-mm-dd>` | Hash | node | master | `redis.expire_time` | 攻击类型统计，field 为攻击类型，value 为次数 |
 | `waf:dirty:traffic_stats` | Set | node | master | `redis.expire_time` | traffic_stats 脏 key 集合，master 增量消费 |

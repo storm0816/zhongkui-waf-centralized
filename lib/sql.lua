@@ -90,6 +90,27 @@ local SQL_INSERT_WAF_STATUS = [[
         update_time = NOW();
 ]]
 
+local SQL_INSERT_WAF_STATUS_INCREMENT = [[
+    INSERT INTO waf_status (
+        request_date, http4xx, http5xx, request_times, attack_times, block_times,
+        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times,
+        update_time
+    ) VALUES (
+        %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+        http4xx = http4xx + VALUES(http4xx),
+        http5xx = http5xx + VALUES(http5xx),
+        request_times = request_times + VALUES(request_times),
+        attack_times = attack_times + VALUES(attack_times),
+        block_times = block_times + VALUES(block_times),
+        block_times_attack = block_times_attack + VALUES(block_times_attack),
+        block_times_captcha = block_times_captcha + VALUES(block_times_captcha),
+        block_times_cc = block_times_cc + VALUES(block_times_cc),
+        captcha_pass_times = captcha_pass_times + VALUES(captcha_pass_times),
+        update_time = NOW();
+]]
+
 local SQL_GET_TODAY_WAF_STATUS =
 [[SELECT * FROM waf_status WHERE DATE(request_date) = CURDATE() ORDER BY id DESC LIMIT 1;]]
 
@@ -761,9 +782,10 @@ function _M.update_waf_status()
     else
         -- ✅ 单节点模式：直接写入 MySQL
         local sql = string.format(SQL_INSERT_WAF_STATUS,
+            quote_sql_str(ngx.today()),
             http4xx, http5xx, request_times, attack_times, block_times,
             block_times_attack, block_times_captcha, block_times_cc,
-            captcha_pass_times, quote_sql_str(ngx.today())
+            captcha_pass_times
         )
 
         local res, err = mysql.query(sql)
@@ -776,6 +798,7 @@ end
 function _M.write_waf_status_redis_to_mysql()
     local today = ngx.today()
     local redis_key = "waf:waf_status_hmap:" .. today
+    local sync_key = "waf:waf_status_synced_hmap:" .. today
 
     local hash_data, err = redis_cli.hgetall(redis_key)
     if not hash_data then
@@ -791,30 +814,68 @@ function _M.write_waf_status_redis_to_mysql()
         data[k] = v
     end
 
-    -- 字段赋值，默认0
-    local http4xx = data.http4xx or 0
-    local http5xx = data.http5xx or 0
-    local request_times = data.request_times or 0
-    local attack_times = data.attack_times or 0
-    local block_times = data.block_times or 0
-    local block_times_attack = data.block_times_attack or 0
-    local block_times_captcha = data.block_times_captcha or 0
-    local block_times_cc = data.block_times_cc or 0
-    local captcha_pass_times = data.captcha_pass_times or 0
+    local fields = {
+        "http4xx",
+        "http5xx",
+        "request_times",
+        "attack_times",
+        "block_times",
+        "block_times_attack",
+        "block_times_captcha",
+        "block_times_cc",
+        "captcha_pass_times"
+    }
 
-    -- 全部为0，跳过写入
-    if http4xx == 0 and http5xx == 0 and request_times == 0 and attack_times == 0
-        and block_times == 0 and block_times_attack == 0 and block_times_captcha == 0
-        and block_times_cc == 0 and captcha_pass_times == 0 then
-        ngx.log(ngx.INFO, "all WAF status fields are 0, skip insert.")
+    local current = {}
+    local has_current = false
+    for _, field in ipairs(fields) do
+        local v = tonumber(data[field]) or 0
+        current[field] = v
+        if v > 0 then
+            has_current = true
+        end
+    end
+
+    if not has_current then
         return
     end
 
-    -- 使用 ON DUPLICATE KEY UPDATE 实现累积写入（需确保表中 date 列为唯一键）
-    local sql = string.format(SQL_INSERT_WAF_STATUS,
+    -- 增量同步：每次只写入比上次同步新增的部分，避免重复覆盖导致统计回退。
+    local synced_hash_data = redis_cli.hgetall(sync_key) or {}
+    local synced = {}
+    for i = 1, #synced_hash_data, 2 do
+        local k = tostring(synced_hash_data[i])
+        synced[k] = tonumber(synced_hash_data[i + 1]) or 0
+    end
+
+    local delta = {}
+    local has_delta = false
+    for _, field in ipairs(fields) do
+        local cur = current[field] or 0
+        local old = synced[field] or 0
+        local d
+
+        if cur >= old then
+            d = cur - old
+        else
+            -- Redis key 过期/重建后会从小值重新增长，这里按“新快照增量”继续累加。
+            d = cur
+        end
+
+        delta[field] = d
+        if d > 0 then
+            has_delta = true
+        end
+    end
+
+    if not has_delta then
+        return
+    end
+
+    local sql = string.format(SQL_INSERT_WAF_STATUS_INCREMENT,
         quote_sql_str(today),
-        http4xx, http5xx, request_times, attack_times, block_times,
-        block_times_attack, block_times_captcha, block_times_cc, captcha_pass_times)
+        delta.http4xx, delta.http5xx, delta.request_times, delta.attack_times, delta.block_times,
+        delta.block_times_attack, delta.block_times_captcha, delta.block_times_cc, delta.captcha_pass_times)
 
     local res, err = mysql.query(sql)
     if not res then
@@ -822,8 +883,16 @@ function _M.write_waf_status_redis_to_mysql()
         return
     end
 
-    -- 不删除 Redis key，保留数据，避免集群模式数据丢失
-    ngx.log(ngx.INFO, "write_waf_status_redis_to_mysql succeeded for date: ", today)
+    local redis_expire = get_system_config("redis").expire_time or 1800
+    local sync_expire = redis_expire * 2
+    if sync_expire < 86400 then
+        sync_expire = 86400
+    end
+    local ok, sync_err = redis_cli.hmset(sync_key, current, sync_expire)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to update waf_status sync snapshot key: ", sync_key, " err: ", sync_err)
+        return
+    end
 end
 
 function _M.get_today_waf_status()

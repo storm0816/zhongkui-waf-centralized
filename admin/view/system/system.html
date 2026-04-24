@@ -55,7 +55,10 @@
 			<div class="layui-col-md12">
 				<form class="layui-form" lay-filter="filter-form-attack-log-retention">
 					<div class="layui-card" lay-filter="component-form-element">
-						<div class="layui-card-header">攻击日志归档清理（懒人模式）</div>
+						<div class="layui-card-header" style="display: flex; align-items: center; justify-content: space-between;">
+							<span>攻击日志归档清理（懒人模式）</span>
+							<button type="button" id="btn-attack-log-retention-run" class="pear-btn pear-btn-primary">立即执行一次</button>
+						</div>
 						<div class="layui-card-body">
 							<div class="layui-row layui-col-space10">
 								<div class="layui-col-md8" style="padding-left: 20px;">仅在 master 自动执行：将旧 attack_log 归档到 attack_log_archive，并按批次清理主表。</div>
@@ -93,7 +96,6 @@
 								<div class="layui-col-md8">
 									<div class="layui-input-block">
 										<button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-attack-log-retention-save" style="display: none;">保存</button>
-										<button type="button" id="btn-attack-log-retention-run" class="pear-btn pear-btn-warming">立即执行一次</button>
 									</div>
 								</div>
 							</div>
