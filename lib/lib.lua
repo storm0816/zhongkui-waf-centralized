@@ -355,6 +355,17 @@ function _M.is_black_url()
         local module = get_site_security_modules("blackUrl")
         local m, rule_table = match_rule(module.rules, url)
         if m then
+            local ip = ngx.ctx.ip
+            -- blackUrl 历史规则文件多数未配置 autoIpBlock，这里给默认值兜底，
+            -- 以保证 /phpmyadmin 等高危探测命中后可以进入封禁链路。
+            if rule_table.autoIpBlock == nil then
+                rule_table.autoIpBlock = "on"
+            end
+            if rule_table.ipBlockExpireInSeconds == nil then
+                local ip_blacklist_cfg = get_system_config("ipBlacklist") or {}
+                rule_table.ipBlockExpireInSeconds = tonumber(ip_blacklist_cfg.expire_time) or 600
+            end
+            block_ip(ip, rule_table)
             do_action(module.moduleName, rule_table)
             return true
         end

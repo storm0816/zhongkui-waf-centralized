@@ -72,6 +72,7 @@ local function write_attack_log()
     local url = ngx.var.request_uri
     local ua = ctx.ua
     local host = default_if_blank(ngx.var.server_name, 'unknown')
+    local node_ip = default_if_blank(sql.get_node_id and sql.get_node_id() or ngx.var.server_addr, 'unknown')
     local protocol = ngx.var.server_protocol
     local referer = ngx.var.http_referer
     local attackTime = ngx.localtime()
@@ -81,6 +82,7 @@ local function write_attack_log()
         request_id = request_id,
         attack_type = attack_type,
         ip = realIp,
+        node_ip = node_ip,
         ip_country_code = country.iso_code or '',
         ip_country_cn = country.names['zh-CN'] or '',
         ip_country_en = country.names['en'] or '',
@@ -142,7 +144,7 @@ local function write_attack_log()
 
     if is_system_option_on("mysql") and not is_system_option_on('centralized') then
         local sql_str =
-        '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
+        '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
 
         local req_header = ngx.req.raw_header() or ''
         if #req_header > 0 or request_body then
@@ -171,7 +173,7 @@ local function write_attack_log()
             referer = 'NULL'
         end
 
-        sql_str = format(sql_str, quote_sql_str(request_id), quote_sql_str(realIp),
+        sql_str = format(sql_str, quote_sql_str(request_id), quote_sql_str(realIp), quote_sql_str(node_ip),
             quote_sql_str(country.iso_code or ''), quote_sql_str(country.names['zh-CN'] or ''),
             quote_sql_str(country.names['en'] or ''),
             quote_sql_str(province.iso_code or ''), quote_sql_str(province.names['zh-CN'] or ''),

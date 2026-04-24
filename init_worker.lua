@@ -86,7 +86,8 @@ local function safe_publish_cluster_rules_snapshot(premature)
     if premature then
         return
     end
-    local ok, err = publish_cluster_rules_snapshot()
+    -- 定时发布时强制从文件重载，避免手工改配置文件后快照内容不更新。
+    local ok, err = publish_cluster_rules_snapshot(true)
     if not ok and err and err ~= "not master node" then
         ngx.log(ngx.ERR, "failed to publish cluster rules snapshot: ", err)
     end

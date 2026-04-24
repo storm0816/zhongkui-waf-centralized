@@ -55,13 +55,24 @@ end
 
 -- block ip
 function _M.block_ip(ip, rule_table)
-    if upper(rule_table.autoIpBlock) == "ON" and ip then
+    if not ip or not rule_table then
+        return false
+    end
+
+    local auto_ip_block = tostring(rule_table.autoIpBlock or "off")
+    if upper(auto_ip_block) == "ON" then
+        local expire = tonumber(rule_table.ipBlockExpireInSeconds)
+        if not expire then
+            local ip_blacklist_cfg = get_system_config("ipBlacklist") or {}
+            expire = tonumber(ip_blacklist_cfg.expire_time) or 600
+        end
+
         local ok, err = nil, nil
 
         if is_system_option_on("redis") then
             local key = constants.KEY_BLACKIP_PREFIX .. ip
 
-            ok, err = redis_cli.set(key, 1, rule_table.ipBlockExpireInSeconds)
+            ok, err = redis_cli.set(key, 1, expire)
             if ok then
                 ngx.ctx.ip_blocked = true
             else
@@ -69,7 +80,7 @@ function _M.block_ip(ip, rule_table)
             end
         else
             local blackip = ngx.shared.dict_blackip
-            ok, err = blackip:set(ip, 1, rule_table.ipBlockExpireInSeconds)
+            ok, err = blackip:set(ip, 1, expire)
             if ok then
                 ngx.ctx.ip_blocked = true
             else

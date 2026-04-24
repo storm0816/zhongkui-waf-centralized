@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>节点攻击大屏</title>
+  <link href="../component/pear/css/pear.css" rel="stylesheet">
+  <style>
+    html, body {
+      height: 100%;
+    }
+    .screen-body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(circle at 20% 20%, #14304a 0%, #0d1f33 35%, #091523 70%, #050d17 100%);
+      color: #dce8f5;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .screen-wrap {
+      padding: 14px;
+    }
+    .screen-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .screen-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #e8f6ff;
+    }
+    .screen-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .screen-main {
+      display: flex;
+      gap: 10px;
+      min-height: calc(100vh - 90px);
+    }
+    .screen-stage {
+      flex: 1;
+      position: relative;
+      border: 1px solid rgba(146, 197, 255, 0.24);
+      border-radius: 10px;
+      background: linear-gradient(160deg, rgba(19, 45, 72, 0.58), rgba(9, 26, 44, 0.75));
+      overflow: hidden;
+    }
+    .stage-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(129, 174, 230, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(129, 174, 230, 0.08) 1px, transparent 1px);
+      background-size: 34px 34px;
+      pointer-events: none;
+    }
+    .node-stage {
+      position: absolute;
+      inset: 0;
+    }
+    .node-item {
+      position: absolute;
+      width: 156px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid #31b66a;
+      box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+      transition: all .22s ease;
+      background: linear-gradient(145deg, rgba(37, 103, 70, 0.82), rgba(27, 76, 55, 0.92));
+    }
+    .node-item:hover {
+      transform: scale(1.04);
+    }
+    .node-item.safe {
+      border-color: #2ebf73;
+    }
+    .node-item.danger {
+      border-color: #ff5757;
+      background: linear-gradient(145deg, rgba(147, 37, 37, 0.88), rgba(108, 22, 22, 0.95));
+      animation: pulse-red 1.8s infinite;
+      box-shadow: 0 0 14px rgba(255, 87, 87, 0.42);
+    }
+    .node-item.master {
+      outline: 2px solid #4ec2ff;
+    }
+    .node-item.active {
+      outline: 2px solid #ffe289;
+      transform: scale(1.06);
+    }
+    .node-ip {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .4px;
+      font-family: Menlo, Consolas, monospace;
+    }
+    .node-meta {
+      margin-top: 5px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #ebf6ff;
+    }
+    .node-host {
+      margin-top: 4px;
+      font-size: 11px;
+      color: rgba(230, 244, 255, 0.88);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .screen-side {
+      width: 38%;
+      min-width: 480px;
+      border: 1px solid rgba(146, 197, 255, 0.24);
+      border-radius: 10px;
+      background: linear-gradient(160deg, rgba(11, 30, 48, 0.88), rgba(8, 22, 36, 0.95));
+      display: flex;
+      flex-direction: column;
+    }
+    .side-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(146, 197, 255, 0.18);
+    }
+    .side-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .side-sub {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .stat-chip {
+      border: 1px solid rgba(171, 206, 241, 0.3);
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #d6ebff;
+      background: rgba(19, 51, 80, 0.5);
+    }
+    .side-table {
+      flex: 1;
+      padding: 10px;
+      overflow: auto;
+    }
+    .summary-bar {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+    }
+    .summary-pill {
+      background: rgba(10, 29, 49, 0.72);
+      border: 1px solid rgba(172, 214, 255, 0.28);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      color: #d6ebff;
+    }
+    .empty-tip {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9bb9d6;
+      font-size: 14px;
+    }
+    @keyframes pulse-red {
+      0% { box-shadow: 0 0 8px rgba(255, 87, 87, 0.22); }
+      50% { box-shadow: 0 0 20px rgba(255, 87, 87, 0.62); }
+      100% { box-shadow: 0 0 8px rgba(255, 87, 87, 0.22); }
+    }
+  </style>
+</head>
+<body class="screen-body">
+  <div class="screen-wrap">
+    <div class="screen-topbar">
+      <div class="screen-title">节点攻击态势大屏</div>
+      <div class="screen-tools">
+        <select id="windowMinutes" class="layui-input-inline" style="width:120px;height:34px;display:inline-block;">
+          <option value="30">最近30分钟</option>
+          <option value="60">最近1小时</option>
+          <option value="180">最近3小时</option>
+          <option value="720">最近12小时</option>
+          <option value="1440">最近24小时</option>
+        </select>
+        <button class="pear-btn pear-btn-primary pear-btn-sm" id="btn-refresh">刷新</button>
+      </div>
+    </div>
+
+    <div class="screen-main">
+      <div class="screen-stage">
+        <div class="summary-bar">
+          <div class="summary-pill" id="sum-total">节点总数: 0</div>
+          <div class="summary-pill" id="sum-danger">告警节点: 0</div>
+          <div class="summary-pill" id="sum-safe">安全节点: 0</div>
+        </div>
+        <div class="stage-grid"></div>
+        <div class="node-stage" id="node-stage"></div>
+        <div class="empty-tip" id="empty-tip" style="display:none;">暂无节点数据，请检查节点心跳是否已写入</div>
+      </div>
+
+      <div class="screen-side">
+        <div class="side-head">
+          <div class="side-title">节点攻击日志</div>
+          <div class="side-sub">
+            <span class="stat-chip">节点IP: <span id="selected-node-ip">未选择</span></span>
+            <span class="stat-chip">主机: <span id="selected-node-host">-</span></span>
+            <span class="stat-chip">规则版本: <span id="selected-node-version">-</span></span>
+          </div>
+        </div>
+        <div class="side-table">
+          <table id="id-table-node-logs" lay-filter="filter-node-logs"></table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="text/html" id="logs-bar">
+    <i class="layui-icon layui-icon-tips" style="cursor:pointer;" lay-event="detail" title="详情"></i>
+  </script>
+
+  <script src="../component/layui/layui.js"></script>
+  <script src="../component/pear/pear.js"></script>
+  <script src="../js/action.js"></script>
+  <script src="../js/attackType.js"></script>
+  <script>
+    layui.use(['table', 'jquery', 'layer'], function () {
+      var table = layui.table;
+      var $ = layui.$;
+      var layer = layui.layer;
+      var nodes = [];
+      var selectedNodeIp = '';
+      var masterIp = '';
+      var refreshTimer = null;
+
+      function hashCode(str) {
+        var h = 0;
+        for (var i = 0; i < str.length; i++) {
+          h = (h * 131 + str.charCodeAt(i)) & 0x7fffffff;
+        }
+        return h;
+      }
+
+      function setSelectedNode(node) {
+        selectedNodeIp = node ? node.node_ip : '';
+        $('#selected-node-ip').text(selectedNodeIp || '未选择');
+        $('#selected-node-host').text(node ? (node.hostname || '-') : '-');
+        $('#selected-node-version').text(node ? (node.rules_version || 'unknown') : '-');
+        table.reload('id-table-node-logs', {
+          where: { nodeIp: selectedNodeIp || '__none__' },
+          page: { curr: 1 }
+        });
+      }
+
+      function renderNodes() {
+        var stage = $('#node-stage');
+        stage.empty();
+
+        var total = nodes.length;
+        if (total === 0) {
+          $('#empty-tip').show();
+          $('#sum-total').text('节点总数: 0');
+          $('#sum-danger').text('告警节点: 0');
+          $('#sum-safe').text('安全节点: 0');
+          setSelectedNode(null);
+          return;
+        }
+        $('#empty-tip').hide();
+
+        var dangerCount = 0;
+        for (var k = 0; k < nodes.length; k++) {
+          if (Number(nodes[k].attack_count || 0) > 0) dangerCount++;
+        }
+        $('#sum-total').text('节点总数: ' + total);
+        $('#sum-danger').text('告警节点: ' + dangerCount);
+        $('#sum-safe').text('安全节点: ' + (total - dangerCount));
+
+        var w = stage.innerWidth();
+        var h = stage.innerHeight();
+        var cx = w / 2;
+        var cy = h / 2;
+        var baseR = Math.max(120, Math.min(w, h) * 0.34);
+        var itemW = 156;
+        var itemH = 84;
+
+        for (var i = 0; i < nodes.length; i++) {
+          var n = nodes[i];
+          var angle = (Math.PI * 2 * i / total) + ((hashCode(n.node_ip || '') % 100) / 1000);
+          var ringJitter = (hashCode((n.node_ip || '') + '-r') % 90) - 45;
+          var r = baseR + ringJitter;
+          if (total === 1) {
+            r = 0;
+          }
+          var x = cx + r * Math.cos(angle) - itemW / 2;
+          var y = cy + r * Math.sin(angle) - itemH / 2;
+          x = Math.max(8, Math.min(w - itemW - 8, x));
+          y = Math.max(8, Math.min(h - itemH - 8, y));
+
+          var danger = Number(n.attack_count || 0) > 0;
+          var cls = 'node-item ' + (danger ? 'danger' : 'safe');
+          if (n.node_ip === masterIp) cls += ' master';
+          if (n.node_ip === selectedNodeIp) cls += ' active';
+
+          var html = ''
+            + '<div class="' + cls + '" data-ip="' + (n.node_ip || '') + '" style="left:' + x + 'px;top:' + y + 'px;">'
+            + '<div class="node-ip">' + (n.node_ip || '-') + (n.node_ip === masterIp ? ' (master)' : '') + '</div>'
+            + '<div class="node-host">' + (n.hostname || '-') + '</div>'
+            + '<div class="node-meta"><span>攻击:' + (n.attack_count || 0) + '</span><span>拦截:' + (n.block_count || 0) + '</span></div>'
+            + '</div>';
+          stage.append(html);
+        }
+
+        if (!selectedNodeIp && nodes[0]) {
+          setSelectedNode(nodes[0]);
+        }
+      }
+
+      function fetchSummary() {
+        var windowMinutes = Number($('#windowMinutes').val() || 30);
+        $.get('/clusternode/attack/summary', { windowMinutes: windowMinutes }, function (res) {
+          if (!res || Number(res.code) !== 0) {
+            layer.msg('加载节点攻击态势失败');
+            return;
+          }
+          nodes = res.data || [];
+          masterIp = res.master_ip || '';
+          if (selectedNodeIp) {
+            var exists = false;
+            for (var i = 0; i < nodes.length; i++) {
+              if (nodes[i].node_ip === selectedNodeIp) {
+                exists = true;
+                setSelectedNode(nodes[i]);
+                break;
+              }
+            }
+            if (!exists) setSelectedNode(null);
+          }
+          renderNodes();
+        });
+      }
+
+      table.render({
+        elem: '#id-table-node-logs',
+        id: 'id-table-node-logs',
+        url: '/events/list',
+        where: { nodeIp: '__none__' },
+        page: true,
+        limits: [10, 20, 50, 100],
+        limit: 10,
+        cols: [[
+          { field: 'request_time', title: '攻击时间', width: 160 },
+          { field: 'ip', title: '攻击者IP', width: 140 },
+          { field: 'server_name', title: '域名', minWidth: 120 },
+          { field: 'request_uri', title: '请求地址', minWidth: 220 },
+          { field: 'attack_type', title: '攻击类型', width: 120, templet: function (d) { return getAttackTypeText(d.attack_type); } },
+          { field: 'action', title: '处置动作', width: 90, templet: function (d) { return getActionText(d.action); } },
+          { title: '详情', width: 60, toolbar: '#logs-bar' }
+        ]]
+      });
+
+      table.on('tool(filter-node-logs)', function (obj) {
+        if (obj.event !== 'detail') return;
+        $.get('/events/get', { id: obj.data.id }, function (res) {
+          if (!res || !res.data) {
+            layer.msg('加载详情失败');
+            return;
+          }
+          var d = res.data;
+          var html = ''
+            + '<div style="padding:12px;">'
+            + '<p><b>节点IP：</b>' + (d.node_ip || '-') + '</p>'
+            + '<p><b>攻击类型：</b>' + (getAttackTypeText(d.attack_type) || d.attack_type || '-') + '</p>'
+            + '<p><b>处置动作：</b>' + (getActionText(d.action) || d.action || '-') + '</p>'
+            + '<p><b>请求URI：</b>' + (d.request_uri || '-') + '</p>'
+            + '<p><b>攻击时间：</b>' + (d.request_time || '-') + '</p>'
+            + '<hr/>'
+            + '<p><b>请求报文：</b></p><pre style="max-height:180px;overflow:auto;">' + (d.request_body || '无') + '</pre>'
+            + '<p><b>响应报文：</b></p><pre style="max-height:180px;overflow:auto;">' + (d.response_body || '无') + '</pre>'
+            + '</div>';
+          layer.open({
+            type: 1,
+            title: '攻击日志详情',
+            area: ['760px', '680px'],
+            content: html
+          });
+        });
+      });
+
+      $(document).on('click', '.node-item', function () {
+        var ip = $(this).data('ip');
+        var node = null;
+        for (var i = 0; i < nodes.length; i++) {
+          if (nodes[i].node_ip === ip) {
+            node = nodes[i];
+            break;
+          }
+        }
+        setSelectedNode(node);
+        renderNodes();
+      });
+
+      $('#btn-refresh').on('click', function () {
+        fetchSummary();
+      });
+
+      $('#windowMinutes').on('change', function () {
+        fetchSummary();
+      });
+
+      fetchSummary();
+      refreshTimer = setInterval(fetchSummary, 15000);
+      $(window).on('resize', function () {
+        renderNodes();
+      });
+      $(window).on('beforeunload', function () {
+        if (refreshTimer) clearInterval(refreshTimer);
+      });
+    });
+  </script>
+</body>
+</html>
