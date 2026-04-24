@@ -6,6 +6,7 @@ local config = require "config"
 local file = require "file_utils"
 local user = require "user"
 local request = require "request"
+local sql = require "sql"
 
 local get_post_args = request.get_post_args
 local cjson_encode = cjson.encode
@@ -76,6 +77,17 @@ function _M.do_request()
         else
             response.code = 500
             response.msg = err
+        end
+    elseif uri == "/system/attacklog/archive/run" and ngx.req.get_method() == "POST" then
+        local result = sql.archive_attack_log_once(true)
+        if result and result.code == 0 then
+            response.code = 0
+            response.data = result
+            response.msg = "执行成功"
+        else
+            response.code = 500
+            response.msg = result and (result.msg or result.error) or "执行失败"
+            response.data = result or {}
         end
     end
 

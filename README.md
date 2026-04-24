@@ -80,6 +80,8 @@ chmod +x install.sh
 
 当 MySQL 短暂不可用时，master 会把失败项标记到 retry set（`waf:retry:traffic_stats`、`waf:retry:attack_type_dates`），并由定时任务自动回放到 dirty set，恢复后自动补写，减少统计类数据漏写风险。
 
+攻击日志上线后会持续增长。系统设置页面已内置“攻击日志归档清理（懒人模式）”：支持自动定时归档清理与“立即执行一次”按钮。详细策略和 SQL 模板见`ATTACK_LOG_RETENTION.md`。
+
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
 ```nginx

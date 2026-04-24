@@ -53,6 +53,58 @@
 
 		<div class="layui-row layui-col-space10">
 			<div class="layui-col-md12">
+				<form class="layui-form" lay-filter="filter-form-attack-log-retention">
+					<div class="layui-card" lay-filter="component-form-element">
+						<div class="layui-card-header">攻击日志归档清理（懒人模式）</div>
+						<div class="layui-card-body">
+							<div class="layui-row layui-col-space10">
+								<div class="layui-col-md8" style="padding-left: 20px;">仅在 master 自动执行：将旧 attack_log 归档到 attack_log_archive，并按批次清理主表。</div>
+							</div>
+							<div class="layui-row layui-col-space10">
+								<div class="layui-col-md2">
+									<label class="layui-form-label" style="width: auto;">自动任务</label>
+									<div class="layui-input-block">
+										<input type="checkbox" name="state" lay-skin="switch" title="ON|OFF" />
+									</div>
+								</div>
+								<div class="layui-col-md3">
+									<label class="layui-form-label" style="width: auto;">保留天数</label>
+									<div class="layui-input-group">
+										<input type="text" name="days" lay-verify="required|number" autocomplete="off" class="layui-input" />
+										<div class="layui-input-suffix" style="padding: 9px 0px 9px 10px;">天</div>
+									</div>
+								</div>
+								<div class="layui-col-md3">
+									<label class="layui-form-label" style="width: auto;">批次大小</label>
+									<div class="layui-input-group">
+										<input type="text" name="batch_size" lay-verify="required|number" autocomplete="off" class="layui-input" />
+										<div class="layui-input-suffix" style="padding: 9px 0px 9px 10px;">条</div>
+									</div>
+								</div>
+								<div class="layui-col-md3">
+									<label class="layui-form-label" style="width: auto;">执行间隔</label>
+									<div class="layui-input-group">
+										<input type="text" name="interval_seconds" lay-verify="required|number" autocomplete="off" class="layui-input" />
+										<div class="layui-input-suffix" style="padding: 9px 0px 9px 10px;">秒</div>
+									</div>
+								</div>
+							</div>
+							<div class="layui-row layui-col-space10">
+								<div class="layui-col-md8">
+									<div class="layui-input-block">
+										<button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-attack-log-retention-save" style="display: none;">保存</button>
+										<button type="button" id="btn-attack-log-retention-run" class="pear-btn pear-btn-warming">立即执行一次</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</form>
+			</div>
+		</div>
+
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
 				<form class="layui-form" lay-filter="filter-form-sort">
 					<div class="layui-card" lay-filter="component-form-element">
 						<div class="layui-card-header">规则引擎设置</div>
@@ -315,6 +367,9 @@
 								} else if (key == "attackLog") {
 									var $form = $('form[lay-filter="filter-form-log"]');
 									setFormValue($form, value);
+								} else if (key == "attackLogRetention") {
+									var $form = $('form[lay-filter="filter-form-attack-log-retention"]');
+									setFormValue($form, value);
 								} else if (key == "rulesSort") {
 									var $form = $('form[lay-filter="filter-form-sort"]');
 									setFormValue($form, value);
@@ -413,6 +468,19 @@
 					return false;
 				});
 
+				form.on('submit(filter-form-attack-log-retention-save)', function(data) {
+					var field = data.field;
+					var elem = data.elem;
+					var $form = $(elem).parents('form');
+
+					getFormfiled($form, field);
+					update({attackLogRetention: JSON.stringify(field)}, function() {
+						$form.find('.btn-save').hide();
+					});
+
+					return false;
+				});
+
 				form.on('submit(filter-form-geoip-save)', function(data) {
 					var field = data.field;
 					var elem = data.elem;
@@ -449,6 +517,17 @@
 						var $form = $(this).closest('form');
 						$form.find('.btn-save').show();
 					});
+				});
+
+				$('#btn-attack-log-retention-run').on('click', function() {
+					$.post('/system/attacklog/archive/run', {}, function(data) {
+						if (data && (data.code == 0 || data.code == 200)) {
+							var detail = data.data || {};
+							popup.success("已执行：inserted=" + (detail.inserted || 0) + ", deleted=" + (detail.deleted || 0));
+						} else {
+							popup.failure((data && data.msg) ? data.msg : '执行失败');
+						}
+					}, 'json');
 				});
 			});
 		</script>

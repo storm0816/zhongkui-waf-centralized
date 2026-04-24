@@ -32,6 +32,12 @@ local BATCH_SIZE = 300
 local DEFAULT_NODE_EXPIRE = 120
 local DEFAULT_NODE_RETENTION = 86400
 local RETRY_SET_EXPIRE = 86400
+local DEFAULT_ATTACK_LOG_RETENTION_DAYS = 90
+local DEFAULT_ATTACK_LOG_RETENTION_BATCH = 5000
+local MAX_ATTACK_LOG_RETENTION_BATCH = 50000
+local DEFAULT_ATTACK_LOG_RETENTION_INTERVAL = 300
+local MIN_ATTACK_LOG_RETENTION_INTERVAL = 60
+local ATTACK_LOG_RETENTION_LAST_RUN_KEY = "attack_log_retention:last_run"
 
 local SQL_CHECK_TABLE =
 [[SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE table_schema='%s' AND table_name='%s']]
@@ -196,6 +202,10 @@ local SQL_INSERT_ATTACK_LOG = [[
     VALUES
 ]]
 
+local SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE = [[
+    CREATE TABLE IF NOT EXISTS `attack_log_archive` LIKE `attack_log`;
+]]
+
 local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
     CREATE TABLE `ip_block_log` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -319,6 +329,30 @@ local function get_cluster_node_retention_seconds()
     return floor(retention)
 end
 
+local function get_attack_log_retention_config()
+    local conf = get_system_config("attackLogRetention") or {}
+    local state = tostring(conf.state or "on")
+
+    local days = tonumber(conf.days) or DEFAULT_ATTACK_LOG_RETENTION_DAYS
+    if days < 1 then
+        days = DEFAULT_ATTACK_LOG_RETENTION_DAYS
+    end
+
+    local batch = tonumber(conf.batch_size or conf.batchSize) or DEFAULT_ATTACK_LOG_RETENTION_BATCH
+    if batch < 100 then
+        batch = 100
+    elseif batch > MAX_ATTACK_LOG_RETENTION_BATCH then
+        batch = MAX_ATTACK_LOG_RETENTION_BATCH
+    end
+
+    local interval = tonumber(conf.interval_seconds or conf.intervalSeconds) or DEFAULT_ATTACK_LOG_RETENTION_INTERVAL
+    if interval < MIN_ATTACK_LOG_RETENTION_INTERVAL then
+        interval = MIN_ATTACK_LOG_RETENTION_INTERVAL
+    end
+
+    return state == "on", floor(days), floor(batch), floor(interval)
+end
+
 local SQL_GET_REQUEST_TRAFFIC_BY_HOUR = [[
     SELECT DATE_FORMAT(access_time, '%Y-%m-%d %H') AS hour,
            SUM(total_requests) AS traffic,
@@ -358,6 +392,20 @@ local SQL_DELETE_STALE_CLUSTER_NODES = [[
     WHERE last_seen < NOW() - INTERVAL %d SECOND
 ]]
 
+local SQL_INSERT_ATTACK_LOG_ARCHIVE = [[
+    INSERT IGNORE INTO attack_log_archive
+    SELECT *
+    FROM attack_log
+    WHERE request_time < NOW() - INTERVAL %d DAY
+    LIMIT %d
+]]
+
+local SQL_DELETE_ATTACK_LOG_ARCHIVE_SOURCE = [[
+    DELETE FROM attack_log
+    WHERE request_time < NOW() - INTERVAL %d DAY
+    LIMIT %d
+]]
+
 
 
 local function yesterday()
@@ -385,6 +433,7 @@ function _M.check_table(premature)
         { name = 'waf_status',          sql = SQL_CREATE_TABLE_WAF_STATUS },
         { name = 'traffic_stats',       sql = SQL_CREATE_TABLE_TRAFFIC_STATS },
         { name = 'attack_log',          sql = SQL_CREATE_TABLE_ATTACK_LOG },
+        { name = 'attack_log_archive',  sql = SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE },
         { name = 'ip_block_log',        sql = SQL_CREATE_TABLE_IP_BLOCK_LOG },
         { name = 'attack_type_traffic', sql = SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC },
         { name = 'waf_traffic_stats',   sql = SQL_CREATE_TABLE_WAF_TRAFFIC_STATS },
@@ -420,6 +469,28 @@ function _M.check_table(premature)
     -- 兼容老版本表结构：attack_log 可能没有 request_id 唯一索引，这里补齐一次。
     ensure_index("attack_log", "idx_unique_attack_log_request_id",
         "ALTER TABLE attack_log ADD UNIQUE INDEX idx_unique_attack_log_request_id (request_id)")
+
+    -- attack_log 常用查询维度索引（按时间、IP、攻击类型、站点、动作），减少大表查询和清理扫描压力。
+    ensure_index("attack_log", "idx_attack_log_request_time",
+        "ALTER TABLE attack_log ADD INDEX idx_attack_log_request_time (request_time)")
+    ensure_index("attack_log", "idx_attack_log_ip_time",
+        "ALTER TABLE attack_log ADD INDEX idx_attack_log_ip_time (ip, request_time)")
+    ensure_index("attack_log", "idx_attack_log_type_time",
+        "ALTER TABLE attack_log ADD INDEX idx_attack_log_type_time (attack_type, request_time)")
+    ensure_index("attack_log", "idx_attack_log_server_time",
+        "ALTER TABLE attack_log ADD INDEX idx_attack_log_server_time (server_name, request_time)")
+    ensure_index("attack_log", "idx_attack_log_action_time",
+        "ALTER TABLE attack_log ADD INDEX idx_attack_log_action_time (action, request_time)")
+    ensure_index("attack_log_archive", "idx_attack_log_archive_request_time",
+        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_request_time (request_time)")
+    ensure_index("attack_log_archive", "idx_attack_log_archive_ip_time",
+        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_ip_time (ip, request_time)")
+    ensure_index("attack_log_archive", "idx_attack_log_archive_type_time",
+        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_type_time (attack_type, request_time)")
+    ensure_index("attack_log_archive", "idx_attack_log_archive_server_time",
+        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_server_time (server_name, request_time)")
+    ensure_index("attack_log_archive", "idx_attack_log_archive_action_time",
+        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_action_time (action, request_time)")
     -- 兼容老版本表结构：waf_cluster_node 可能没有 last_seen 索引，这里补齐一次。
     ensure_index("waf_cluster_node", "idx_last_seen",
         "ALTER TABLE waf_cluster_node ADD INDEX idx_last_seen (last_seen)")
@@ -1312,6 +1383,75 @@ function _M.cleanup_offline_cluster_nodes()
     if affected > 0 then
         ngx.log(ngx.INFO, "cleanup stale cluster nodes success, affected=", affected, ", retention=", retention)
     end
+end
+
+function _M.archive_attack_log_once(force)
+    if not is_system_option_on("mysql") then
+        return { code = 0, msg = "mysql is off, skip", skipped = true }
+    end
+
+    local enabled, days, batch = get_attack_log_retention_config()
+    if not force and not enabled then
+        return { code = 0, msg = "attackLogRetention is off, skip", skipped = true }
+    end
+
+    local create_res, create_err = mysql.query(SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE)
+    if not create_res then
+        ngx.log(ngx.ERR, "failed to ensure attack_log_archive table: ", create_err)
+        return { code = 500, msg = "ensure archive table failed", error = create_err }
+    end
+
+    local insert_sql = format(SQL_INSERT_ATTACK_LOG_ARCHIVE, days, batch)
+    local insert_res, insert_err = mysql.query(insert_sql)
+    if not insert_res then
+        ngx.log(ngx.ERR, "failed to archive attack_log to attack_log_archive: ", insert_err)
+        return { code = 500, msg = "archive insert failed", error = insert_err }
+    end
+
+    local delete_sql = format(SQL_DELETE_ATTACK_LOG_ARCHIVE_SOURCE, days, batch)
+    local delete_res, delete_err = mysql.query(delete_sql)
+    if not delete_res then
+        ngx.log(ngx.ERR, "failed to delete archived attack_log rows: ", delete_err)
+        return { code = 500, msg = "archive delete failed", error = delete_err }
+    end
+
+    local inserted = insert_res.affected_rows or 0
+    local deleted = delete_res.affected_rows or 0
+    if inserted > 0 or deleted > 0 then
+        ngx.log(ngx.INFO, "attack_log retention run success, days=", days, ", batch=", batch,
+            ", inserted=", inserted, ", deleted=", deleted)
+    end
+
+    return {
+        code = 0,
+        msg = "ok",
+        inserted = inserted,
+        deleted = deleted,
+        days = days,
+        batch = batch
+    }
+end
+
+function _M.archive_attack_log_auto()
+    local enabled, _, _, interval = get_attack_log_retention_config()
+    if not enabled then
+        return
+    end
+
+    local dict = ngx.shared.dict_config
+    if not dict then
+        _M.archive_attack_log_once(false)
+        return
+    end
+
+    local now = ngx.time()
+    local last_run = tonumber(dict:get(ATTACK_LOG_RETENTION_LAST_RUN_KEY)) or 0
+    if now - last_run < interval then
+        return
+    end
+
+    dict:set(ATTACK_LOG_RETENTION_LAST_RUN_KEY, now)
+    _M.archive_attack_log_once(false)
 end
 
 -- 在适当的地方调用 write_sql_redis_to_mysql 函数，例如定时任务

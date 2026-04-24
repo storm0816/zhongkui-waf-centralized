@@ -4,6 +4,12 @@
         "logPath": "/opt/openresty/nginx/logs/hack/",
         "jsonFormat": "off"
     },
+    "attackLogRetention": {
+        "state": "on",
+        "days": 90,
+        "batch_size": 5000,
+        "interval_seconds": 300
+    },
     "geoip": {
         "file": "/opt/openresty/share/GeoIP/GeoLite2-City.mmdb",
         "language": "zh-CN"
