@@ -114,13 +114,28 @@
           var rows = res.data || [];
           for (var i = 0; i < rows.length; i++) {
             var row = rows[i];
-            row.sync_state = (row.rules_version && row.rules_version !== 'unknown'
-              && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion) ? 'ok' : 'lagging';
+            if (row.node_role === 'master') {
+              row.sync_state = 'master';
+            } else {
+              row.sync_state = (row.rules_version && row.rules_version !== 'unknown'
+                && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion) ? 'ok' : 'lagging';
+            }
           }
           return res;
         },
         cols: [[
           { field: 'ip', title: '节点 IP' },
+          {
+            field: 'node_role',
+            title: '角色',
+            minWidth: 90,
+            templet: function (d) {
+              if (d.node_role === 'master') {
+                return '<span style="color:#1e9fff;">master</span>';
+              }
+              return 'node';
+            }
+          },
           { field: 'hostname', title: '主机名' },
           {
             field: 'rules_version',
@@ -141,6 +156,9 @@
             title: '同步状态',
             minWidth: 110,
             templet: function (d) {
+              if (d.sync_state === 'master') {
+                return '<span style="color:#1e9fff;">主节点</span>';
+              }
               if (d.sync_state === 'ok') {
                 return '<span style="color:#16b777;">已同步</span>';
               }

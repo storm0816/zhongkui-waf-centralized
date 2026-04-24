@@ -5,6 +5,7 @@ local user = require "user"
 local quote_sql_str = ngx.quote_sql_str
 local tonumber = tonumber
 local format = string.format
+local ipairs = ipairs
 local config = require "config"
 local get_system_config = config.get_system_config
 local ngx_log = ngx.log
@@ -41,6 +42,20 @@ local function get_online_window()
     return expire + grace, expire, grace
 end
 
+local function get_local_ip()
+    local f = io.popen("hostname -I 2>/dev/null || hostname -i 2>/dev/null")
+    if not f then
+        return "unknown"
+    end
+    local line = f:read("*l")
+    f:close()
+    if not line then
+        return "unknown"
+    end
+    local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
+    return ip or "unknown"
+end
+
 -- 节点列表
 local function listNodes()
     local response = { code = 0, msg = "", count = 0, data = {} }
@@ -71,6 +86,7 @@ local function listNodes()
     response.count = tonumber(res[1].total) or 0
 
     local master_rules_version = "unknown"
+    local master_ip = get_local_ip()
     local dict_config = ngx.shared.dict_config
     if dict_config then
         local v = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
@@ -94,6 +110,9 @@ local function listNodes()
 
         res, err = mysql.query(sql_data)
         if res then
+            for _, row in ipairs(res) do
+                row.node_role = (row.ip == master_ip) and "master" or "node"
+            end
             response.data = res
         else
             ngx_log(ERR, "listNodes select query error: ", err or "nil")
@@ -106,6 +125,7 @@ local function listNodes()
     response.base_expire = expire
     response.offline_grace = grace
     response.master_rules_version = master_rules_version
+    response.master_ip = master_ip
     return response
 end
 
