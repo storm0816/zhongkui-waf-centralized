@@ -29,7 +29,6 @@ local pairs = pairs
 local ipairs = ipairs
 local tonumber = tonumber
 local type = type
-local floor = math.floor
 local getenv = os.getenv
 local md5 = ngx.md5
 local sort = table.sort
@@ -44,6 +43,39 @@ local CLUSTER_RULES_HASH_PLACEHOLDER = "__SNAPSHOT_HASH__"
 local storage_security_modules
 
 _M.ipgroups = {}
+
+local function canonical_encode(v)
+    local vt = type(v)
+    if vt == "nil" then
+        return "null"
+    end
+    if vt == "boolean" or vt == "number" or vt == "string" then
+        return cjson_encode(v)
+    end
+    if vt ~= "table" then
+        return cjson_encode(tostring(v))
+    end
+
+    if isarray(v) then
+        local parts = {}
+        for i = 1, #v do
+            parts[i] = canonical_encode(v[i])
+        end
+        return "[" .. concat(parts, ",") .. "]"
+    end
+
+    local keys = {}
+    for k, _ in pairs(v) do
+        insert(keys, tostring(k))
+    end
+    sort(keys)
+
+    local parts = {}
+    for _, k in ipairs(keys) do
+        insert(parts, cjson_encode(k) .. ":" .. canonical_encode(v[k]))
+    end
+    return "{" .. concat(parts, ",") .. "}"
+end
 
 local function is_option_on(options, option)
     local item = options and options[option]
@@ -214,8 +246,8 @@ end
 
 local function get_cluster_rules_snapshot_payload()
     local payload = {
-        version = tostring(floor(ngx.now() * 1000)),
-        updated_at = ngx.localtime(),
+        version = "",
+        updated_at = "",
         source = getenv("HOSTNAME") or "master",
         hash = "",
         global = config.global,
@@ -235,40 +267,20 @@ local function get_cluster_rules_snapshot_payload()
     return payload
 end
 
-local function apply_cluster_rules_snapshot_hash(payload)
-    local function canonical_encode(v)
-        local vt = type(v)
-        if vt == "nil" then
-            return "null"
-        end
-        if vt == "boolean" or vt == "number" or vt == "string" then
-            return cjson_encode(v)
-        end
-        if vt ~= "table" then
-            return cjson_encode(tostring(v))
-        end
-
-        if isarray(v) then
-            local parts = {}
-            for i = 1, #v do
-                parts[i] = canonical_encode(v[i])
-            end
-            return "[" .. concat(parts, ",") .. "]"
-        end
-
-        local keys = {}
-        for k, _ in pairs(v) do
-            insert(keys, tostring(k))
-        end
-        sort(keys)
-
-        local parts = {}
-        for _, k in ipairs(keys) do
-            insert(parts, cjson_encode(k) .. ":" .. canonical_encode(v[k]))
-        end
-        return "{" .. concat(parts, ",") .. "}"
+local function calculate_snapshot_content_version(payload)
+    local content = {
+        global = payload.global,
+        sites = payload.sites,
+        ip_groups = payload.ip_groups
+    }
+    local canonical = canonical_encode(content)
+    if not canonical then
+        return nil, "failed to encode snapshot content for version"
     end
+    return md5(canonical)
+end
 
+local function apply_cluster_rules_snapshot_hash(payload)
     payload.hash = CLUSTER_RULES_HASH_PLACEHOLDER
     local canonical = canonical_encode(payload)
     if not canonical then
@@ -287,39 +299,6 @@ local function verify_cluster_rules_snapshot_hash(payload)
     end
 
     payload.hash = CLUSTER_RULES_HASH_PLACEHOLDER
-    local function canonical_encode(v)
-        local vt = type(v)
-        if vt == "nil" then
-            return "null"
-        end
-        if vt == "boolean" or vt == "number" or vt == "string" then
-            return cjson_encode(v)
-        end
-        if vt ~= "table" then
-            return cjson_encode(tostring(v))
-        end
-
-        if isarray(v) then
-            local parts = {}
-            for i = 1, #v do
-                parts[i] = canonical_encode(v[i])
-            end
-            return "[" .. concat(parts, ",") .. "]"
-        end
-
-        local keys = {}
-        for k, _ in pairs(v) do
-            insert(keys, tostring(k))
-        end
-        sort(keys)
-
-        local parts = {}
-        for _, k in ipairs(keys) do
-            insert(parts, cjson_encode(k) .. ":" .. canonical_encode(v[k]))
-        end
-        return "{" .. concat(parts, ",") .. "}"
-    end
-
     local canonical = canonical_encode(payload)
     payload.hash = expected
     if not canonical then
@@ -610,6 +589,22 @@ function _M.publish_cluster_rules_snapshot(reload_from_file)
     end
 
     local payload = get_cluster_rules_snapshot_payload()
+    local version, ver_err = calculate_snapshot_content_version(payload)
+    if not version then
+        return nil, ver_err
+    end
+    payload.version = version
+    payload.updated_at = ngx.localtime()
+
+    local dict_config = ngx.shared.dict_config
+    local local_version = dict_config and dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY) or nil
+    if local_version and tostring(local_version) == version then
+        local redis_version = redis_cli.get(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT_VERSION)
+        if redis_version and redis_version ~= ngx.null and tostring(redis_version) == version then
+            return true
+        end
+    end
+
     local hash, hash_err = apply_cluster_rules_snapshot_hash(payload)
     if not hash then
         return nil, hash_err
@@ -634,8 +629,9 @@ function _M.publish_cluster_rules_snapshot(reload_from_file)
         return nil, version_err
     end
 
-    local dict_config = ngx.shared.dict_config
-    dict_config:set(CLUSTER_RULES_VERSION_DICT_KEY, payload.version)
+    if dict_config then
+        dict_config:set(CLUSTER_RULES_VERSION_DICT_KEY, payload.version)
+    end
     return true
 end
 
