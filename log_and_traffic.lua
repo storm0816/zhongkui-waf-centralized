@@ -204,7 +204,9 @@ local function write_ip_block_log()
         ipBlackLogger:log(ip .. "\n")
     end
 
-    if is_system_option_on("mysql") then
+    -- 集群模式下，node 即使 mysql.state=off 也必须写入共享队列，
+    -- 由 master 定时消费并落库到 MySQL。
+    if is_system_option_on('centralized') or is_system_option_on("mysql") then
         local request_id = ctx.request_id
         local geoip = ctx.geoip
         local country = geoip.country
