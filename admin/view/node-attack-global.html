@@ -466,24 +466,83 @@
         var rows = state.trafficRows || [];
         var points = rows.map(function (r) { return num(r[2]); });
         if (points.length === 0) points = [0, 0, 0, 0];
-        var max = Math.max.apply(null, points.concat([1]));
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        var grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        var maxVal = Math.max.apply(null, points.concat([1]));
+        var mag = Math.pow(10, Math.floor(Math.log(maxVal) / Math.LN10));
+        var yMax = Math.ceil(maxVal / mag) * mag;
+        if (yMax <= 0) yMax = 1;
+
+        function labelAt(index) {
+          var r = rows[index];
+          if (!Array.isArray(r)) return "--:--";
+          if (r.length > 1 && (r[1] !== null && r[1] !== undefined && r[1] !== "")) {
+            var h = Number(r[1]);
+            if (isFinite(h)) return String(h).padStart(2, "0") + ":00";
+          }
+          if (r.length > 0 && typeof r[0] === "string") {
+            var s = r[0];
+            var m = s.match(/(\d{2}:\d{2})/);
+            if (m) return m[1];
+          }
+          return "--:--";
+        }
+
+        var labels = [];
+        if (rows.length > 0) {
+          labels = [labelAt(0), labelAt(Math.floor((rows.length - 1) / 2)), labelAt(rows.length - 1)];
+        } else {
+          labels = ["--:--", "--:--", "--:--"];
+        }
+
+        var W = canvas.width;
+        var H = canvas.height;
+        var P = { left: 40, right: 8, top: 8, bottom: 22 };
+        var plotW = W - P.left - P.right;
+        var plotH = H - P.top - P.bottom;
+
+        ctx.clearRect(0, 0, W, H);
+        ctx.strokeStyle = "rgba(139,190,228,.28)";
+        ctx.fillStyle = "rgba(152,203,236,.9)";
+        ctx.font = "11px DIN Alternate, Consolas, sans-serif";
+
+        for (var i = 0; i <= 4; i++) {
+          var v = yMax * (1 - i / 4);
+          var y = P.top + plotH * (i / 4);
+          ctx.beginPath();
+          ctx.moveTo(P.left, y);
+          ctx.lineTo(W - P.right, y);
+          ctx.stroke();
+          ctx.fillText(String(Math.round(v)), 4, y + 4);
+        }
+
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(159,214,248,.45)";
+        ctx.moveTo(P.left, P.top);
+        ctx.lineTo(P.left, H - P.bottom);
+        ctx.lineTo(W - P.right, H - P.bottom);
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(152,203,236,.9)";
+        ctx.fillText(labels[0], P.left, H - 4);
+        var midX = P.left + plotW / 2;
+        ctx.fillText(labels[1], midX - 16, H - 4);
+        ctx.fillText(labels[2], W - P.right - 34, H - 4);
+
+        var grad = ctx.createLinearGradient(0, P.top, 0, H - P.bottom);
         grad.addColorStop(0, "rgba(47,224,255,.35)");
         grad.addColorStop(1, "rgba(47,224,255,0)");
 
         ctx.beginPath();
         points.forEach(function (p, i) {
-          var x = points.length > 1 ? i * (canvas.width / (points.length - 1)) : 0;
-          var y = canvas.height - (p / max) * (canvas.height - 12) - 6;
+          var x = points.length > 1 ? P.left + i * (plotW / (points.length - 1)) : P.left;
+          var y = H - P.bottom - (p / yMax) * plotH;
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         });
         ctx.lineWidth = 2;
         ctx.strokeStyle = "#44e8ff";
         ctx.stroke();
-        ctx.lineTo(canvas.width, canvas.height);
-        ctx.lineTo(0, canvas.height);
+        ctx.lineTo(P.left + plotW, H - P.bottom);
+        ctx.lineTo(P.left, H - P.bottom);
         ctx.closePath();
         ctx.fillStyle = grad;
         ctx.fill();
