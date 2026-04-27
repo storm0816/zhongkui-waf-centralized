@@ -16,6 +16,14 @@
 	line-height: 48px;
 }
 
+/* 修复二级菜单收起动画时的残影：height 动画期间裁剪内容 */
+.pear-nav-tree .layui-nav-child:not(.layui-nav-hover) {
+	overflow: hidden;
+	will-change: height;
+	transform: translateZ(0);
+	backface-visibility: hidden;
+}
+
 .pear-nav-tree  .layui-nav-item>a .layui-nav-more {
 	padding: 0px;
 }
