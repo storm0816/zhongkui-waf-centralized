@@ -142,7 +142,6 @@
 		"href": "view/cluster-nodes.html"
 	},
 	{
-		"id": 9,
 		"title": "节点攻击概览",
 		"icon": "layui-icon layui-icon-chart-screen",
 		"type": 1,
