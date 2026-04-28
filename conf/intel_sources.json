@@ -1,8 +1,0 @@
-{
-  "attack_log_agg": {
-    "state": "on",
-    "lookback_hours": 24,
-    "min_hits": 20,
-    "limit": 200
-  }
-}
