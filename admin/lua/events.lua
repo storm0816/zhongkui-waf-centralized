@@ -18,13 +18,13 @@ local MAX_LIMIT = 100
 local SQL_COUNT_ATTACK_LOG = 'SELECT COUNT(*) AS total FROM attack_log '
 
 local SQL_SELECT_ATTACK_LOG = [[
-    SELECT id, request_id, ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
+    SELECT id, request_id, ip, node_ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
     ip_longitude, ip_latitude, http_method, server_name, user_agent, referer, request_protocol, request_uri,
     http_status, request_time, attack_type, severity_level, security_module, hit_rule, action FROM attack_log
 ]]
 
 local SQL_SELECT_ATTACK_LOG_DETAIL = [[
-    SELECT id, request_id, ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
+    SELECT id, request_id, ip, node_ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
     ip_longitude, ip_latitude, http_method, server_name, user_agent, referer, request_protocol, request_uri,
     request_body, http_status, response_body, request_time, attack_type, severity_level, security_module, hit_rule, action FROM attack_log
 ]]
@@ -49,6 +49,7 @@ local function listLogs()
 
         local serverName = args['serverName']
         local ip = args['ip']
+        local nodeIp = args['nodeIp']
         local action = args['action']
         local attackType = args['attackType']
 
@@ -60,6 +61,10 @@ local function listLogs()
 
         if ip and #ip > 0 then
             where = where .. ' AND ip=' .. quote_sql_str(ip) .. ' '
+        end
+
+        if nodeIp and #nodeIp > 0 then
+            where = where .. ' AND node_ip=' .. quote_sql_str(nodeIp) .. ' '
         end
 
         if attackType and #attackType > 0 then

@@ -5,10 +5,12 @@ local user = require "user"
 local quote_sql_str = ngx.quote_sql_str
 local tonumber = tonumber
 local format = string.format
+local ipairs = ipairs
 local config = require "config"
 local get_system_config = config.get_system_config
 local ngx_log = ngx.log
 local ERR = ngx.ERR
+local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
 
 local _M = {}
 
@@ -40,6 +42,20 @@ local function get_online_window()
     return expire + grace, expire, grace
 end
 
+local function get_local_ip()
+    local f = io.popen("hostname -I 2>/dev/null || hostname -i 2>/dev/null")
+    if not f then
+        return "unknown"
+    end
+    local line = f:read("*l")
+    f:close()
+    if not line then
+        return "unknown"
+    end
+    local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
+    return ip or "unknown"
+end
+
 -- 节点列表
 local function listNodes()
     local response = { code = 0, msg = "", count = 0, data = {} }
@@ -69,9 +85,22 @@ local function listNodes()
     end
     response.count = tonumber(res[1].total) or 0
 
+    local master_rules_version = "unknown"
+    local master_ip = get_local_ip()
+    local dict_config = ngx.shared.dict_config
+    if dict_config then
+        local v = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
+        if v then
+            master_rules_version = tostring(v)
+        end
+    end
+
     if response.count > 0 then
         local sql_data = string.format([[
-            SELECT ip, version, hostname, last_seen,
+            SELECT ip,
+                   COALESCE(NULLIF(rules_version, ''), 'unknown') AS rules_version,
+                   hostname,
+                   last_seen,
                    CASE WHEN last_seen >= NOW() - INTERVAL %d SECOND THEN 1 ELSE 0 END AS is_online
             FROM waf_cluster_node
             %s
@@ -81,6 +110,9 @@ local function listNodes()
 
         res, err = mysql.query(sql_data)
         if res then
+            for _, row in ipairs(res) do
+                row.node_role = (row.ip == master_ip) and "master" or "node"
+            end
             response.data = res
         else
             ngx_log(ERR, "listNodes select query error: ", err or "nil")
@@ -92,6 +124,8 @@ local function listNodes()
     response.expire = online_window
     response.base_expire = expire
     response.offline_grace = grace
+    response.master_rules_version = master_rules_version
+    response.master_ip = master_ip
     return response
 end
 
@@ -126,6 +160,60 @@ local function get_node_stats()
             offline_grace = grace
         }
     }
+end
+
+-- 近期受攻击节点概览
+local function get_attack_summary()
+    local response = { code = 0, msg = "", data = {} }
+    local args = ngx.req.get_uri_args()
+    local window_minutes = tonumber(args.windowMinutes) or 30
+    if window_minutes < 5 then
+        window_minutes = 5
+    elseif window_minutes > 1440 then
+        window_minutes = 1440
+    end
+
+    local master_ip = get_local_ip()
+    local sql = format([[
+        SELECT
+            n.ip AS node_ip,
+            COALESCE(NULLIF(n.hostname, ''), '-') AS hostname,
+            COALESCE(NULLIF(n.rules_version, ''), 'unknown') AS rules_version,
+            COALESCE(a.attack_count, 0) AS attack_count,
+            COALESCE(a.attacker_count, 0) AS attacker_count,
+            COALESCE(a.attack_type_count, 0) AS attack_type_count,
+            COALESCE(a.block_count, 0) AS block_count,
+            a.last_attack_time,
+            n.last_seen
+        FROM waf_cluster_node n
+        LEFT JOIN (
+            SELECT
+                node_ip,
+                COUNT(*) AS attack_count,
+                COUNT(DISTINCT ip) AS attacker_count,
+                COUNT(DISTINCT attack_type) AS attack_type_count,
+                SUM(CASE WHEN UPPER(action) IN ('DENY','REDIRECT','CAPTCHA') THEN 1 ELSE 0 END) AS block_count,
+                MAX(request_time) AS last_attack_time
+            FROM attack_log
+            WHERE request_time >= NOW() - INTERVAL %d MINUTE
+              AND node_ip IS NOT NULL
+              AND node_ip <> ''
+            GROUP BY node_ip
+        ) a ON a.node_ip = n.ip
+        ORDER BY attack_count DESC, n.last_seen DESC
+        LIMIT 500
+    ]], window_minutes)
+
+    local res, err = mysql.query(sql)
+    if not res then
+        ngx_log(ERR, "get_attack_summary query error: ", err or "nil")
+        return { code = 500, msg = "summary query error", data = {} }
+    end
+
+    response.window_minutes = window_minutes
+    response.master_ip = master_ip
+    response.data = res
+    return response
 end
 
 -- 删除节点（仅允许离线节点）
@@ -181,6 +269,8 @@ function _M.do_request()
         response = listNodes()
     elseif uri == "/clusternode/stat" then
         response = get_node_stats()
+    elseif uri == "/clusternode/attack/summary" then
+        response = get_attack_summary()
     elseif uri == "/clusternode/delete" and ngx.req.get_method() == "POST" then
         ngx.req.read_body()
         local body = ngx.req.get_body_data()

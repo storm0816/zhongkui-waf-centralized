@@ -1,38 +1,35 @@
 ## ZhongKui-WAF
 
-钟馗是中国传统文化中的一个神话人物，被誉为"捉鬼大师"，专门驱逐邪恶之物。`Zhongkui-WAF`的命名灵感来源于这一神话人物，寓意着该软件能够像钟馗一样，有效地保护 Web 应用免受各种恶意攻击和威胁。
+`Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-`Zhongkui-WAF`基于`lua-nginx-module`，可以多维度检查和拦截恶意网络请求，具有简单易用、高性能、轻量级的特点。它的配置简单，你可以根据实际情况设置不同的安全规则和策略。
+### 功能总览
 
-![dashboard](https://github.com/storm0816/zhongkui-waf-centralized/tree/master/images/dashboard.png)
+基础防护能力：
+- 三种运行模式：关闭、保护（拦截+记录）、监控（仅记录）
+- 规则防护：URL/参数/Header/Cookie/Body、上传扩展名、HTTP Method
+- 攻击检测：SQL 注入、XSS、SSRF、CC、Bot、人机验证、ACL、自定义规则
+- IP 管控：黑白名单（支持 IPv6 与网段）
+- 敏感数据过滤：身份证、手机号、银行卡、密码等脱敏与关键词过滤
 
-### 主要特性
+平台与数据能力：
+- 站点独立配置 + 全局配置
+- 管理后台可视化（攻击日志、流量统计、节点状态）
+- 支持 Redis + MySQL 的集群化架构
+- 攻击日志归档清理（系统页面懒人模式，支持自动与手动执行）
 
-- 多种工作模式，可随时切换
-  1. 关闭模式：放行所有网络请求
-  2. 保护模式（protection）：拦截攻击请求并记录攻击日志
-  3. 监控模式（monitor）：记录攻击日志但不拦截攻击请求
-- 支持规则自动排序，开启后按规则命中次数降序排序，可提高拦截效率
-- 支持 ACL 自定义规则，灵活配置拦截规则
-- 支持站点独立配置
-- IP 黑名单、白名单，支持 IPv6 及网段配置，"127.0.0.1/24"或"127.0.0.1/255.255.255.0"
-- HTTP Method 白名单
-- URL 黑名单、白名单
-- URL 恶意参数拦截
-- 恶意 Header 拦截
-- 请求体检查
-- 上传文件类型黑名单，防止 webshell 上传
-- 恶意 Cookie 拦截
-- CC 攻击拦截
-- 人机验证，验证失败后可以自动限时或永久拉黑 IP 地址
-- Sql 注入、XSS、SSRF 等攻击拦截
-- 可设置仅允许指定国家的 IP 访问
-- 敏感数据（身份证号码、手机号码、银行卡号、密码）脱敏及关键词过滤
-- 支持 Redis，开启后 IP 请求频率、IP 黑名单等数据将从 Redis 中读写，实现集群效果
-- 攻击日志记录，包含 IP 地址、IP 所属地区、攻击时间、防御动作、拦截规则等，支持 JSON 格式日志
-- 流量统计可视化
+集群增强能力（当前版本）：
+- master 集中发布规则快照，node 增量拉取并热更新
+- 快照带 `hash`（md5）校验，node 校验通过后才应用
+- 节点页面显示 `规则版本`、`规则发布时间`、`同步状态`
+- 统计/日志链路支持 dirty set、retry set、队列化落库，降低扫描与写库压力
 
-### 安装
+### 安装与部署
+
+安装前：
+
+```bash
+chmod +x install.sh
+```
 
 常用参数：
 
@@ -45,15 +42,6 @@
 | `--redis-port PORT` | `16381` | 配合`--init-local-redis`使用，指定本机 Redis 端口 |
 | `--redis-password PASSWORD` | `Push@789` | 配合`--init-local-redis`使用，指定本机 Redis 密码 |
 
-使用 root 执行安装脚本`install.sh`，自动安装基础编译工具、`OpenResty`、`ZhongKui`、`libmaxminddb`、`luaossl`、`luafilesystem`、`libinjection`和`geoipupdate`，并按角色生成`conf/system.json`和`nginx.conf`。从项目目录执行时，脚本会优先安装当前目录中的代码，并自动把项目`waf/`目录下的离线安装包同步到`/usr/local/src`，缺失的包才会尝试联网下载。Redis 默认使用外部服务，只有显式添加`--init-local-redis`时才会安装包内 Redis。
-安装脚本会基于项目内的`waf/nginx.conf.default`替换 OpenResty 默认`nginx.conf`：保留 OpenResty 默认 80 端口`server`内容，只在`http`层添加 ZhongKui-WAF 的加载配置，并按角色 include 控制台配置。仓库里的`admin/conf/sites.conf`默认保持为空，只用于填写真实业务站点；默认 80 端口请求也会先经过 WAF access 阶段。
-
-安装前先赋予执行权限：
-
-```bash
-chmod +x install.sh
-```
-
 常见部署场景：
 
 | 场景 | 安装命令 | 安装前需要确认 |
@@ -64,23 +52,71 @@ chmod +x install.sh
 | node 节点 | `sudo ./install.sh --role node` | 先修改`conf/system-node.json`中的 Redis 连接信息；node 不需要 MySQL |
 | 单机模式 | `sudo ./install.sh --role master` | 先将`conf/system-master.json`中的`centralized.state`改为`off`，并按需配置 MySQL/Redis |
 
-`--init-local-mysql`只用于 master 机器需要安装并初始化本机 MySQL 的场景。它会创建本机数据库`zhongkui_waf`和`--mysql-user`指定的账号，并把当前运行配置中的 MySQL 连接切换到`127.0.0.1:3306`。如果使用外部 MySQL，不要加这个参数。
+### 安装脚本行为说明
 
-`--init-local-redis`只用于当前机器需要启动包内 Redis 的场景。Redis 安装目录为`/opt/openresty/redis16381`，systemd 服务名为`redis16381`，默认端口`16381`。如果使用外部 Redis，不要加这个参数。当前`waf/redis16381.zip`中的 Redis 二进制为 Linux x86-64 版本，ARM 服务器不能直接使用该离线包。
+- `install.sh` 会安装 OpenResty 与依赖，并按角色生成 `conf/system.json`。
+- 脚本优先使用项目 `waf/` 下离线包，缺失时才尝试联网下载。
+- 基于 `waf/nginx.conf.default` 覆盖 OpenResty 默认配置：
+  - 保留默认 80 端口 `server`
+  - 在 `http` 层挂载 ZhongKui-WAF 相关加载逻辑
+  - 按角色决定是否 include 控制台配置
+- `admin/conf/sites.conf` 默认留空，用于填写真实业务站点。
 
-`luaossl`安装后的核心二进制文件名是`_openssl.so`（不是`openssl.so`），默认应位于`/opt/openresty/lualib/_openssl.so`。
+参数注意事项：
 
-在线节点页面默认使用`system.expire + system.node_offline_grace`作为离线判定窗口（默认`120 + 180 = 300`秒），用于降低短暂抖动导致的误判离线。
+- `--init-local-mysql`：仅用于 master 本机初始化 MySQL。若使用外部 MySQL，不要添加。
+- `--init-local-redis`：仅用于本机安装包内 Redis。若使用外部 Redis，不要添加。
+- `waf/redis16381.zip` 当前为 Linux x86-64 构建，ARM 服务器不能直接使用。
+- `luaossl` 模块文件名为 `_openssl.so`，默认路径 `/opt/openresty/lualib/_openssl.so`。
 
-生产集群建议保持 node 只写 Redis、master 汇总写 MySQL。master 汇总任务已做错峰和 Redis 锁保护，默认日志/统计类汇总周期为 120 秒，节点心跳落库周期为 30 秒；不要为了页面实时性把生产同步周期调得过短。
+### 集群运行说明（重点）
 
-攻击日志和封禁日志在集群模式下使用 Redis List 队列上报，key 分别为`waf:queue:attack_log`和`waf:queue:ip_block_log`。master 批量消费队列写入 MySQL，避免日志类数据依赖 Redis 全库扫描。
+- node 仅负责防护、上报 Redis，不直接做汇总落库。
+- master 负责聚合 Redis 并落 MySQL（任务错峰 + 锁保护）。
+- 节点离线判定窗口：`system.expire + system.node_offline_grace`（默认 `120 + 180 = 300` 秒）。
+- 规则同步：
+  - 后台保存后，master 立即异步发布规则快照
+  - 同时保留定时发布兜底
+  - node 按 `30s + 0~10s 随机偏移`拉取（先版本后正文）
+  - 快照 `hash` 校验通过才应用
 
-流量统计和攻击类型统计在集群模式下使用 dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）。master 按脏集合拉取并落库，避免每轮全量扫描统计 key。
+统计与落库策略：
+- 攻击日志/封禁日志：Redis List 队列（`waf:queue:attack_log`、`waf:queue:ip_block_log`）
+- 流量/攻击类型：dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）
+- MySQL 异常时：retry set 回放补写（`waf:retry:*`）
 
-当 MySQL 短暂不可用时，master 会把失败项标记到 retry set（`waf:retry:traffic_stats`、`waf:retry:attack_type_dates`），并由定时任务自动回放到 dirty set，恢复后自动补写，减少统计类数据漏写风险。
+### 重部署后验收（建议）
 
-攻击日志上线后会持续增长。系统设置页面已内置“攻击日志归档清理（懒人模式）”：支持自动定时归档清理与“立即执行一次”按钮。详细策略和 SQL 模板见`ATTACK_LOG_RETENTION.md`。
+在 master 上执行：
+
+```bash
+# 1) 查看规则版本 key 与快照是否存在
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:cluster:rules:snapshot:version
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:cluster:rules:snapshot | head -c 300
+
+# 2) 查看节点心跳中的规则版本字段（rules_version）
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' --scan --pattern 'waf:cluster:nodes:*'
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' HGETALL waf:cluster:nodes:<node_ip>
+
+# 3) 验证 MySQL 节点表是否落库 rules_version
+mysql -h <mysql_host> -P <mysql_port> -u <mysql_user> -p'<mysql_password>' -D <mysql_db> \
+  -e "SELECT ip,rules_version,last_seen FROM waf_cluster_node ORDER BY last_seen DESC LIMIT 10;"
+
+# 4) 打开在线节点页面，确认“规则版本 / 规则发布时间 / 同步状态”三列已更新
+curl -I http://<master_ip>:1226/
+```
+
+推荐：上线前按统一勾选清单执行一次完整回归，见：
+
+- [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
+
+### 管理后台
+
+安装完成后访问：`http://localhost:1226`  
+默认账号：`admin`  
+默认密码：`zhongkui`
+
+从 `v1.2` 开始，部分统计依赖 MySQL，需先配置数据库（`zhongkui_waf`）。
 
 可根据访问量大小适当调整`waf.conf`文件中配置的字典内存大小。
 
@@ -138,12 +174,6 @@ Disallow: /zhongkuiwaf/honey/trap
 开启敏感信息过滤后，`Zhongkui-WAF`将对响应数据进行过滤。
 
 `Zhongkui-WAF`内置了对响应内容中的身份证号码、手机号码、银行卡号、密码信息进行脱敏处理。需要注意的是，内置的敏感信息脱敏功能目前仅支持处理中华人民共和国境内使用的数据格式（如身份证号、电话号码、银行卡号），暂不支持处理中国境外的身份证号、电话号码、银行卡号等数据格式。但你可以使用正则表达式配置不同的规则，以过滤请求响应内容中任何你想要过滤掉的数据。
-
-### 管理页面
-
-安装配置完成后，浏览器访问`http://localhost:1226`，账号`admin`，默认密码为`zhongkui`。
-
-`v1.2`版本开始，一些数据统计依赖`Mysql`数据库，因此需要配置`Mysql`数据库并自行创建 database(`zhongkui_waf`)，waf 启动后，表结构会自动创建。
 
 ### 常见问题
 

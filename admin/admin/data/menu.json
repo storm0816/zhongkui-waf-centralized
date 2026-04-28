@@ -140,5 +140,19 @@
 		"icon": "layui-icon layui-icon-radio",
 		"type": 1,
 		"href": "view/cluster-nodes.html"
+	},
+	{
+		"id": 10,
+		"title": "节点攻击概览",
+		"icon": "layui-icon layui-icon-chart-screen",
+		"type": 1,
+		"href": "view/node-attack-overview.html"
+	},
+	{
+		"id": 11,
+		"title": "全球攻击态势",
+		"icon": "layui-icon layui-icon-engine",
+		"type": 1,
+		"href": "view/node-attack-global.html"
 	}
 ]

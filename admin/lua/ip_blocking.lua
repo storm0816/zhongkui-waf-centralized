@@ -97,12 +97,18 @@ end
 local function unblock()
     local response = {code = 200, data = {}, msg = ""}
 
+    ngx.req.read_body()
     local args, err = ngx.req.get_post_args()
     if args and args['id'] then
         local id = tonumber(args['id'])
+        if not id then
+            response.code = 400
+            response.msg = 'invalid id'
+            return response
+        end
 
         local res, err = mysql.query(format(SQL_SELECT_IP_BLOCK_LOG .. ' WHERE id=%u;', id))
-        if res then
+        if res and res[1] then
             local data = res[1]
             local ip = data.ip
 
@@ -116,16 +122,19 @@ local function unblock()
                     response.msg = 'query database error'
                     ngx.log(ngx.ERR, err)
                 end
+            else
+                response.code = 500
+                response.msg = 'unblock ip error'
             end
         else
-            response.code = 500
-            response.msg = 'query database error'
+            response.code = 404
+            response.msg = 'ip block log not found'
             ngx.log(ngx.ERR, err)
         end
     else
-        response.code = 500
-        response.msg = err
-        ngx.log(ngx.ERR, err)
+        response.code = 400
+        response.msg = err or 'missing id'
+        ngx.log(ngx.ERR, response.msg)
     end
 
     return response

@@ -7,6 +7,7 @@ local ip_utils = require "ip_utils"
 local constants = require "constants"
 local stringutf8 = require "stringutf8"
 local nkeys = require "table.nkeys"
+local isarray = require "table.isarray"
 local ffi = require "ffi"
 local ipmatcher = require "resty.ipmatcher"
 
@@ -28,12 +29,53 @@ local pairs = pairs
 local ipairs = ipairs
 local tonumber = tonumber
 local type = type
+local getenv = os.getenv
+local md5 = ngx.md5
+local sort = table.sort
+local insert = table.insert
+local concat = table.concat
 
 local _M = {}
 
 local config = { system = {}, global = {} }
+local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
+local CLUSTER_RULES_HASH_PLACEHOLDER = "__SNAPSHOT_HASH__"
+local storage_security_modules
 
 _M.ipgroups = {}
+
+local function canonical_encode(v)
+    local vt = type(v)
+    if vt == "nil" then
+        return "null"
+    end
+    if vt == "boolean" or vt == "number" or vt == "string" then
+        return cjson_encode(v)
+    end
+    if vt ~= "table" then
+        return cjson_encode(tostring(v))
+    end
+
+    if isarray(v) then
+        local parts = {}
+        for i = 1, #v do
+            parts[i] = canonical_encode(v[i])
+        end
+        return "[" .. concat(parts, ",") .. "]"
+    end
+
+    local keys = {}
+    for k, _ in pairs(v) do
+        insert(keys, tostring(k))
+    end
+    sort(keys)
+
+    local parts = {}
+    for _, k in ipairs(keys) do
+        insert(parts, cjson_encode(k) .. ":" .. canonical_encode(v[k]))
+    end
+    return "{" .. concat(parts, ",") .. "}"
+end
 
 local function is_option_on(options, option)
     local item = options and options[option]
@@ -189,14 +231,117 @@ function _M.update_site_module_rule_file(site_id, module_id, str)
 end
 
 local function add_ip_group(group, ips)
-    if ips and nkeys(ips) > 0 then
-        local matcher, err = ipmatcher.new(ips)
-        if not matcher then
-            ngx.log(ngx.ERR, 'error to add ip group ' .. group, err)
-            return
-        end
-        _M.ipgroups[group] = matcher
+    if type(ips) ~= "table" or nkeys(ips) == 0 then
+        _M.ipgroups[group] = nil
+        return
     end
+
+    local matcher, err = ipmatcher.new(ips)
+    if not matcher then
+        ngx.log(ngx.ERR, 'error to add ip group ' .. group, err)
+        return
+    end
+    _M.ipgroups[group] = matcher
+end
+
+local function get_cluster_rules_snapshot_payload()
+    local payload = {
+        version = "",
+        updated_at = "",
+        source = getenv("HOSTNAME") or "master",
+        hash = "",
+        global = config.global,
+        sites = {},
+        ip_groups = {
+            ip_blacklist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList") or {},
+            ip_whitelist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipWhiteList") or {}
+        }
+    }
+
+    for server_name, site_conf in pairs(config) do
+        if server_name ~= "system" and server_name ~= "global" then
+            payload.sites[server_name] = site_conf
+        end
+    end
+
+    return payload
+end
+
+local function calculate_snapshot_content_version(payload)
+    local content = {
+        global = payload.global,
+        sites = payload.sites,
+        ip_groups = payload.ip_groups
+    }
+    local canonical = canonical_encode(content)
+    if not canonical then
+        return nil, "failed to encode snapshot content for version"
+    end
+    return md5(canonical)
+end
+
+local function apply_cluster_rules_snapshot_hash(payload)
+    payload.hash = CLUSTER_RULES_HASH_PLACEHOLDER
+    local canonical = canonical_encode(payload)
+    if not canonical then
+        return nil, "failed to encode payload for hash"
+    end
+
+    local hash = md5(canonical)
+    payload.hash = hash
+    return hash
+end
+
+local function verify_cluster_rules_snapshot_hash(payload)
+    local expected = payload.hash and tostring(payload.hash) or ""
+    if expected == "" then
+        return nil, "missing hash"
+    end
+
+    payload.hash = CLUSTER_RULES_HASH_PLACEHOLDER
+    local canonical = canonical_encode(payload)
+    payload.hash = expected
+    if not canonical then
+        return nil, "failed to encode payload for hash verify"
+    end
+
+    local actual = md5(canonical)
+    if actual ~= expected then
+        return nil, "snapshot hash mismatch"
+    end
+
+    return true
+end
+
+local function apply_cluster_rules_snapshot(payload)
+    if type(payload) ~= "table" or type(payload.global) ~= "table" or type(payload.sites) ~= "table" then
+        return nil, "invalid payload"
+    end
+
+    config.global = payload.global
+    for server_name, _ in pairs(config) do
+        if server_name ~= "system" and server_name ~= "global" then
+            config[server_name] = nil
+        end
+    end
+    for server_name, site_conf in pairs(payload.sites) do
+        config[server_name] = site_conf
+    end
+
+    if config.global and config.global.security_modules then
+        storage_security_modules("global", config.global.security_modules)
+    end
+    for server_name, site_conf in pairs(payload.sites) do
+        if type(site_conf) == "table" and type(site_conf.security_modules) == "table" then
+            storage_security_modules(server_name, site_conf.security_modules)
+        end
+    end
+
+    local ip_groups = payload.ip_groups or {}
+    add_ip_group(constants.KEY_IP_GROUPS_BLACKLIST, ip_groups.ip_blacklist or {})
+    add_ip_group(constants.KEY_IP_GROUPS_WHITELIST, ip_groups.ip_whitelist or {})
+
+    return true
 end
 
 function _M.get_config_table()
@@ -245,7 +390,7 @@ local function load_security_modules(rulePath, site_config)
     return security_modules
 end
 
-local function storage_security_modules(server_name, security_modules)
+storage_security_modules = function(server_name, security_modules)
     local json = cjson_encode(security_modules)
     local dict_config = ngx.shared.dict_config
     dict_config:set(server_name, json)
@@ -405,11 +550,144 @@ end
 -- 如果配置文件正确，则重载nginx
 function _M.reload_config_file()
     _M.reload_nginx()
+
+    -- 集群 master 在保存后异步立即发布一次规则快照，减少 node 等待定时同步的延迟。
+    if _M.is_centralized_mode() and _M.is_master_node() then
+        ngx.timer.at(0, function(premature)
+            if premature then
+                return
+            end
+
+            local ok, err = _M.publish_cluster_rules_snapshot(true)
+            if not ok then
+                ngx.log(ngx.ERR, "failed to publish cluster rules snapshot after config reload: ", err)
+            end
+        end)
+    end
 end
 
 function _M.file_ip_blacklist()
     local ip_blacklist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList")
     return ip_blacklist
+end
+
+function _M.publish_cluster_rules_snapshot(reload_from_file)
+    if not _M.is_centralized_mode() or not _M.is_master_node() then
+        return nil, "not master node"
+    end
+
+    if reload_from_file then
+        local loaded, load_err = pcall(_M.load_config_file)
+        if not loaded then
+            return nil, "failed to reload config before publish: " .. tostring(load_err)
+        end
+    end
+
+    local ok, redis_cli = pcall(require, "redis_cli")
+    if not ok or not redis_cli then
+        return nil, "failed to load redis_cli"
+    end
+
+    local payload = get_cluster_rules_snapshot_payload()
+    local version, ver_err = calculate_snapshot_content_version(payload)
+    if not version then
+        return nil, ver_err
+    end
+    payload.version = version
+    payload.updated_at = ngx.localtime()
+
+    local dict_config = ngx.shared.dict_config
+    local local_version = dict_config and dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY) or nil
+    if local_version and tostring(local_version) == version then
+        local redis_version = redis_cli.get(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT_VERSION)
+        if redis_version and redis_version ~= ngx.null and tostring(redis_version) == version then
+            return true
+        end
+    end
+
+    local hash, hash_err = apply_cluster_rules_snapshot_hash(payload)
+    if not hash then
+        return nil, hash_err
+    end
+    local json = cjson_encode(payload)
+    if not json then
+        return nil, "failed to encode rules snapshot"
+    end
+
+    local redis_expire = (_M.get_system_config("redis") or {}).expire_time or 1800
+    local snapshot_expire = redis_expire * 2
+    if snapshot_expire < 86400 then
+        snapshot_expire = 86400
+    end
+
+    local set_ok, err = redis_cli.set(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT, json, snapshot_expire)
+    if not set_ok then
+        return nil, err
+    end
+    local version_ok, version_err = redis_cli.set(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT_VERSION, payload.version, snapshot_expire)
+    if not version_ok then
+        return nil, version_err
+    end
+
+    if dict_config then
+        dict_config:set(CLUSTER_RULES_VERSION_DICT_KEY, payload.version)
+    end
+    return true
+end
+
+function _M.pull_cluster_rules_snapshot()
+    if not _M.is_centralized_mode() or _M.is_master_node() then
+        return nil, "not node"
+    end
+
+    local ok, redis_cli = pcall(require, "redis_cli")
+    if not ok or not redis_cli then
+        return nil, "failed to load redis_cli"
+    end
+
+    local dict_config = ngx.shared.dict_config
+    local local_version = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
+    local redis_version, version_err = redis_cli.get(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT_VERSION)
+    if redis_version and redis_version ~= ngx.null and redis_version ~= "" then
+        redis_version = tostring(redis_version)
+        if local_version and tostring(local_version) == redis_version then
+            return true
+        end
+    end
+
+    local redis_value, err = redis_cli.get(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT)
+    if not redis_value then
+        return nil, err or version_err
+    end
+
+    local payload = cjson_decode(redis_value)
+    if type(payload) ~= "table" then
+        return nil, "invalid json payload"
+    end
+
+    local version = payload.version and tostring(payload.version) or ""
+    if version == "" then
+        return nil, "missing version"
+    end
+    if redis_version and redis_version ~= "" and version ~= redis_version then
+        return nil, "snapshot version mismatch"
+    end
+    local hash_ok, hash_err = verify_cluster_rules_snapshot_hash(payload)
+    if not hash_ok then
+        return nil, hash_err
+    end
+
+    if local_version and tostring(local_version) == version then
+        return true
+    end
+
+    local applied, apply_err = apply_cluster_rules_snapshot(payload)
+    if not applied then
+        return nil, apply_err
+    end
+
+    dict_config:set(CLUSTER_RULES_VERSION_DICT_KEY, version)
+    return true
 end
 
 return _M

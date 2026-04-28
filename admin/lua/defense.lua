@@ -166,6 +166,9 @@ function _M.do_request()
             local module_id = tostring(args['moduleId'])
             if site_id and rule_id and module_id then
                 response = rule_utils.delete_site_rule(site_id, module_id, rule_id)
+                if response and response.code == 200 then
+                    reload = true
+                end
             else
                 response.code = 500
                 response.msg = 'param error'
