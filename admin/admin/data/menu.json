@@ -154,5 +154,12 @@
 		"icon": "layui-icon layui-icon-engine",
 		"type": 1,
 		"href": "view/node-attack-global.html"
+	},
+	{
+		"id": 12,
+		"title": "规则情报候选",
+		"icon": "layui-icon layui-icon-survey",
+		"type": 1,
+		"href": "view/rule-candidate.html"
 	}
 ]

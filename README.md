@@ -16,6 +16,7 @@
 - 管理后台可视化（攻击日志、流量统计、节点状态）
 - 支持 Redis + MySQL 的集群化架构
 - 攻击日志归档清理（系统页面懒人模式，支持自动与手动执行）
+- 规则情报候选池（每日自动生成候选，人工审核，默认不自动生效）
 
 集群增强能力（当前版本）：
 - master 集中发布规则快照，node 增量拉取并热更新
@@ -84,6 +85,31 @@ chmod +x install.sh
 - 攻击日志/封禁日志：Redis List 队列（`waf:queue:attack_log`、`waf:queue:ip_block_log`）
 - 流量/攻击类型：dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）
 - MySQL 异常时：retry set 回放补写（`waf:retry:*`）
+
+规则情报候选（MVP）：
+- master 每小时检查一次“当日是否已生成”，当日未生成则自动执行一次候选生成。
+- 候选默认来源为`attack_log`聚合（按 URI + 攻击类型聚合）。
+- 生成后进入“规则情报候选”页面人工审核（通过/驳回），审核结果仅记录在候选池，不会直接改动生效规则。
+- 可在页面点击“立即生成一次候选”手动执行。
+
+候选生成参数文件：`conf/intel_sources.json`
+
+```json
+{
+  "attack_log_agg": {
+    "state": "on",
+    "lookback_hours": 24,
+    "min_hits": 20,
+    "limit": 200
+  }
+}
+```
+
+参数说明：
+- `state`：是否启用该来源。
+- `lookback_hours`：回看攻击日志的小时窗口。
+- `min_hits`：最小命中次数阈值。
+- `limit`：单次最多生成/更新候选数量。
 
 ### 重部署后验收（建议）
 

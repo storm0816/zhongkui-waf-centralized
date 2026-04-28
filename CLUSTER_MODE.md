@@ -146,6 +146,33 @@ redis-cli GET waf:masterIpBlackList
 
 约定：新增集群共享 key 时优先使用`waf:<module>:<biz_id>`或`waf:<module>:<yyyy-mm-dd>`格式，并在本节同步说明。已有线上 key 不轻易改名，避免 master/node 版本不一致时丢数据。
 
+### 规则情报候选（MVP）
+
+目标：先打通“每日自动候选 + 人工审核”，不直接改动生效规则，降低误封风险。
+
+实现方式：
+- master 定时任务每小时检查一次，当日若未成功生成过候选，则自动执行一次。
+- 候选来源当前为`attack_log`聚合（URI + 攻击类型 + 命中次数）。
+- 候选落库到`waf_rule_candidate`，运行记录落库到`waf_rule_candidate_run`。
+- 管理后台新增“规则情报候选”页面，支持查询、手动触发、通过/驳回。
+
+配置文件：`conf/intel_sources.json`
+
+```json
+{
+  "attack_log_agg": {
+    "state": "on",
+    "lookback_hours": 24,
+    "min_hits": 20,
+    "limit": 200
+  }
+}
+```
+
+说明：
+- 该 MVP 只做候选池管理，不会自动写入`conf/global_rules/*.json`。
+- 审核“通过”表示进入人工确认名单，后续可在下一阶段增加“审核通过后一键发布”为正式规则。
+
 ### 生产降压策略
 
 第一阶段先保持现有 Redis key 结构不变，只对 master 汇总任务做保护：
