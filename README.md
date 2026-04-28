@@ -106,6 +106,10 @@ mysql -h <mysql_host> -P <mysql_port> -u <mysql_user> -p'<mysql_password>' -D <m
 curl -I http://<master_ip>:1226/
 ```
 
+推荐：上线前按统一勾选清单执行一次完整回归，见：
+
+- [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
+
 ### 管理后台
 
 安装完成后访问：`http://localhost:1226`  

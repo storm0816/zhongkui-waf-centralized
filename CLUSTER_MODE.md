@@ -237,3 +237,17 @@ node 节点配置示例：
 | `expire` | `120` | 节点心跳 TTL（秒）与基础在线窗口（秒） |
 | `node_offline_grace` | `180` | 在线判定额外缓冲（秒）；最终离线阈值=`expire + node_offline_grace` |
 | `node_retention` | `86400` | 节点离线保留时长（秒），master 会清理超过该时长的离线节点 |
+
+### 上线前验收（建议）
+
+集群发布前建议统一按勾选清单执行一次回归，避免“规则同步正常但日志/封禁链路异常”这类隐性问题。
+
+验收清单见：
+
+- [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
+
+建议执行顺序：
+
+1. 先做基础环境与角色校验（master/node/system.json）。
+2. 再做规则快照与版本一致性校验。
+3. 最后做攻击触发、封禁/解封、落库与页面展示联调。
