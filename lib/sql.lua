@@ -7,6 +7,7 @@ local utils = require "utils"
 local constants = require "constants"
 local cjson = require "cjson.safe"
 local time = require "time"
+local file_utils = require "file_utils"
 
 local ipairs = ipairs
 local pairs = pairs
@@ -20,6 +21,9 @@ local format = string.format
 local get_system_config = config.get_system_config
 local is_system_option_on = config.is_system_option_on
 local ngxfind = ngx.re.find
+local md5 = ngx.md5
+local read_file_to_string = file_utils.read_file_to_string
+local write_string_to_file = file_utils.write_string_to_file
 
 local redis_cli = require "redis_cli"
 
@@ -39,6 +43,17 @@ local DEFAULT_ATTACK_LOG_RETENTION_INTERVAL = 300
 local MIN_ATTACK_LOG_RETENTION_INTERVAL = 60
 local ATTACK_LOG_RETENTION_LAST_RUN_KEY = "attack_log_retention:last_run"
 local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
+local DEFAULT_RULE_CANDIDATE_LOOKBACK_HOURS = 24
+local DEFAULT_RULE_CANDIDATE_MIN_HITS = 20
+local DEFAULT_RULE_CANDIDATE_LIMIT = 200
+local MAX_RULE_CANDIDATE_LIMIT = 500
+local RULE_CANDIDATE_SOURCE_ATTACK_LOG = "attack_log_agg"
+local RULE_CANDIDATE_RUN_STATUS_SUCCESS = "success"
+local RULE_CANDIDATE_RUN_STATUS_FAILED = "failed"
+local RULE_CANDIDATE_PUBLISH_STATUS_PENDING = "pending"
+local RULE_CANDIDATE_PUBLISH_STATUS_PUBLISHED = "published"
+local RULE_CANDIDATE_PUBLISH_STATUS_FAILED = "failed"
+local INTEL_SOURCES_PATH = config.CONF_PATH .. "/intel_sources.json"
 local CACHED_NODE_ID
 
 local SQL_CHECK_TABLE =
@@ -383,6 +398,80 @@ local function get_attack_log_retention_config()
     return state == "on", floor(days), floor(batch), floor(interval)
 end
 
+local function get_intel_sources_config()
+    local defaults = {
+        attack_log_agg = {
+            state = "on",
+            lookback_hours = DEFAULT_RULE_CANDIDATE_LOOKBACK_HOURS,
+            min_hits = DEFAULT_RULE_CANDIDATE_MIN_HITS,
+            limit = DEFAULT_RULE_CANDIDATE_LIMIT
+        }
+    }
+
+    local content = read_file_to_string(INTEL_SOURCES_PATH)
+    if not content or content == "" then
+        return defaults
+    end
+
+    local parsed = cjson.decode(content)
+    if type(parsed) ~= "table" then
+        return defaults
+    end
+
+    if type(parsed.attack_log_agg) ~= "table" then
+        parsed.attack_log_agg = {}
+    end
+
+    local merged = {
+        attack_log_agg = {
+            state = tostring(parsed.attack_log_agg.state or defaults.attack_log_agg.state),
+            lookback_hours = tonumber(parsed.attack_log_agg.lookback_hours) or defaults.attack_log_agg.lookback_hours,
+            min_hits = tonumber(parsed.attack_log_agg.min_hits) or defaults.attack_log_agg.min_hits,
+            limit = tonumber(parsed.attack_log_agg.limit) or defaults.attack_log_agg.limit
+        }
+    }
+
+    if merged.attack_log_agg.lookback_hours < 1 then
+        merged.attack_log_agg.lookback_hours = defaults.attack_log_agg.lookback_hours
+    end
+    if merged.attack_log_agg.min_hits < 1 then
+        merged.attack_log_agg.min_hits = defaults.attack_log_agg.min_hits
+    end
+    if merged.attack_log_agg.limit < 1 then
+        merged.attack_log_agg.limit = defaults.attack_log_agg.limit
+    elseif merged.attack_log_agg.limit > MAX_RULE_CANDIDATE_LIMIT then
+        merged.attack_log_agg.limit = MAX_RULE_CANDIDATE_LIMIT
+    end
+
+    return merged
+end
+
+local function build_rule_candidate_key(source, rule_type, rule_content)
+    return md5((source or "") .. "|" .. (rule_type or "") .. "|" .. (rule_content or ""))
+end
+
+local function calc_risk_score(hit_count, attack_type)
+    local score = floor((tonumber(hit_count) or 0) * 2)
+    if score > 100 then
+        score = 100
+    end
+    if score < 1 then
+        score = 1
+    end
+
+    local attack = string.lower(tostring(attack_type or ""))
+    if string.find(attack, "sql", 1, true) or string.find(attack, "rce", 1, true) then
+        score = score + 10
+    elseif string.find(attack, "xss", 1, true) then
+        score = score + 5
+    end
+
+    if score > 100 then
+        score = 100
+    end
+    return score
+end
+
 local SQL_GET_REQUEST_TRAFFIC_BY_HOUR = [[
     SELECT DATE_FORMAT(access_time, '%Y-%m-%d %H') AS hour,
            SUM(total_requests) AS traffic,
@@ -436,6 +525,150 @@ local SQL_DELETE_ATTACK_LOG_ARCHIVE_SOURCE = [[
     LIMIT %d
 ]]
 
+local SQL_CREATE_TABLE_RULE_CANDIDATE = [[
+    CREATE TABLE waf_rule_candidate (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        candidate_key VARCHAR(64) NOT NULL COMMENT '候选规则唯一标识',
+        source VARCHAR(64) NOT NULL COMMENT '候选来源',
+        rule_type VARCHAR(64) NOT NULL COMMENT '规则类型',
+        rule_target VARCHAR(64) NULL COMMENT '规则目标',
+        rule_content VARCHAR(1024) NOT NULL COMMENT '规则内容',
+        risk_score INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '风险分',
+        hit_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '命中次数',
+        sample_node_ip VARCHAR(39) NULL COMMENT '样本节点IP',
+        sample_attack_type VARCHAR(255) NULL COMMENT '样本攻击类型',
+        sample_uri VARCHAR(1024) NULL COMMENT '样本URI',
+        first_seen DATETIME NULL COMMENT '首次发现时间',
+        last_seen DATETIME NULL COMMENT '最近发现时间',
+        status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '候选状态',
+        review_note VARCHAR(255) NULL COMMENT '审核备注',
+        review_by VARCHAR(64) NULL COMMENT '审核人',
+        review_time DATETIME NULL COMMENT '审核时间',
+        publish_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '发布状态',
+        publish_module VARCHAR(64) NULL COMMENT '发布目标模块',
+        published_rule_id INT NULL COMMENT '发布后的规则ID',
+        published_time DATETIME NULL COMMENT '发布时间',
+        publish_note VARCHAR(255) NULL COMMENT '发布备注',
+        update_time DATETIME NULL,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_candidate_key (candidate_key),
+        INDEX idx_rule_candidate_status_last_seen (status, last_seen),
+        INDEX idx_rule_candidate_source_last_seen (source, last_seen)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+]]
+
+local SQL_CREATE_TABLE_RULE_CANDIDATE_RUN = [[
+    CREATE TABLE waf_rule_candidate_run (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        run_date CHAR(10) NOT NULL COMMENT '运行日期',
+        source VARCHAR(64) NOT NULL COMMENT '候选来源',
+        status VARCHAR(16) NOT NULL COMMENT '运行状态',
+        generated_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次产出数量',
+        message VARCHAR(255) NULL COMMENT '运行信息',
+        update_time DATETIME NULL,
+        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_run_date_source (run_date, source),
+        INDEX idx_run_date_status (run_date, status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+]]
+
+local SQL_SELECT_RULE_CANDIDATE_FROM_ATTACK_LOG = [[
+    SELECT
+        request_uri,
+        attack_type,
+        COUNT(*) AS hit_count,
+        MIN(request_time) AS first_seen,
+        MAX(request_time) AS last_seen,
+        MAX(node_ip) AS sample_node_ip
+    FROM attack_log
+    WHERE request_time >= NOW() - INTERVAL %d HOUR
+      AND request_uri IS NOT NULL
+      AND request_uri <> ''
+    GROUP BY request_uri, attack_type
+    HAVING COUNT(*) >= %d
+    ORDER BY hit_count DESC
+    LIMIT %d
+]]
+
+local SQL_UPSERT_RULE_CANDIDATE = [[
+    INSERT INTO waf_rule_candidate
+        (candidate_key, source, rule_type, rule_target, rule_content, risk_score, hit_count, sample_node_ip,
+         sample_attack_type, sample_uri, first_seen, last_seen, status, update_time)
+    VALUES
+        (%s, %s, %s, %s, %s, %d, %d, %s, %s, %s, %s, %s, 'pending', NOW())
+    ON DUPLICATE KEY UPDATE
+        risk_score = GREATEST(risk_score, VALUES(risk_score)),
+        hit_count = GREATEST(hit_count, VALUES(hit_count)),
+        sample_node_ip = VALUES(sample_node_ip),
+        sample_attack_type = VALUES(sample_attack_type),
+        sample_uri = VALUES(sample_uri),
+        first_seen = LEAST(first_seen, VALUES(first_seen)),
+        last_seen = GREATEST(last_seen, VALUES(last_seen)),
+        update_time = NOW()
+]]
+
+local SQL_COUNT_RULE_CANDIDATE = [[
+    SELECT COUNT(*) AS total FROM waf_rule_candidate
+]]
+
+local SQL_SELECT_RULE_CANDIDATE = [[
+    SELECT id, candidate_key, source, rule_type, rule_target, rule_content, risk_score, hit_count, sample_node_ip,
+           sample_attack_type, sample_uri, first_seen, last_seen, status, review_note, review_by, review_time,
+           publish_status, publish_module, published_rule_id, published_time, publish_note,
+           create_time, update_time
+    FROM waf_rule_candidate
+]]
+
+local SQL_SELECT_RULE_CANDIDATE_BY_ID = [[
+    SELECT id, source, rule_type, rule_target, rule_content, risk_score, hit_count, sample_node_ip, sample_attack_type,
+           sample_uri, status, publish_status
+    FROM waf_rule_candidate
+    WHERE id = %u
+]]
+
+local SQL_UPDATE_RULE_CANDIDATE_REVIEW = [[
+    UPDATE waf_rule_candidate
+    SET status = %s,
+        review_note = %s,
+        review_by = %s,
+        review_time = NOW(),
+        update_time = NOW()
+    WHERE id = %u
+]]
+
+local SQL_UPDATE_RULE_CANDIDATE_PUBLISH = [[
+    UPDATE waf_rule_candidate
+    SET publish_status = %s,
+        publish_module = %s,
+        published_rule_id = %s,
+        published_time = NOW(),
+        publish_note = %s,
+        update_time = NOW()
+    WHERE id = %u
+]]
+
+local SQL_COUNT_RULE_CANDIDATE_SUCCESS_RUN = [[
+    SELECT COUNT(*) AS total
+    FROM waf_rule_candidate_run
+    WHERE run_date = %s
+      AND source = %s
+      AND status = %s
+]]
+
+local SQL_UPSERT_RULE_CANDIDATE_RUN = [[
+    INSERT INTO waf_rule_candidate_run
+        (run_date, source, status, generated_count, message, update_time)
+    VALUES
+        (%s, %s, %s, %d, %s, NOW())
+    ON DUPLICATE KEY UPDATE
+        status = VALUES(status),
+        generated_count = VALUES(generated_count),
+        message = VALUES(message),
+        update_time = NOW()
+]]
+
 
 
 local function yesterday()
@@ -454,6 +687,33 @@ local function reset_traffic_stats(dict, prefix)
     utils.dict_set(dict, prefix .. constants.KEY_CAPTCHA_PASS_TIMES, 0)
 end
 
+local function is_rule_candidate_success_today(source)
+    local sql = format(
+        SQL_COUNT_RULE_CANDIDATE_SUCCESS_RUN,
+        quote_sql_str(ngx.today()),
+        quote_sql_str(source),
+        quote_sql_str(RULE_CANDIDATE_RUN_STATUS_SUCCESS)
+    )
+    local res, err = mysql.query(sql)
+    if not res or not res[1] then
+        return false, err
+    end
+
+    return (tonumber(res[1].total) or 0) > 0, nil
+end
+
+local function upsert_rule_candidate_run(source, status, generated_count, message)
+    local sql = format(
+        SQL_UPSERT_RULE_CANDIDATE_RUN,
+        quote_sql_str(ngx.today()),
+        quote_sql_str(source),
+        quote_sql_str(status),
+        tonumber(generated_count) or 0,
+        quote_sql_str(message or "")
+    )
+    return mysql.query(sql)
+end
+
 function _M.check_table(premature)
     if premature then
         return
@@ -468,6 +728,8 @@ function _M.check_table(premature)
         { name = 'attack_type_traffic', sql = SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC },
         { name = 'waf_traffic_stats',   sql = SQL_CREATE_TABLE_WAF_TRAFFIC_STATS },
         { name = 'waf_cluster_node',    sql = SQL_CREATE_TABLE_WAF_CLUSTER_NODE },
+        { name = 'waf_rule_candidate',  sql = SQL_CREATE_TABLE_RULE_CANDIDATE },
+        { name = 'waf_rule_candidate_run', sql = SQL_CREATE_TABLE_RULE_CANDIDATE_RUN },
     }
 
     for _, t in pairs(tables) do
@@ -558,6 +820,16 @@ function _M.check_table(premature)
     ensure_column("waf_cluster_node", "rules_version",
         "ALTER TABLE waf_cluster_node ADD COLUMN rules_version VARCHAR(32) NULL COMMENT '规则版本' AFTER ip",
         "UPDATE waf_cluster_node SET rules_version = version WHERE (rules_version IS NULL OR rules_version = '') AND version IS NOT NULL")
+    ensure_column("waf_rule_candidate", "publish_status",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN publish_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '发布状态' AFTER review_time")
+    ensure_column("waf_rule_candidate", "publish_module",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN publish_module VARCHAR(64) NULL COMMENT '发布目标模块' AFTER publish_status")
+    ensure_column("waf_rule_candidate", "published_rule_id",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN published_rule_id INT NULL COMMENT '发布后的规则ID' AFTER publish_module")
+    ensure_column("waf_rule_candidate", "published_time",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN published_time DATETIME NULL COMMENT '发布时间' AFTER published_rule_id")
+    ensure_column("waf_rule_candidate", "publish_note",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN publish_note VARCHAR(255) NULL COMMENT '发布备注' AFTER published_time")
 end
 
 function _M.update_traffic_stats()
@@ -1519,6 +1791,391 @@ function _M.cleanup_offline_cluster_nodes()
     if affected > 0 then
         ngx.log(ngx.INFO, "cleanup stale cluster nodes success, affected=", affected, ", retention=", retention)
     end
+end
+
+function _M.generate_rule_candidates_from_attack_log()
+    local intel_conf = get_intel_sources_config()
+    local source_conf = intel_conf.attack_log_agg or {}
+    if tostring(source_conf.state or "on") ~= "on" then
+        return { code = 0, skipped = true, msg = "attack_log_agg is off", generated = 0 }
+    end
+
+    local lookback_hours = floor(tonumber(source_conf.lookback_hours) or DEFAULT_RULE_CANDIDATE_LOOKBACK_HOURS)
+    if lookback_hours < 1 then
+        lookback_hours = DEFAULT_RULE_CANDIDATE_LOOKBACK_HOURS
+    end
+
+    local min_hits = floor(tonumber(source_conf.min_hits) or DEFAULT_RULE_CANDIDATE_MIN_HITS)
+    if min_hits < 1 then
+        min_hits = DEFAULT_RULE_CANDIDATE_MIN_HITS
+    end
+
+    local candidate_limit = floor(tonumber(source_conf.limit) or DEFAULT_RULE_CANDIDATE_LIMIT)
+    if candidate_limit < 1 then
+        candidate_limit = DEFAULT_RULE_CANDIDATE_LIMIT
+    elseif candidate_limit > MAX_RULE_CANDIDATE_LIMIT then
+        candidate_limit = MAX_RULE_CANDIDATE_LIMIT
+    end
+
+    local query_sql = format(SQL_SELECT_RULE_CANDIDATE_FROM_ATTACK_LOG, lookback_hours, min_hits, candidate_limit)
+    local rows, err = mysql.query(query_sql)
+    if not rows then
+        return { code = 500, msg = "query attack_log failed", error = err, generated = 0 }
+    end
+
+    local generated = 0
+    for _, row in ipairs(rows) do
+        local request_uri = tostring(row.request_uri or "")
+        if request_uri ~= "" then
+            local attack_type = tostring(row.attack_type or "unknown")
+            local hit_count = tonumber(row.hit_count) or 0
+            local first_seen = row.first_seen or ngx.localtime()
+            local last_seen = row.last_seen or ngx.localtime()
+            local sample_node_ip = row.sample_node_ip or ""
+            local rule_type = "uri_exact"
+            local rule_target = "request_uri"
+            local candidate_key = build_rule_candidate_key(RULE_CANDIDATE_SOURCE_ATTACK_LOG, rule_type, request_uri)
+            local risk_score = calc_risk_score(hit_count, attack_type)
+
+            local upsert_sql = format(
+                SQL_UPSERT_RULE_CANDIDATE,
+                quote_sql_str(candidate_key),
+                quote_sql_str(RULE_CANDIDATE_SOURCE_ATTACK_LOG),
+                quote_sql_str(rule_type),
+                quote_sql_str(rule_target),
+                quote_sql_str(request_uri),
+                risk_score,
+                hit_count,
+                quote_sql_str(sample_node_ip),
+                quote_sql_str(attack_type),
+                quote_sql_str(request_uri),
+                quote_sql_str(first_seen),
+                quote_sql_str(last_seen)
+            )
+
+            local ok, upsert_err = mysql.query(upsert_sql)
+            if ok then
+                generated = generated + 1
+            else
+                ngx.log(ngx.ERR, "failed to upsert rule candidate, uri=", request_uri, " err=", upsert_err)
+            end
+        end
+    end
+
+    return {
+        code = 0,
+        msg = "ok",
+        generated = generated,
+        lookback_hours = lookback_hours,
+        min_hits = min_hits,
+        limit = candidate_limit
+    }
+end
+
+function _M.generate_rule_candidates_daily_auto()
+    if not is_system_option_on("mysql") then
+        return
+    end
+
+    local source = RULE_CANDIDATE_SOURCE_ATTACK_LOG
+    local success_today, err = is_rule_candidate_success_today(source)
+    if err then
+        ngx.log(ngx.ERR, "failed to check rule candidate run state: ", err)
+        return
+    end
+    if success_today then
+        return
+    end
+
+    local result = _M.generate_rule_candidates_from_attack_log()
+    local status = RULE_CANDIDATE_RUN_STATUS_SUCCESS
+    local message = "ok"
+    local generated = 0
+    if result and result.code == 0 then
+        generated = result.generated or 0
+    else
+        status = RULE_CANDIDATE_RUN_STATUS_FAILED
+        message = (result and (result.msg or result.error)) or "unknown error"
+    end
+
+    local ok, run_err = upsert_rule_candidate_run(source, status, generated, message)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to update rule candidate run table: ", run_err)
+    end
+end
+
+function _M.run_rule_candidates_once()
+    local source = RULE_CANDIDATE_SOURCE_ATTACK_LOG
+    local result = _M.generate_rule_candidates_from_attack_log()
+
+    local status = RULE_CANDIDATE_RUN_STATUS_SUCCESS
+    local message = "manual run success"
+    local generated = 0
+    if result and result.code == 0 then
+        generated = result.generated or 0
+    else
+        status = RULE_CANDIDATE_RUN_STATUS_FAILED
+        message = (result and (result.msg or result.error)) or "unknown error"
+    end
+
+    local ok, err = upsert_rule_candidate_run(source, status, generated, message)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to write manual rule candidate run result: ", err)
+    end
+
+    return result
+end
+
+function _M.list_rule_candidates(page, limit, filters)
+    page = tonumber(page) or 1
+    limit = tonumber(limit) or 10
+    if page < 1 then
+        page = 1
+    end
+    if limit < 1 then
+        limit = 10
+    elseif limit > 200 then
+        limit = 200
+    end
+    local offset = (page - 1) * limit
+
+    local where = " WHERE 1=1 "
+    filters = filters or {}
+
+    local status = filters.status
+    if status and status ~= "" then
+        where = where .. " AND status = " .. quote_sql_str(status)
+    end
+
+    local source = filters.source
+    if source and source ~= "" then
+        where = where .. " AND source = " .. quote_sql_str(source)
+    end
+
+    local publish_status = filters.publish_status
+    if publish_status and publish_status ~= "" then
+        where = where .. " AND publish_status = " .. quote_sql_str(publish_status)
+    end
+
+    local keyword = filters.keyword
+    if keyword and keyword ~= "" then
+        local kw = "%" .. tostring(keyword) .. "%"
+        where = where .. " AND (rule_content LIKE " .. quote_sql_str(kw)
+            .. " OR sample_uri LIKE " .. quote_sql_str(kw)
+            .. " OR sample_attack_type LIKE " .. quote_sql_str(kw) .. ")"
+    end
+
+    local count_sql = SQL_COUNT_RULE_CANDIDATE .. where
+    local count_res, count_err = mysql.query(count_sql)
+    if not count_res or not count_res[1] then
+        return nil, 0, count_err or "count failed"
+    end
+
+    local total = tonumber(count_res[1].total) or 0
+    local rows = {}
+    if total > 0 then
+        local list_sql = SQL_SELECT_RULE_CANDIDATE .. where
+            .. " ORDER BY (CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END), risk_score DESC, last_seen DESC, id DESC"
+            .. format(" LIMIT %d,%d", offset, limit)
+        rows, count_err = mysql.query(list_sql)
+        if not rows then
+            return nil, total, count_err or "query failed"
+        end
+    end
+
+    return rows, total, nil
+end
+
+function _M.review_rule_candidate(id, status, note, reviewer)
+    local rid = tonumber(id)
+    if not rid then
+        return nil, "invalid id"
+    end
+
+    status = tostring(status or "")
+    if status ~= "approved" and status ~= "rejected" then
+        return nil, "invalid status"
+    end
+
+    local sql = format(
+        SQL_UPDATE_RULE_CANDIDATE_REVIEW,
+        quote_sql_str(status),
+        quote_sql_str(note or ""),
+        quote_sql_str(reviewer or ""),
+        rid
+    )
+    return mysql.query(sql)
+end
+
+local function to_severity_by_score(score)
+    local v = tonumber(score) or 0
+    if v >= 80 then
+        return "critical"
+    elseif v >= 50 then
+        return "high"
+    elseif v >= 20 then
+        return "medium"
+    end
+    return "low"
+end
+
+local function escape_regex_literal(str)
+    return (tostring(str or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
+local function normalize_candidate_uri(raw_uri)
+    local uri = tostring(raw_uri or "")
+    if uri == "" then
+        return ""
+    end
+    local qpos = string.find(uri, "?", 1, true)
+    if qpos then
+        uri = string.sub(uri, 1, qpos - 1)
+    end
+    local hpos = string.find(uri, "#", 1, true)
+    if hpos then
+        uri = string.sub(uri, 1, hpos - 1)
+    end
+    if uri == "" then
+        uri = "/"
+    end
+    if string.sub(uri, 1, 1) ~= "/" then
+        uri = "/" .. uri
+    end
+    return uri
+end
+
+local function append_global_blackurl_rule(candidate)
+    local rule_file = config.CONF_PATH .. "/global_rules/blackUrl.json"
+    local content = read_file_to_string(rule_file)
+    if not content or content == "" then
+        return nil, "read blackUrl.json failed"
+    end
+
+    local data, err = cjson.decode(content)
+    if type(data) ~= "table" then
+        return nil, err or "decode blackUrl.json failed"
+    end
+    if type(data.rules) ~= "table" then
+        data.rules = {}
+    end
+
+    local raw_uri = candidate.rule_content or candidate.sample_uri
+    local normalized_uri = normalize_candidate_uri(raw_uri)
+    if normalized_uri == "" then
+        return nil, "candidate uri is empty"
+    end
+    local exact_regex = "^" .. escape_regex_literal(normalized_uri) .. "$"
+
+    for _, rule in ipairs(data.rules) do
+        if tostring(rule.rule or "") == exact_regex then
+            return {
+                published_rule_id = tonumber(rule.id),
+                changed = false,
+                normalized_uri = normalized_uri,
+                exact_regex = exact_regex
+            }, nil
+        end
+    end
+
+    local next_id = tonumber(data.nextId) or (#data.rules + 1)
+    local ip_blacklist_cfg = get_system_config("ipBlacklist") or {}
+    local expire_seconds = tonumber(ip_blacklist_cfg.expire_time) or 600
+
+    local new_rule = {
+        id = next_id,
+        state = "on",
+        action = "redirect",
+        attackType = tostring(candidate.sample_attack_type or "backdoor"),
+        severityLevel = to_severity_by_score(candidate.risk_score),
+        autoIpBlock = "on",
+        ipBlockExpireInSeconds = expire_seconds,
+        rule = exact_regex
+    }
+
+    insert(data.rules, new_rule)
+    data.nextId = next_id + 1
+
+    local new_content, encode_err = cjson.encode(data)
+    if not new_content then
+        return nil, encode_err or "encode blackUrl.json failed"
+    end
+
+    write_string_to_file(rule_file, new_content)
+    return {
+        published_rule_id = next_id,
+        changed = true,
+        normalized_uri = normalized_uri,
+        exact_regex = exact_regex
+    }, nil
+end
+
+function _M.publish_rule_candidate(id, publisher)
+    local rid = tonumber(id)
+    if not rid then
+        return { code = 400, msg = "invalid id" }
+    end
+
+    local candidate_res, err = mysql.query(format(SQL_SELECT_RULE_CANDIDATE_BY_ID, rid))
+    if not candidate_res or not candidate_res[1] then
+        return { code = 404, msg = "candidate not found", error = err }
+    end
+    local candidate = candidate_res[1]
+
+    if tostring(candidate.status or "") ~= "approved" then
+        return { code = 400, msg = "candidate not approved" }
+    end
+
+    if tostring(candidate.publish_status or "") == RULE_CANDIDATE_PUBLISH_STATUS_PUBLISHED then
+        return { code = 0, msg = "already published", changed = false }
+    end
+
+    local publish_result, publish_err = append_global_blackurl_rule(candidate)
+    if not publish_result then
+        local fail_sql = format(
+            SQL_UPDATE_RULE_CANDIDATE_PUBLISH,
+            quote_sql_str(RULE_CANDIDATE_PUBLISH_STATUS_FAILED),
+            quote_sql_str("blackUrl"),
+            "NULL",
+            quote_sql_str(publish_err or "publish failed"),
+            rid
+        )
+        mysql.query(fail_sql)
+        return { code = 500, msg = publish_err or "publish failed" }
+    end
+
+    local published_rule_id_sql = "NULL"
+    if publish_result.published_rule_id then
+        published_rule_id_sql = tostring(tonumber(publish_result.published_rule_id))
+    end
+
+    local note = "published to global blackUrl"
+    if not publish_result.changed then
+        note = "duplicate rule exists in global blackUrl"
+    end
+
+    local update_sql = format(
+        SQL_UPDATE_RULE_CANDIDATE_PUBLISH,
+        quote_sql_str(RULE_CANDIDATE_PUBLISH_STATUS_PUBLISHED),
+        quote_sql_str("blackUrl"),
+        published_rule_id_sql,
+        quote_sql_str(note .. ", by=" .. tostring(publisher or "")),
+        rid
+    )
+    local ok, update_err = mysql.query(update_sql)
+    if not ok then
+        return { code = 500, msg = "update publish status failed", error = update_err }
+    end
+
+    return {
+        code = 0,
+        msg = "published",
+        changed = publish_result.changed,
+        publish_module = "blackUrl",
+        published_rule_id = publish_result.published_rule_id,
+        normalized_uri = publish_result.normalized_uri,
+        regex = publish_result.exact_regex
+    }
 end
 
 function _M.archive_attack_log_once(force)

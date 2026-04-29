@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+		<title>规则情报候选</title>
+		<link href="../component/pear/css/pear.css" rel="stylesheet">
+	</head>
+	<body class="pear-container">
+		<div class="layui-row">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">规则情报候选（流程：通过 -> 发布规则 -> 生效下发）</div>
+					<div class="layui-card-body">
+						<table id="id-table-candidates" lay-filter="filter-table-candidates"></table>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<script type="text/html" id="candidate_toolbar">
+			<form class="layui-form layui-row layui-col-space8">
+				<div class="layui-col-md2">
+					<select name="status">
+						<option value="">状态-全部</option>
+						<option value="pending">待审核</option>
+						<option value="approved">已通过</option>
+						<option value="rejected">已驳回</option>
+					</select>
+				</div>
+				<div class="layui-col-md2">
+					<select name="publish_status">
+						<option value="">发布状态-全部</option>
+						<option value="pending">待发布</option>
+						<option value="published">已发布</option>
+						<option value="failed">发布失败</option>
+					</select>
+				</div>
+				<div class="layui-col-md2">
+					<select name="source">
+						<option value="">来源-全部</option>
+						<option value="attack_log_agg">attack_log_agg</option>
+					</select>
+				</div>
+				<div class="layui-col-md2">
+					<input type="text" name="keyword" value="" placeholder="关键字（规则内容/URI/攻击类型）" class="layui-input" lay-affix="clear" />
+				</div>
+				<div class="pear-btn-container layui-col-md4">
+					<button class="pear-btn pear-btn-primary pear-btn-md" lay-submit lay-filter="filter-table-search">查询</button>
+					<button type="reset" class="pear-btn pear-btn-md">重置</button>
+					<button type="button" class="pear-btn pear-btn-warming pear-btn-md" id="btn-run-now">立即生成一次候选</button>
+				</div>
+			</form>
+		</script>
+
+		<script type="text/html" id="table_bar">
+			{{# if (d.status === 'pending') { }}
+				<span lay-event="approve" style="cursor: pointer; color: #16baaa;">通过</span>
+				<span style="margin: 0 6px; color: #bbb;">|</span>
+				<span lay-event="reject" style="cursor: pointer; color: #ff5722;">驳回</span>
+			{{# } else if (d.status === 'approved' && d.publish_status !== 'published') { }}
+				<span lay-event="publish" style="cursor: pointer; color: #1e9fff;">发布规则</span>
+			{{# } else { }}
+				<span style="color: #999;">已处理</span>
+			{{# } }}
+		</script>
+
+		<script src="../component/layui/layui.js"></script>
+		<script src="../component/pear/pear.js"></script>
+		<script>
+			layui.use(['form', 'table', 'jquery', 'popup'], function() {
+				var form = layui.form;
+				var table = layui.table;
+				var $ = layui.$;
+				var popup = layui.popup;
+
+				function statusText(status) {
+					if (status === 'approved') return '已通过';
+					if (status === 'rejected') return '已驳回';
+					return '待审核';
+				}
+
+				function publishStatusText(status) {
+					if (status === 'published') return '已发布';
+					if (status === 'failed') return '发布失败';
+					return '待发布';
+				}
+
+				function reloadTable() {
+					table.reloadData('id-table-candidates', { page: { curr: 1 } });
+				}
+
+				table.render({
+					elem: '#id-table-candidates',
+					url: '/rulecandidate/list',
+					toolbar: '#candidate_toolbar',
+					page: true,
+					limits: [10, 20, 30, 50, 100],
+					limit: 10,
+					cols: [[
+						{ field: 'id', title: 'ID', width: 70 },
+						{ field: 'status', title: '状态', width: 90, templet: function(d) { return '<span>' + statusText(d.status) + '</span>'; } },
+						{ field: 'publish_status', title: '发布', width: 90, templet: function(d) { return '<span>' + publishStatusText(d.publish_status) + '</span>'; } },
+						{ field: 'source', title: '来源', width: 130 },
+						{ field: 'rule_type', title: '类型', width: 120 },
+						{ field: 'rule_content', title: '候选规则内容', minWidth: 260 },
+						{ field: 'hit_count', title: '命中次数', width: 100, sort: true },
+						{ field: 'risk_score', title: '风险分', width: 90, sort: true },
+						{ field: 'sample_attack_type', title: '样本攻击类型', width: 130 },
+						{ field: 'sample_node_ip', title: '样本节点', width: 120 },
+						{ field: 'last_seen', title: '最近命中', width: 170 },
+						{ field: 'review_by', title: '审核人', width: 120 },
+						{ field: 'review_time', title: '审核时间', width: 170 },
+						{ field: 'published_time', title: '发布时间', width: 170 },
+						{ fixed: 'right', title: '操作', width: 120, toolbar: '#table_bar' }
+					]]
+				});
+
+				table.on('tool(filter-table-candidates)', function(obj) {
+					var data = obj.data;
+					if (obj.event !== 'approve' && obj.event !== 'reject' && obj.event !== 'publish') return;
+
+					if (obj.event === 'publish') {
+						layer.confirm('确认发布该已通过候选到生效规则？', { icon: 3, title: '提示' }, function(index) {
+							$.post('/rulecandidate/publish', { id: data.id }, function(res) {
+								if (res && res.code === 0) {
+									reloadTable();
+									popup.success('发布成功，规则已写入并触发下发');
+									layer.close(index);
+								} else {
+									popup.failure((res && res.msg) || '发布失败');
+								}
+							}, 'json');
+						});
+						return;
+					}
+
+					var nextStatus = obj.event === 'approve' ? 'approved' : 'rejected';
+					var tip = nextStatus === 'approved' ? '确认通过该候选规则？' : '确认驳回该候选规则？';
+
+					layer.confirm(tip, { icon: 3, title: '提示' }, function(index) {
+						$.post('/rulecandidate/review', { id: data.id, status: nextStatus }, function(res) {
+							if (res && res.code === 0) {
+								reloadTable();
+								if (nextStatus === 'approved') {
+									popup.success('已通过，请执行下一步：点击“发布规则”');
+								} else {
+									popup.success('已驳回');
+								}
+								layer.close(index);
+							} else {
+								popup.failure((res && res.msg) || '操作失败');
+							}
+						}, 'json');
+					});
+				});
+
+				form.on('submit(filter-table-search)', function(data) {
+					table.reloadData('id-table-candidates', {
+						page: { curr: 1 },
+						where: data.field
+					});
+					return false;
+				});
+
+				$(document).on('click', '#btn-run-now', function() {
+					layer.confirm('立即执行一次候选生成？（不会自动生效）', { icon: 3, title: '提示' }, function(index) {
+						$.post('/rulecandidate/run', {}, function(res) {
+							if (res && res.code === 0) {
+								reloadTable();
+								var generated = (res.data && res.data.generated) || 0;
+								popup.success('执行完成，本次生成/更新 ' + generated + ' 条候选');
+								layer.close(index);
+							} else {
+								popup.failure((res && res.msg) || '执行失败');
+							}
+						}, 'json');
+					});
+				});
+			});
+		</script>
+	</body>
+</html>

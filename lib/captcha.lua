@@ -37,6 +37,14 @@ local _M = {}
 
 math.randomseed(os.time())
 
+local function get_captcha_store()
+    return ngx.shared.dict_cclimit
+end
+
+local function get_token_store()
+    return ngx.shared.dict_accesstoken
+end
+
 -- 验证请求中的AccessToken，验证通过则返回true,否则返回false
 function _M.check_access_token()
     local access_token = ngx.var.cookie_waf_accesstoken
@@ -54,9 +62,11 @@ function _M.check_access_token()
     local token = nil
     if is_system_option_on("redis") then
         token = redis_cli.get(constants.KEY_CAPTCHA_ACCESSTOKEN_REDIS_PREFIX .. key)
+        if not token then
+            token = get_token_store():get(key)
+        end
     else
-        local limit = ngx.shared.dict_accesstoken
-        token = limit:get(key)
+        token = get_token_store():get(key)
     end
 
     if token and token == access_token then
@@ -82,10 +92,12 @@ function _M.set_access_token()
     ngx.header['Set-Cookie'] = { 'waf_accesstoken=' .. access_token .. '; path=/; Expires=' .. cookie_expire }
 
     if is_system_option_on("redis") then
-        redis_cli.set(constants.KEY_CAPTCHA_ACCESSTOKEN_REDIS_PREFIX .. key, access_token, expireInSeconds)
+        local ok = redis_cli.set(constants.KEY_CAPTCHA_ACCESSTOKEN_REDIS_PREFIX .. key, access_token, expireInSeconds)
+        if not ok then
+            get_token_store():set(key, access_token, expireInSeconds)
+        end
     else
-        local limit = ngx.shared.dict_accesstoken
-        limit:set(key, access_token, expireInSeconds)
+        get_token_store():set(key, access_token, expireInSeconds)
     end
 end
 
@@ -153,8 +165,13 @@ local function block_ip(ip, rule_table)
             ok, err = redis_cli.set(key, 1, rule_table.ipBlockExpireInSeconds)
             if ok then
                 ngx.ctx.ip_blocked = true
+                ngx.shared.dict_blackip:set(ip, 1, rule_table.ipBlockExpireInSeconds)
             else
                 ngx.log(ngx.ERR, "failed to block ip " .. ip, err)
+                ok, err = ngx.shared.dict_blackip:set(ip, 1, rule_table.ipBlockExpireInSeconds)
+                if ok then
+                    ngx.ctx.ip_blocked = true
+                end
             end
         else
             local blackip = ngx.shared.dict_blackip
@@ -245,6 +262,9 @@ local function js_challenge()
 
                         if is_system_option_on("redis") then
                             result = redis_cli.get(key_formula_result)
+                            if not result then
+                                result = get_captcha_store():get(key_formula_result)
+                            end
 
                             if result then
                                 local index = find(result, "_", 1 , true)
@@ -254,6 +274,8 @@ local function js_challenge()
                                     challenge_result = {result = 'success'}
 
                                     redis_cli.bath_del({key_captcha, key_formula_result})
+                                    get_captcha_store():delete(key_formula_result)
+                                    get_captcha_store():delete(key_captcha)
 
                                     -- 设置访问令牌
                                     _M.set_access_token()
@@ -261,7 +283,7 @@ local function js_challenge()
                                 end
                             end
                         else
-                            local limit = ngx.shared.dict_cclimit
+                            local limit = get_captcha_store()
                             result = limit:get(key_formula_result)
 
                             if result then
@@ -298,14 +320,24 @@ local function js_challenge()
     if is_system_option_on("redis") then
         local content, _ = redis_cli.get(key_formula_result)
         if not content then
-            formula, result = get_random_formula()
-            redis_cli.set(key_formula_result, formula .. "_" .. result, captcha.verifyInSeconds)
+            content = get_captcha_store():get(key_formula_result)
+            if not content then
+                formula, result = get_random_formula()
+                local payload = formula .. "_" .. result
+                local ok = redis_cli.set(key_formula_result, payload, captcha.verifyInSeconds)
+                if not ok then
+                    get_captcha_store():set(key_formula_result, payload, captcha.verifyInSeconds)
+                end
+            else
+                local index = find(content, "_", 1, true)
+                formula = sub(content, 1, index - 1)
+            end
         else
             local index = find(content, "_", 1 , true)
             formula = sub(content, 1, index - 1)
         end
     else
-        local limit = ngx.shared.dict_cclimit
+        local limit = get_captcha_store()
         local content, _ = limit:get(key_formula_result)
         if not content then
             formula, result = get_random_formula()
@@ -394,13 +426,19 @@ function _M.trigger_captcha()
 
     if is_system_option_on("redis") then
         local count, _ = redis_cli.incr(key, rule_table.verifyInSeconds)
-        if not count then
-            redis_cli.set(key, 1, rule_table.verifyInSeconds)
-        elseif tonumber(count) > rule_table.maxFailTimes then
+        if count and tonumber(count) > rule_table.maxFailTimes then
             block_ip(ip, rule_table)
+        elseif not count then
+            local limit = get_captcha_store()
+            local lcount, _ = limit:incr(key, 1, 0, rule_table.verifyInSeconds)
+            if not lcount then
+                limit:set(key, 1, rule_table.verifyInSeconds)
+            elseif lcount > rule_table.maxFailTimes then
+                block_ip(ip, rule_table)
+            end
         end
     else
-        local limit = ngx.shared.dict_cclimit
+        local limit = get_captcha_store()
         local count, _ = limit:incr(key, 1, 0, rule_table.verifyInSeconds)
         if not count then
             limit:set(key, 1, rule_table.verifyInSeconds)
@@ -437,17 +475,25 @@ function _M.check_captcha()
 
     if is_system_option_on("redis") then
         local count, _ = redis_cli.get(key)
-        if not count then
-            return
-        end
-
-        if tonumber(count) > rule_table.maxFailTimes then
+        if count and tonumber(count) > rule_table.maxFailTimes then
             block_ip(ip, rule_table)
-        else
+        elseif count then
             redis_cli.incr(key)
+        else
+            local limit = get_captcha_store()
+            local lcount, _ = limit:get(key)
+            if not lcount then
+                return
+            end
+
+            if lcount > rule_table.maxFailTimes then
+                block_ip(ip, rule_table)
+            else
+                limit:incr(key, 1)
+            end
         end
     else
-        local limit = ngx.shared.dict_cclimit
+        local limit = get_captcha_store()
         local count, _ = limit:get(key)
         if not count then
             return

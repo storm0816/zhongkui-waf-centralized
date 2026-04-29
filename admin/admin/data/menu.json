@@ -8,76 +8,92 @@
 	},
 	{
 		"id": 2,
-		"title": "攻击事件",
+		"title": "安全运营",
 		"icon": "layui-icon layui-icon-list",
-		"type": 1,
-		"href": "view/events.html"
-	},
-	{
-		"id": 3,
-		"title": "IP封禁日志",
-		"icon": "layui-icon layui-icon-disabled",
-		"type": 1,
-		"href": "view/ip-blocking.html"
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 21,
+				"title": "攻击事件",
+				"icon": "pear-icon pear-icon-notification",
+				"type": 1,
+				"href": "view/events.html"
+			},
+			{
+				"id": 22,
+				"title": "IP封禁日志",
+				"icon": "pear-icon pear-icon-lock",
+				"type": 1,
+				"href": "view/ip-blocking.html"
+			},
+			{
+				"id": 23,
+				"title": "规则情报候选",
+				"icon": "pear-icon pear-icon-survey",
+				"type": 1,
+				"href": "view/rule-candidate.html"
+			}
+		]
 	},
 	{
 		"id": 4,
-		"title": "防护站点",
-		"icon": "layui-icon layui-icon-website",
-		"type": 1,
-		"href": "view/website.html"
-	},
-	{
-		"id": 5,
-		"title": "防御配置",
+		"title": "防护策略",
 		"icon": "layui-icon layui-icon-auz",
 		"type": 0,
 		"href": "",
 		"children": [
 			{
-				"id": 51,
+				"id": 41,
+				"title": "防护站点",
+				"icon": "layui-icon layui-icon-website",
+				"type": 1,
+				"href": "view/website.html"
+			},
+			{
+				"id": 42,
 				"title": "网站防护",
-				"icon": "layui-icon layui-icon-console",
+				"icon": "pear-icon pear-icon-security",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/web.html"
 			},
 			{
-				"id": 52,
+				"id": 43,
 				"title": "IP黑白名单",
-				"icon": "layui-icon layui-icon-list",
+				"icon": "pear-icon pear-icon-filter",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/ip-filter.html"
 			},
 			{
-				"id": 53,
+				"id": 44,
 				"title": "Bot管理",
-				"icon": "layui-icon layui-icon-console",
+				"icon": "pear-icon pear-icon-user",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/bot.html"
 			},
 			{
-				"id": 54,
+				"id": 45,
 				"title": "CC防护",
-				"icon": "layui-icon layui-icon-console",
+				"icon": "pear-icon pear-icon-warning",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/cc.html"
 			},
 			{
-				"id": 55,
+				"id": 46,
 				"title": "访问控制(ACL)",
-				"icon": "layui-icon layui-icon-console",
+				"icon": "pear-icon pear-icon-select",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/acl.html"
 			},
 			{
-				"id": 56,
+				"id": 47,
 				"title": "敏感数据过滤",
-				"icon": "layui-icon layui-icon-console",
+				"icon": "pear-icon pear-icon-hide",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/sensitive.html"
@@ -86,13 +102,13 @@
 	},
 	{
 		"id": 6,
-		"title": "通用配置",
+		"title": "基础配置",
 		"icon": "layui-icon layui-icon-set-fill",
 		"type": 0,
 		"href": "",
 		"children": [
 			{
-				"id": 62,
+				"id": 61,
 				"title": "证书管理",
 				"icon": "layui-icon layui-icon-file",
 				"type": 1,
@@ -100,24 +116,15 @@
 				"href": "view/common/certificate.html"
 			},
 			{
-				"id": 63,
+				"id": 62,
 				"title": "IP组",
-				"icon": "layui-icon layui-icon-list",
+				"icon": "pear-icon pear-icon-layers",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/common/ip-group.html"
-			}
-		]
-	},
-	{
-		"id": 7,
-		"title": "系统设置",
-		"icon": "layui-icon layui-icon-util",
-		"type": 0,
-		"href": "",
-		"children": [
+			},
 			{
-				"id": 71,
+				"id": 63,
 				"title": "系统设置",
 				"icon": "layui-icon layui-icon-template-1",
 				"type": 1,
@@ -125,9 +132,9 @@
 				"href": "view/system/system.html"
 			},
 			{
-				"id": 72,
+				"id": 64,
 				"title": "密码修改",
-				"icon": "layui-icon layui-icon-console",
+				"icon": "pear-icon pear-icon-keyboard-9",
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/system/password.html"
@@ -136,23 +143,32 @@
 	},
 	{
 		"id": 8,
-		"title": "在线节点",
-		"icon": "layui-icon layui-icon-radio",
-		"type": 1,
-		"href": "view/cluster-nodes.html"
-	},
-	{
-		"id": 10,
-		"title": "节点攻击概览",
-		"icon": "layui-icon layui-icon-chart-screen",
-		"type": 1,
-		"href": "view/node-attack-overview.html"
-	},
-	{
-		"id": 11,
-		"title": "全球攻击态势",
+		"title": "集群与大屏",
 		"icon": "layui-icon layui-icon-engine",
-		"type": 1,
-		"href": "view/node-attack-global.html"
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 81,
+				"title": "在线节点",
+				"icon": "layui-icon layui-icon-radio",
+				"type": 1,
+				"href": "view/cluster-nodes.html"
+			},
+			{
+				"id": 82,
+				"title": "节点攻击概览",
+				"icon": "layui-icon layui-icon-chart-screen",
+				"type": 1,
+				"href": "view/node-attack-overview.html"
+			},
+			{
+				"id": 83,
+				"title": "全球攻击态势",
+				"icon": "pear-icon pear-icon-map",
+				"type": 1,
+				"href": "view/node-attack-global.html"
+			}
+		]
 	}
 ]

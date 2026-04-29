@@ -69,17 +69,23 @@ function _M.block_ip(ip, rule_table)
 
         local ok, err = nil, nil
 
+        local blackip = ngx.shared.dict_blackip
         if is_system_option_on("redis") then
             local key = constants.KEY_BLACKIP_PREFIX .. ip
 
             ok, err = redis_cli.set(key, 1, expire)
             if ok then
                 ngx.ctx.ip_blocked = true
+                -- keep a local shadow entry so request path can still enforce block when redis is temporarily unavailable
+                blackip:set(ip, 1, expire)
             else
                 ngx.log(ngx.ERR, "failed to block ip " .. ip, err)
+                ok, err = blackip:set(ip, 1, expire)
+                if ok then
+                    ngx.ctx.ip_blocked = true
+                end
             end
         else
-            local blackip = ngx.shared.dict_blackip
             ok, err = blackip:set(ip, 1, expire)
             if ok then
                 ngx.ctx.ip_blocked = true
@@ -94,13 +100,13 @@ end
 
 function _M.unblock_ip(ip)
     local ok, err = nil, nil
+    local blackip = ngx.shared.dict_blackip
 
     if is_system_option_on("redis") then
         local key = constants.KEY_BLACKIP_PREFIX .. ip
         ok, err = redis_cli.del(key)
+        blackip:delete(ip)
     else
-        local blackip = ngx.shared.dict_blackip
-
         ok, err = blackip:delete(ip)
         if not ok then
             ngx.log(ngx.ERR, "failed to delete key " .. ip, err)
