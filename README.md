@@ -86,6 +86,14 @@ chmod +x install.sh
 - 流量/攻击类型：dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）
 - MySQL 异常时：retry set 回放补写（`waf:retry:*`）
 
+Redis 故障降级（第 1 步）：
+- 已内置“短时失败熔断”机制：Redis 在短时间连续失败后，会进入一个短暂降级窗口，减少连接风暴。
+- 降级期间业务请求不会被 Redis 连接失败拖死；依赖 Redis 的能力会临时退化（如分布式同步/统计延后）。
+- 可在`conf/system-master.json` / `conf/system-node.json`的`redis`下按需增加参数（不填则走默认值）：
+  - `failure_threshold`：连续失败阈值（默认 `3`）
+  - `failure_window_seconds`：失败统计窗口（默认 `30` 秒）
+  - `degrade_seconds`：触发后降级时长（默认 `10` 秒）
+
 规则情报候选（MVP）：
 - master 每小时检查一次“当日是否已生成”，当日未生成则自动执行一次候选生成。
 - 候选默认来源为`attack_log`聚合（按 URI + 攻击类型聚合）。

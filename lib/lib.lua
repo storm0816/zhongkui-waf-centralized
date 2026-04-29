@@ -103,14 +103,19 @@ function _M.is_black_ip()
         end
 
         local exists = nil
+        local blackip = ngx.shared.dict_blackip
 
         if ngx.ctx.geoip.is_allowed == false then
             exists = true
         else
             if is_system_option_on("redis") then
                 exists = redis_cli.get(constants.KEY_BLACKIP_PREFIX .. ip)
+                -- only use local shadow when redis is currently unavailable;
+                -- if redis is available and key does not exist, treat as unblocked.
+                if not exists and not redis_cli.is_available() then
+                    exists = blackip:get(ip)
+                end
             else
-                local blackip = ngx.shared.dict_blackip
                 exists = blackip:get(ip)
             end
         end
@@ -212,14 +217,25 @@ function _M.is_cc()
                 if is_system_option_on("redis") then
                     key = "cc_req_count:" .. key
                     local count, _ = redis_cli.incr(key, rule_table.duration)
-                    if not count then
-                        redis_cli.set(key, 1, rule_table.duration)
-                    elseif count >= rule_table.threshold then
+                    if count and count >= rule_table.threshold then
                         ngx.ctx.is_cc = true
                         block_ip(ip, rule_table)
                         do_action(module.moduleName, rule_table, nil, rule_table.rule, 503)
 
                         return true
+                    elseif not count then
+                        -- redis unavailable: degrade to local shared-dict counting to keep cc defense effective
+                        local limit = ngx.shared.dict_cclimit
+                        local lcount, _ = limit:incr(key, 1, 0, rule_table.duration)
+                        if not lcount then
+                            limit:set(key, 1, rule_table.duration)
+                        elseif lcount >= rule_table.threshold then
+                            ngx.ctx.is_cc = true
+                            block_ip(ip, rule_table)
+                            do_action(module.moduleName, rule_table, nil, rule_table.rule, 503)
+
+                            return true
+                        end
                     end
                 else
                     local limit = ngx.shared.dict_cclimit

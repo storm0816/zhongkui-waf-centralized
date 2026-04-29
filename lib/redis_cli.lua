@@ -25,6 +25,116 @@ local ssl = lower(redis_config.ssl) == 'on' and true or false
 
 local redis_timeouts = redis_config.timeouts
 local connect_timeout, send_timeout, read_timeout = 1000, 1000, 1000
+local redis_status_dict = ngx.shared and ngx.shared.dict_config or nil
+local status_prefix = "waf:redis:status:"
+local failure_threshold = tonumber(redis_config.failure_threshold) or 3
+local failure_window_seconds = tonumber(redis_config.failure_window_seconds) or 30
+local degrade_seconds = tonumber(redis_config.degrade_seconds) or 10
+
+local function status_key(suffix)
+    return status_prefix .. suffix
+end
+
+local function now()
+    return ngx.now and ngx.now() or os.time()
+end
+
+local function get_status_number(suffix, default)
+    if not redis_status_dict then
+        return default
+    end
+    local v = redis_status_dict:get(status_key(suffix))
+    if v == nil then
+        return default
+    end
+    return tonumber(v) or default
+end
+
+local local_status = {
+    fail_count = 0,
+    first_fail_ts = 0,
+    degrade_until = 0,
+    last_error = nil,
+    last_ok_ts = 0,
+}
+
+local function set_status_fields(fields)
+    if redis_status_dict then
+        for suffix, value in pairs(fields) do
+            redis_status_dict:set(status_key(suffix), value)
+        end
+    else
+        for suffix, value in pairs(fields) do
+            local_status[suffix] = value
+        end
+    end
+end
+
+local function get_fail_count()
+    if redis_status_dict then
+        return get_status_number("fail_count", 0)
+    end
+    return local_status.fail_count
+end
+
+local function get_first_fail_ts()
+    if redis_status_dict then
+        return get_status_number("first_fail_ts", 0)
+    end
+    return local_status.first_fail_ts
+end
+
+local function get_degrade_until()
+    if redis_status_dict then
+        return get_status_number("degrade_until", 0)
+    end
+    return local_status.degrade_until
+end
+
+local function mark_failure(err)
+    local ts = now()
+    local first_fail_ts = get_first_fail_ts()
+    local fail_count = get_fail_count()
+
+    if ts - first_fail_ts > failure_window_seconds then
+        first_fail_ts = ts
+        fail_count = 1
+    else
+        if first_fail_ts == 0 then
+            first_fail_ts = ts
+        end
+        fail_count = fail_count + 1
+    end
+
+    local fields = {
+        first_fail_ts = first_fail_ts,
+        fail_count = fail_count,
+        last_error = tostring(err or "unknown"),
+        last_fail_ts = ts,
+    }
+    if fail_count >= failure_threshold then
+        fields.degrade_until = ts + degrade_seconds
+    end
+    set_status_fields(fields)
+end
+
+local function mark_success()
+    local ts = now()
+    if get_fail_count() == 0 and get_degrade_until() <= ts then
+        return
+    end
+    set_status_fields({
+        fail_count = 0,
+        first_fail_ts = 0,
+        degrade_until = 0,
+        last_ok_ts = ts,
+    })
+end
+
+local function should_skip_connect()
+    return now() < get_degrade_until()
+end
+
 if redis_timeouts then
     local m, err = ngxmatch(tostring(redis_timeouts), "(\\d+),(\\d+),(\\d+)")
     if m then
@@ -39,9 +149,14 @@ end
 --local filterName = "blackIpFilter"
 
 function _M.get_connection()
+    if should_skip_connect() then
+        return nil, "redis degrade window active"
+    end
+
     local red, err1 = redis:new()
     if not red then
         ngx.log(ngx.ERR, "failed to new redis:", err1)
+        mark_failure(err1)
         return nil, err1
     end
 
@@ -51,6 +166,7 @@ function _M.get_connection()
 
     if not ok then
         ngx.log(ngx.ERR, "failed to connect: ", err .. "\n")
+        mark_failure(err)
         return nil, err
     end
 
@@ -62,11 +178,13 @@ function _M.get_connection()
             local res, err2 = red:auth(password)
             if not res then
                 ngx.log(ngx.ERR, "failed to authenticate: ", err2)
+                mark_failure(err2)
                 return nil, err2
             end
         end
     end
 
+    mark_success()
     return red, err
 end
 
@@ -79,6 +197,31 @@ function _M.close_connection(red)
     end
 
     return ok, err
+end
+
+function _M.is_available()
+    return not should_skip_connect()
+end
+
+function _M.get_status()
+    local status = {}
+    if redis_status_dict then
+        status.fail_count = get_status_number("fail_count", 0)
+        status.first_fail_ts = get_status_number("first_fail_ts", 0)
+        status.degrade_until = get_status_number("degrade_until", 0)
+        status.last_fail_ts = get_status_number("last_fail_ts", 0)
+        status.last_ok_ts = get_status_number("last_ok_ts", 0)
+        status.last_error = redis_status_dict:get(status_key("last_error"))
+    else
+        status.fail_count = local_status.fail_count
+        status.first_fail_ts = local_status.first_fail_ts
+        status.degrade_until = local_status.degrade_until
+        status.last_fail_ts = local_status.last_fail_ts
+        status.last_ok_ts = local_status.last_ok_ts
+        status.last_error = local_status.last_error
+    end
+    status.available = not should_skip_connect()
+    return status
 end
 
 function _M.set(key, value, expire_time)
