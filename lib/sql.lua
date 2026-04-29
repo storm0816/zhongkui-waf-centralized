@@ -23,6 +23,7 @@ local is_system_option_on = config.is_system_option_on
 local ngxfind = ngx.re.find
 local md5 = ngx.md5
 local read_file_to_string = file_utils.read_file_to_string
+local write_string_to_file = file_utils.write_string_to_file
 
 local redis_cli = require "redis_cli"
 
@@ -49,6 +50,9 @@ local MAX_RULE_CANDIDATE_LIMIT = 500
 local RULE_CANDIDATE_SOURCE_ATTACK_LOG = "attack_log_agg"
 local RULE_CANDIDATE_RUN_STATUS_SUCCESS = "success"
 local RULE_CANDIDATE_RUN_STATUS_FAILED = "failed"
+local RULE_CANDIDATE_PUBLISH_STATUS_PENDING = "pending"
+local RULE_CANDIDATE_PUBLISH_STATUS_PUBLISHED = "published"
+local RULE_CANDIDATE_PUBLISH_STATUS_FAILED = "failed"
 local INTEL_SOURCES_PATH = config.CONF_PATH .. "/intel_sources.json"
 local CACHED_NODE_ID
 
@@ -540,6 +544,11 @@ local SQL_CREATE_TABLE_RULE_CANDIDATE = [[
         review_note VARCHAR(255) NULL COMMENT '审核备注',
         review_by VARCHAR(64) NULL COMMENT '审核人',
         review_time DATETIME NULL COMMENT '审核时间',
+        publish_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '发布状态',
+        publish_module VARCHAR(64) NULL COMMENT '发布目标模块',
+        published_rule_id INT NULL COMMENT '发布后的规则ID',
+        published_time DATETIME NULL COMMENT '发布时间',
+        publish_note VARCHAR(255) NULL COMMENT '发布备注',
         update_time DATETIME NULL,
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
@@ -607,8 +616,16 @@ local SQL_COUNT_RULE_CANDIDATE = [[
 local SQL_SELECT_RULE_CANDIDATE = [[
     SELECT id, candidate_key, source, rule_type, rule_target, rule_content, risk_score, hit_count, sample_node_ip,
            sample_attack_type, sample_uri, first_seen, last_seen, status, review_note, review_by, review_time,
+           publish_status, publish_module, published_rule_id, published_time, publish_note,
            create_time, update_time
     FROM waf_rule_candidate
+]]
+
+local SQL_SELECT_RULE_CANDIDATE_BY_ID = [[
+    SELECT id, source, rule_type, rule_target, rule_content, risk_score, hit_count, sample_node_ip, sample_attack_type,
+           sample_uri, status, publish_status
+    FROM waf_rule_candidate
+    WHERE id = %u
 ]]
 
 local SQL_UPDATE_RULE_CANDIDATE_REVIEW = [[
@@ -617,6 +634,17 @@ local SQL_UPDATE_RULE_CANDIDATE_REVIEW = [[
         review_note = %s,
         review_by = %s,
         review_time = NOW(),
+        update_time = NOW()
+    WHERE id = %u
+]]
+
+local SQL_UPDATE_RULE_CANDIDATE_PUBLISH = [[
+    UPDATE waf_rule_candidate
+    SET publish_status = %s,
+        publish_module = %s,
+        published_rule_id = %s,
+        published_time = NOW(),
+        publish_note = %s,
         update_time = NOW()
     WHERE id = %u
 ]]
@@ -792,6 +820,16 @@ function _M.check_table(premature)
     ensure_column("waf_cluster_node", "rules_version",
         "ALTER TABLE waf_cluster_node ADD COLUMN rules_version VARCHAR(32) NULL COMMENT '规则版本' AFTER ip",
         "UPDATE waf_cluster_node SET rules_version = version WHERE (rules_version IS NULL OR rules_version = '') AND version IS NOT NULL")
+    ensure_column("waf_rule_candidate", "publish_status",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN publish_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '发布状态' AFTER review_time")
+    ensure_column("waf_rule_candidate", "publish_module",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN publish_module VARCHAR(64) NULL COMMENT '发布目标模块' AFTER publish_status")
+    ensure_column("waf_rule_candidate", "published_rule_id",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN published_rule_id INT NULL COMMENT '发布后的规则ID' AFTER publish_module")
+    ensure_column("waf_rule_candidate", "published_time",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN published_time DATETIME NULL COMMENT '发布时间' AFTER published_rule_id")
+    ensure_column("waf_rule_candidate", "publish_note",
+        "ALTER TABLE waf_rule_candidate ADD COLUMN publish_note VARCHAR(255) NULL COMMENT '发布备注' AFTER published_time")
 end
 
 function _M.update_traffic_stats()
@@ -1914,6 +1952,11 @@ function _M.list_rule_candidates(page, limit, filters)
         where = where .. " AND source = " .. quote_sql_str(source)
     end
 
+    local publish_status = filters.publish_status
+    if publish_status and publish_status ~= "" then
+        where = where .. " AND publish_status = " .. quote_sql_str(publish_status)
+    end
+
     local keyword = filters.keyword
     if keyword and keyword ~= "" then
         local kw = "%" .. tostring(keyword) .. "%"
@@ -1962,6 +2005,177 @@ function _M.review_rule_candidate(id, status, note, reviewer)
         rid
     )
     return mysql.query(sql)
+end
+
+local function to_severity_by_score(score)
+    local v = tonumber(score) or 0
+    if v >= 80 then
+        return "critical"
+    elseif v >= 50 then
+        return "high"
+    elseif v >= 20 then
+        return "medium"
+    end
+    return "low"
+end
+
+local function escape_regex_literal(str)
+    return (tostring(str or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
+local function normalize_candidate_uri(raw_uri)
+    local uri = tostring(raw_uri or "")
+    if uri == "" then
+        return ""
+    end
+    local qpos = string.find(uri, "?", 1, true)
+    if qpos then
+        uri = string.sub(uri, 1, qpos - 1)
+    end
+    local hpos = string.find(uri, "#", 1, true)
+    if hpos then
+        uri = string.sub(uri, 1, hpos - 1)
+    end
+    if uri == "" then
+        uri = "/"
+    end
+    if string.sub(uri, 1, 1) ~= "/" then
+        uri = "/" .. uri
+    end
+    return uri
+end
+
+local function append_global_blackurl_rule(candidate)
+    local rule_file = config.CONF_PATH .. "/global_rules/blackUrl.json"
+    local content = read_file_to_string(rule_file)
+    if not content or content == "" then
+        return nil, "read blackUrl.json failed"
+    end
+
+    local data, err = cjson.decode(content)
+    if type(data) ~= "table" then
+        return nil, err or "decode blackUrl.json failed"
+    end
+    if type(data.rules) ~= "table" then
+        data.rules = {}
+    end
+
+    local raw_uri = candidate.rule_content or candidate.sample_uri
+    local normalized_uri = normalize_candidate_uri(raw_uri)
+    if normalized_uri == "" then
+        return nil, "candidate uri is empty"
+    end
+    local exact_regex = "^" .. escape_regex_literal(normalized_uri) .. "$"
+
+    for _, rule in ipairs(data.rules) do
+        if tostring(rule.rule or "") == exact_regex then
+            return {
+                published_rule_id = tonumber(rule.id),
+                changed = false,
+                normalized_uri = normalized_uri,
+                exact_regex = exact_regex
+            }, nil
+        end
+    end
+
+    local next_id = tonumber(data.nextId) or (#data.rules + 1)
+    local ip_blacklist_cfg = get_system_config("ipBlacklist") or {}
+    local expire_seconds = tonumber(ip_blacklist_cfg.expire_time) or 600
+
+    local new_rule = {
+        id = next_id,
+        state = "on",
+        action = "redirect",
+        attackType = tostring(candidate.sample_attack_type or "backdoor"),
+        severityLevel = to_severity_by_score(candidate.risk_score),
+        autoIpBlock = "on",
+        ipBlockExpireInSeconds = expire_seconds,
+        rule = exact_regex
+    }
+
+    insert(data.rules, new_rule)
+    data.nextId = next_id + 1
+
+    local new_content, encode_err = cjson.encode(data)
+    if not new_content then
+        return nil, encode_err or "encode blackUrl.json failed"
+    end
+
+    write_string_to_file(rule_file, new_content)
+    return {
+        published_rule_id = next_id,
+        changed = true,
+        normalized_uri = normalized_uri,
+        exact_regex = exact_regex
+    }, nil
+end
+
+function _M.publish_rule_candidate(id, publisher)
+    local rid = tonumber(id)
+    if not rid then
+        return { code = 400, msg = "invalid id" }
+    end
+
+    local candidate_res, err = mysql.query(format(SQL_SELECT_RULE_CANDIDATE_BY_ID, rid))
+    if not candidate_res or not candidate_res[1] then
+        return { code = 404, msg = "candidate not found", error = err }
+    end
+    local candidate = candidate_res[1]
+
+    if tostring(candidate.status or "") ~= "approved" then
+        return { code = 400, msg = "candidate not approved" }
+    end
+
+    if tostring(candidate.publish_status or "") == RULE_CANDIDATE_PUBLISH_STATUS_PUBLISHED then
+        return { code = 0, msg = "already published", changed = false }
+    end
+
+    local publish_result, publish_err = append_global_blackurl_rule(candidate)
+    if not publish_result then
+        local fail_sql = format(
+            SQL_UPDATE_RULE_CANDIDATE_PUBLISH,
+            quote_sql_str(RULE_CANDIDATE_PUBLISH_STATUS_FAILED),
+            quote_sql_str("blackUrl"),
+            "NULL",
+            quote_sql_str(publish_err or "publish failed"),
+            rid
+        )
+        mysql.query(fail_sql)
+        return { code = 500, msg = publish_err or "publish failed" }
+    end
+
+    local published_rule_id_sql = "NULL"
+    if publish_result.published_rule_id then
+        published_rule_id_sql = tostring(tonumber(publish_result.published_rule_id))
+    end
+
+    local note = "published to global blackUrl"
+    if not publish_result.changed then
+        note = "duplicate rule exists in global blackUrl"
+    end
+
+    local update_sql = format(
+        SQL_UPDATE_RULE_CANDIDATE_PUBLISH,
+        quote_sql_str(RULE_CANDIDATE_PUBLISH_STATUS_PUBLISHED),
+        quote_sql_str("blackUrl"),
+        published_rule_id_sql,
+        quote_sql_str(note .. ", by=" .. tostring(publisher or "")),
+        rid
+    )
+    local ok, update_err = mysql.query(update_sql)
+    if not ok then
+        return { code = 500, msg = "update publish status failed", error = update_err }
+    end
+
+    return {
+        code = 0,
+        msg = "published",
+        changed = publish_result.changed,
+        publish_module = "blackUrl",
+        published_rule_id = publish_result.published_rule_id,
+        normalized_uri = publish_result.normalized_uri,
+        regex = publish_result.exact_regex
+    }
 end
 
 function _M.archive_attack_log_once(force)

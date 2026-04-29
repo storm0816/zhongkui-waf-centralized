@@ -48,6 +48,7 @@ void BIO_vfree(BIO *a);
 typedef struct rsa_st RSA;
 RSA *RSA_new(void);
 void RSA_free(RSA *rsa);
+int RSA_size(const RSA *rsa);
 typedef int pem_password_cb(char *buf, int size, int rwflag, void *userdata);
 RSA * PEM_read_bio_RSAPrivateKey(BIO *bp, RSA **rsa, pem_password_cb *cb,
                                  void *u);
@@ -388,7 +389,11 @@ function _M.new(_, opts)
         end
     end
 
-    local size = C.EVP_PKEY_size(pkey)
+    -- OpenSSL 3 某些环境下 EVP_PKEY_size 可能缺符号，改为用 RSA_size 取密钥尺寸。
+    local size = C.RSA_size(rsa)
+    if size == nil or size <= 0 then
+        return nil, "failed to get rsa key size"
+    end
     return setmetatable({
             pkey = pkey,
             size = size,

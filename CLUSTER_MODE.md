@@ -154,7 +154,7 @@ redis-cli GET waf:masterIpBlackList
 - master 定时任务每小时检查一次，当日若未成功生成过候选，则自动执行一次。
 - 候选来源当前为`attack_log`聚合（URI + 攻击类型 + 命中次数）。
 - 候选落库到`waf_rule_candidate`，运行记录落库到`waf_rule_candidate_run`。
-- 管理后台新增“规则情报候选”页面，支持查询、手动触发、通过/驳回。
+- 管理后台新增“规则情报候选”页面，支持查询、手动触发、通过/驳回、发布规则。
 
 配置文件：`conf/intel_sources.json`
 
@@ -170,8 +170,8 @@ redis-cli GET waf:masterIpBlackList
 ```
 
 说明：
-- 该 MVP 只做候选池管理，不会自动写入`conf/global_rules/*.json`。
-- 审核“通过”表示进入人工确认名单，后续可在下一阶段增加“审核通过后一键发布”为正式规则。
+- 审核“通过”表示进入待发布状态；点击“发布规则”后会写入`conf/global_rules/blackUrl.json`并触发规则重载下发。
+- 保持“人工发布”而不是“自动生效”，可以降低误封风险。
 
 ### 生产降压策略
 

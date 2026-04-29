@@ -10,7 +10,7 @@
 		<div class="layui-row">
 			<div class="layui-col-md12">
 				<div class="layui-card">
-					<div class="layui-card-header">规则情报候选（每日自动候选，不直接生效）</div>
+					<div class="layui-card-header">规则情报候选（流程：通过 -> 发布规则 -> 生效下发）</div>
 					<div class="layui-card-body">
 						<table id="id-table-candidates" lay-filter="filter-table-candidates"></table>
 					</div>
@@ -29,12 +29,20 @@
 					</select>
 				</div>
 				<div class="layui-col-md2">
+					<select name="publish_status">
+						<option value="">发布状态-全部</option>
+						<option value="pending">待发布</option>
+						<option value="published">已发布</option>
+						<option value="failed">发布失败</option>
+					</select>
+				</div>
+				<div class="layui-col-md2">
 					<select name="source">
 						<option value="">来源-全部</option>
 						<option value="attack_log_agg">attack_log_agg</option>
 					</select>
 				</div>
-				<div class="layui-col-md4">
+				<div class="layui-col-md2">
 					<input type="text" name="keyword" value="" placeholder="关键字（规则内容/URI/攻击类型）" class="layui-input" lay-affix="clear" />
 				</div>
 				<div class="pear-btn-container layui-col-md4">
@@ -50,6 +58,8 @@
 				<span lay-event="approve" style="cursor: pointer; color: #16baaa;">通过</span>
 				<span style="margin: 0 6px; color: #bbb;">|</span>
 				<span lay-event="reject" style="cursor: pointer; color: #ff5722;">驳回</span>
+			{{# } else if (d.status === 'approved' && d.publish_status !== 'published') { }}
+				<span lay-event="publish" style="cursor: pointer; color: #1e9fff;">发布规则</span>
 			{{# } else { }}
 				<span style="color: #999;">已处理</span>
 			{{# } }}
@@ -70,6 +80,12 @@
 					return '待审核';
 				}
 
+				function publishStatusText(status) {
+					if (status === 'published') return '已发布';
+					if (status === 'failed') return '发布失败';
+					return '待发布';
+				}
+
 				function reloadTable() {
 					table.reloadData('id-table-candidates', { page: { curr: 1 } });
 				}
@@ -84,6 +100,7 @@
 					cols: [[
 						{ field: 'id', title: 'ID', width: 70 },
 						{ field: 'status', title: '状态', width: 90, templet: function(d) { return '<span>' + statusText(d.status) + '</span>'; } },
+						{ field: 'publish_status', title: '发布', width: 90, templet: function(d) { return '<span>' + publishStatusText(d.publish_status) + '</span>'; } },
 						{ field: 'source', title: '来源', width: 130 },
 						{ field: 'rule_type', title: '类型', width: 120 },
 						{ field: 'rule_content', title: '候选规则内容', minWidth: 260 },
@@ -94,13 +111,29 @@
 						{ field: 'last_seen', title: '最近命中', width: 170 },
 						{ field: 'review_by', title: '审核人', width: 120 },
 						{ field: 'review_time', title: '审核时间', width: 170 },
-						{ fixed: 'right', title: '操作', width: 110, toolbar: '#table_bar' }
+						{ field: 'published_time', title: '发布时间', width: 170 },
+						{ fixed: 'right', title: '操作', width: 120, toolbar: '#table_bar' }
 					]]
 				});
 
 				table.on('tool(filter-table-candidates)', function(obj) {
 					var data = obj.data;
-					if (obj.event !== 'approve' && obj.event !== 'reject') return;
+					if (obj.event !== 'approve' && obj.event !== 'reject' && obj.event !== 'publish') return;
+
+					if (obj.event === 'publish') {
+						layer.confirm('确认发布该已通过候选到生效规则？', { icon: 3, title: '提示' }, function(index) {
+							$.post('/rulecandidate/publish', { id: data.id }, function(res) {
+								if (res && res.code === 0) {
+									reloadTable();
+									popup.success('发布成功，规则已写入并触发下发');
+									layer.close(index);
+								} else {
+									popup.failure((res && res.msg) || '发布失败');
+								}
+							}, 'json');
+						});
+						return;
+					}
 
 					var nextStatus = obj.event === 'approve' ? 'approved' : 'rejected';
 					var tip = nextStatus === 'approved' ? '确认通过该候选规则？' : '确认驳回该候选规则？';
@@ -109,7 +142,11 @@
 						$.post('/rulecandidate/review', { id: data.id, status: nextStatus }, function(res) {
 							if (res && res.code === 0) {
 								reloadTable();
-								popup.success(nextStatus === 'approved' ? '已通过' : '已驳回');
+								if (nextStatus === 'approved') {
+									popup.success('已通过，请执行下一步：点击“发布规则”');
+								} else {
+									popup.success('已驳回');
+								}
 								layer.close(index);
 							} else {
 								popup.failure((res && res.msg) || '操作失败');

@@ -33,6 +33,7 @@ local function list_candidates()
     local rows, total, err = sql.list_rule_candidates(page, limit, {
         status = args.status,
         source = args.source,
+        publish_status = args.publish_status,
         keyword = args.keyword
     })
     if not rows then
@@ -94,9 +95,42 @@ local function review_candidate()
     return response
 end
 
+local function publish_candidate()
+    local response = { code = 0, data = {}, msg = "发布成功" }
+    local args, err = get_post_args()
+    if not args then
+        response.code = 400
+        response.msg = err or "bad request"
+        return response, false
+    end
+
+    local id = tonumber(args.id)
+    if not id then
+        response.code = 400
+        response.msg = "invalid id"
+        return response, false
+    end
+
+    local publisher = ngx.var.remote_addr or "admin"
+    local result = sql.publish_rule_candidate(id, publisher)
+    if not result or result.code ~= 0 then
+        response.code = (result and result.code) or 500
+        response.msg = (result and (result.msg or result.error)) or "publish failed"
+        response.data = result or {}
+        return response, false
+    end
+
+    response.data = result
+    if result.changed == false then
+        response.msg = "规则已存在，状态已标记为已发布"
+    end
+    return response, true
+end
+
 function _M.do_request()
     local response = { code = 200, data = {}, msg = "" }
     local uri = ngx.var.uri
+    local reload = false
 
     if user.check_auth_token() == false then
         response.code = 401
@@ -121,12 +155,18 @@ function _M.do_request()
         response = run_candidates_now()
     elseif uri == "/rulecandidate/review" and ngx.req.get_method() == "POST" then
         response = review_candidate()
+    elseif uri == "/rulecandidate/publish" and ngx.req.get_method() == "POST" then
+        response, reload = publish_candidate()
     else
         response.code = 404
         response.msg = "not found"
     end
 
     ngx.say(cjson_encode(response))
+
+    if reload and (response.code == 0 or response.code == 200) then
+        config.reload_config_file()
+    end
 end
 
 _M.do_request()
