@@ -74,10 +74,10 @@ function _M.do_request()
             if not ips or #ips == 0 then
                 response.code = 500
                 response.msg = 'param content is empty'
+            else
+                response = rule_utils.save_or_update_rule(IP_GROUP_PATH, newRule)
+                reload = response.code == 200
             end
-
-            response = rule_utils.save_or_update_rule(IP_GROUP_PATH, newRule)
-            reload = true
         else
             response.code = 500
             response.msg = 'param is empty'

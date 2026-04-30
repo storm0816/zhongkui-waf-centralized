@@ -30,6 +30,10 @@ local CERTS_PATH = config.ZHONGKUI_PATH .. "/admin/ssl-certs/"
 local REGEX_CERT_PATH = "^" .. CERTS_PATH .. "\\S+\\.(?:pem|crt)$"
 local REGEX_KEY_PATH = "^" .. CERTS_PATH .. "\\S+\\.key$"
 
+local function set_write_error(response, err)
+    response.code = 500
+    response.msg = err or "write file failed"
+end
 
 function _M.do_request()
     local response = {code = 200, data = {}, msg = ""}
@@ -70,10 +74,16 @@ function _M.do_request()
 
         -- 解析证书
         local cert = x509.new(publicKey)
+        if not cert then
+            response.code = 500
+            response.msg = "certificate parse failed"
+            ngx.say(cjson_encode(response))
+            return
+        end
 
-        local subject = cert:getSubject()
-        local issuer = cert:getIssuer()
-        local subjectAlt = cert:getSubjectAlt()
+        local subject = cert:getSubject() or {}
+        local issuer = cert:getIssuer() or {}
+        local subjectAlt = cert:getSubjectAlt() or {}
         local serial = cert:getSerial()
         local start_time, end_time = cert:getLifetime()
 
@@ -124,8 +134,20 @@ function _M.do_request()
         local keyPath = fileName.. ".key"
 
         -- 保存证书和私钥文件
-        file_utils.write_string_to_file(certPath, publicKey)
-        file_utils.write_string_to_file(keyPath, privateKey)
+        local ok, err = file_utils.write_string_to_file(certPath, publicKey)
+        if not ok then
+            set_write_error(response, err)
+            ngx.say(cjson_encode(response))
+            return
+        end
+
+        ok, err = file_utils.write_string_to_file(keyPath, privateKey)
+        if not ok then
+            remove_file(certPath)
+            set_write_error(response, err)
+            ngx.say(cjson_encode(response))
+            return
+        end
 
         rule_new.certPath = certPath
         rule_new.keyPath = keyPath

@@ -29,6 +29,15 @@ local _M = {}
 local IP_WHITELIST_PATH = config.CONF_PATH .. '/global_rules/ipWhiteList'
 local IP_BLACKLIST_PATH = config.CONF_PATH .. '/global_rules/ipBlackList'
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
 
 function _M.do_request()
     local response = {code = 200, data = {}, msg = ""}
@@ -85,8 +94,7 @@ function _M.do_request()
                 end
 
                 local new_config_json = cjson_encode(config_table)
-                update_site_config_file(site_id, new_config_json)
-                reload = true
+                reload = save_or_fail(response, update_site_config_file(site_id, new_config_json))
             else
                 response.code = 500
                 response.msg = 'param error'
@@ -172,11 +180,10 @@ function _M.do_request()
                 end
 
                 if id == 1 then
-                    write_string_to_file(IP_WHITELIST_PATH, trim(content))
+                    reload = save_or_fail(response, write_string_to_file(IP_WHITELIST_PATH, trim(content)))
                 elseif id == 2 then
-                    write_string_to_file(IP_BLACKLIST_PATH, trim(content))
+                    reload = save_or_fail(response, write_string_to_file(IP_BLACKLIST_PATH, trim(content)))
                 end
-                reload = true
             end
         end
     elseif uri == "/ip/filter/rule/geo/update" then
@@ -195,8 +202,7 @@ function _M.do_request()
                     geoip.disallowCountrys = cjson_decode(countries)
 
                     local json = cjson_encode(t)
-                    update_site_config_file(site_id, json)
-                    reload = true
+                    reload = save_or_fail(response, update_site_config_file(site_id, json))
                 end
             else
                 response.code = 500

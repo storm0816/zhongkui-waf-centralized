@@ -165,7 +165,11 @@ function _M.save_or_update_rule(file_path, rule_new)
                 rule_table.nextId = nextId + 1
             end
 
-            write_string_to_file(file_path, cjson_encode(rule_table))
+            local ok, err = write_string_to_file(file_path, cjson_encode(rule_table))
+            if not ok then
+                response.code = 500
+                response.msg = err or "write file failed"
+            end
         end
     else
         local msg = 'param error'
@@ -206,7 +210,11 @@ function _M.delete_rule(file_path)
                         end
                     end
 
-                    write_string_to_file(file_path, cjson_encode(rule_table))
+                    local ok, write_err = write_string_to_file(file_path, cjson_encode(rule_table))
+                    if not ok then
+                        response.code = 500
+                        response.msg = write_err or "write file failed"
+                    end
                 end
             else
                 response.code = 500
@@ -250,7 +258,11 @@ function _M.update_site_rule_state(site_id, module_id, rule_id, state)
 
             if changed then
                 local json = cjson_encode(t)
-                update_site_module_rule_file(site_id, module_id, json)
+                local ok, err = update_site_module_rule_file(site_id, module_id, json)
+                if not ok then
+                    response.code = 500
+                    response.msg = err or "write file failed"
+                end
             end
         end
     else
@@ -291,7 +303,11 @@ function _M.save_or_update_site_rule(site_id, module_id, rule_new)
                 rule_table.nextId = nextId + 1
             end
 
-            update_site_module_rule_file(site_id, module_id, cjson_encode(rule_table))
+            local ok, err = update_site_module_rule_file(site_id, module_id, cjson_encode(rule_table))
+            if not ok then
+                response.code = 500
+                response.msg = err or "write file failed"
+            end
         end
     else
         local msg = 'param error'
@@ -330,7 +346,11 @@ function _M.delete_site_rule(site_id, module_id, rule_id)
 
             if changed then
                 local json = cjson_encode(t)
-                update_site_module_rule_file(site_id, module_id, json)
+                local ok, err = update_site_module_rule_file(site_id, module_id, json)
+                if not ok then
+                    response.code = 500
+                    response.msg = err or "write file failed"
+                end
             end
         end
     else

@@ -20,6 +20,16 @@ local _M = {}
 
 local MODULE_ID = 'user-agent'
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
+
 function _M.do_request()
     local response = {code = 200, data = {}, msg = ""}
     local uri = ngx.var.uri
@@ -66,8 +76,7 @@ function _M.do_request()
                if config_table then
                    config_table.bot.state = state
                    local new_config_json = cjson_encode(config_table)
-                   update_site_config_file(site_id, new_config_json)
-                   reload = true
+                   reload = save_or_fail(response, update_site_config_file(site_id, new_config_json))
                end
            else
                response.code = 500
@@ -108,8 +117,7 @@ function _M.do_request()
                     end
 
                     local new_config_json = cjson_encode(config_table)
-                    update_site_config_file(site_id, new_config_json)
-                    reload = true
+                    reload = save_or_fail(response, update_site_config_file(site_id, new_config_json))
                 else
                     response.code = 500
                     response.msg = 'no config file found'
@@ -155,8 +163,7 @@ function _M.do_request()
                     end
 
                     local new_config_json = cjson_encode(config_table)
-                    update_site_config_file(site_id, new_config_json)
-                    reload = true
+                    reload = save_or_fail(response, update_site_config_file(site_id, new_config_json))
                 else
                     response.code = 500
                     response.msg = 'no config file found'

@@ -24,6 +24,16 @@ local _M = {}
 
 local MODULE_ID = 'sensitive'
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
+
 local function get_site_sensitive_words_file(site_id)
     local rule_file = ''
     if site_id == '0' then
@@ -112,8 +122,7 @@ function _M.do_request()
                if config_table then
                    config_table.sensitiveDataFilter.state = state
                    local new_config_json = cjson_encode(config_table)
-                   update_site_config_file(site_id, new_config_json)
-                   reload = true
+                   reload = save_or_fail(response, update_site_config_file(site_id, new_config_json))
                end
            else
                response.code = 500
@@ -216,8 +225,7 @@ function _M.do_request()
             local site_id = tostring(args['siteId'])
             local content = args['content']
             if content then
-                update_site_sensitive_words_file(site_id, content)
-                reload = true
+                reload = save_or_fail(response, update_site_sensitive_words_file(site_id, content))
             end
         end
     end

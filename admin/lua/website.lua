@@ -20,6 +20,16 @@ local WEBSITES_PATH = config.CONF_PATH .. '/website.json'
 local CERTIFICATE_PATH = config.CONF_PATH .. "/certificate.json"
 local SITES_CONF_PATH = config.ZHONGKUI_PATH .. '/admin/conf/sites.conf'
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
+
 -- nginx server
 local NGINX_SERVER_CONFIG = [[
 server {
@@ -97,7 +107,11 @@ local function generate_nginx_config_file()
         end
     end
 
-    write_string_to_file(SITES_CONF_PATH, ngxConfig)
+    local ok, err = write_string_to_file(SITES_CONF_PATH, ngxConfig)
+    if not ok then
+        return false, err or 'write file failed'
+    end
+    return true
 end
 
 function _M.do_request()
@@ -134,8 +148,12 @@ function _M.do_request()
 
     -- 如果没有错误且需要重载配置文件则重载配置文件
     if response.code == 200 and reload == true then
-        generate_nginx_config_file()
-        config.reload_config_file()
+        local ok, err = generate_nginx_config_file()
+        if ok then
+            config.reload_config_file()
+        else
+            ngx.log(ngx.ERR, err or 'generate nginx config failed')
+        end
     end
 end
 

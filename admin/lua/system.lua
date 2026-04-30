@@ -20,6 +20,16 @@ local _M = {}
 
 local SYSTEM_PATH = config.CONF_PATH .. '/system.json'
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
+
 function _M.do_request()
     local response = {code = 200, data = {}, msg = ""}
     local uri = ngx.var.uri
@@ -72,8 +82,7 @@ function _M.do_request()
                 system[key] = option
             end
 
-            write_string_to_file(SYSTEM_PATH, cjson_encode(system))
-            reload = true
+            reload = save_or_fail(response, write_string_to_file(SYSTEM_PATH, cjson_encode(system)))
         else
             response.code = 500
             response.msg = err

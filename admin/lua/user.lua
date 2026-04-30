@@ -29,6 +29,16 @@ local PASSWORD_PATH = config.ZHONGKUI_PATH .. '/admin/admin/data/user.json'
 local SALT_LENGTH = 20
 local AUTH_TOKEN_EXPIRE_TIME = 1800
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
+
 function _M.deny_console_on_node()
     if is_cluster_node() then
         ngx.status = ngx.HTTP_FORBIDDEN
@@ -193,7 +203,7 @@ function _M.do_request()
                         local newPasswordStr = encrypt_password(newPassword, salt_new)
                         passwd_table.salt = salt_new
                         passwd_table.password = newPasswordStr
-                        write_string_to_file(PASSWORD_PATH, cjson_encode(passwd_table))
+                        save_or_fail(response, write_string_to_file(PASSWORD_PATH, cjson_encode(passwd_table)))
                     else
                         response.code = 201
                         response.msg = '旧密码错误'

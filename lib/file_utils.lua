@@ -107,7 +107,7 @@ end
 
 function _M.write_string_to_file(file_path, str, append)
     if str == nil then
-        return
+        return nil, "content is nil"
 	end
 
     local mode = 'w'
@@ -117,12 +117,13 @@ function _M.write_string_to_file(file_path, str, append)
 	local file, err = io_open(file_path, mode)
     if not file then
         ngx.log(ngx.ERR, "Failed to open file ", err)
-        return
+        return nil, err
     end
 
     file:write(str)
     file:flush()
 	file:close()
+    return true
 end
 
 function _M.remove_file(file_path)

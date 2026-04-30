@@ -17,6 +17,15 @@ local cjson_encode = cjson.encode
 
 local _M = {}
 
+local function save_or_fail(response, ...)
+    local ok, err = ...
+    if not ok then
+        response.code = 500
+        response.msg = err or 'write file failed'
+        return false
+    end
+    return true
+end
 
 function _M.do_request()
     local response = {code = 200, data = {}, msg = ""}
@@ -65,8 +74,7 @@ function _M.do_request()
             end
 
             local new_config_json = cjson_encode(config_table)
-            update_site_config_file(site_id, new_config_json)
-            reload = true
+            reload = save_or_fail(response, update_site_config_file(site_id, new_config_json))
         else
             response.code = 500
             response.msg = err
@@ -102,8 +110,7 @@ function _M.do_request()
                     t[module_id]['state'] = state
 
                     local json = cjson_encode(t)
-                    update_site_config_file(site_id, json)
-                    reload = true
+                    reload = save_or_fail(response, update_site_config_file(site_id, json))
                 end
             else
                 local _, content = get_site_module_rule_file(site_id, module_id)
@@ -118,8 +125,7 @@ function _M.do_request()
                     end
 
                     local json = cjson_encode(t)
-                    update_site_module_rule_file(site_id, module_id, json)
-                    reload = true
+                    reload = save_or_fail(response, update_site_module_rule_file(site_id, module_id, json))
                 end
             end
         else
