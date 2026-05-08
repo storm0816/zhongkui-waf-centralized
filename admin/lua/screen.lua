@@ -19,7 +19,9 @@ local read_file_to_string = file_utils.read_file_to_string
 
 local _M = {}
 
-local TOKEN_TTL_SECONDS = 12 * 3600
+-- Share links are intended for long-running wall displays, so by default
+-- we issue non-expiring tokens. Old expiring tokens remain valid until expiry.
+local TOKEN_TTL_SECONDS = 0
 local TOKEN_SIGN_VERSION = "v1"
 local SCREEN_PAGE_PATH = config.ZHONGKUI_PATH .. "/admin/view/node-attack-global.html"
 local DEFAULT_EXPIRE = 120
@@ -56,7 +58,7 @@ end
 local function issue_screen_token()
     local now = ngx.time()
     local payload = {
-        exp = now + TOKEN_TTL_SECONDS,
+        exp = TOKEN_TTL_SECONDS > 0 and (now + TOKEN_TTL_SECONDS) or 0,
         nonce = tostring(now) .. tostring(random(100000, 999999)),
         ver = TOKEN_SIGN_VERSION
     }
@@ -78,7 +80,7 @@ local function verify_screen_token(token)
     local exp = tonumber(payload.exp) or 0
     local nonce = tostring(payload.nonce or "")
     local sign = tostring(payload.sign or "")
-    if exp <= ngx.time() then
+    if exp > 0 and exp <= ngx.time() then
         return false, "token expired"
     end
     if nonce == "" or sign == "" then
@@ -277,7 +279,7 @@ local function handle_create_url()
             url = url,
             token = token,
             expire_at = exp,
-            expire_at_text = os.date("%Y-%m-%d %H:%M:%S", exp)
+            expire_at_text = exp > 0 and os.date("%Y-%m-%d %H:%M:%S", exp) or "长期有效"
         }
     })
 end
