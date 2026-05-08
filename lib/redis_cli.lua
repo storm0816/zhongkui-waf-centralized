@@ -21,6 +21,7 @@ local host = redis_config.host
 local port = redis_config.port
 local password = redis_config.password
 local poolSize = redis_config.poolSize
+local db = tonumber(redis_config.db) or 0
 local ssl = lower(redis_config.ssl) == 'on' and true or false
 
 local redis_timeouts = redis_config.timeouts
@@ -182,6 +183,13 @@ function _M.get_connection()
                 return nil, err2
             end
         end
+    end
+
+    local ok_db, err_db = red:select(db)
+    if not ok_db then
+        ngx.log(ngx.ERR, "failed to select redis db ", db, ": ", err_db)
+        mark_failure(err_db)
+        return nil, err_db
     end
 
     mark_success()

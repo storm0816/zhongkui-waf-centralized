@@ -42,14 +42,15 @@ chmod +x install.sh
 | `--init-local-redis` | 关闭 | 使用`waf/redis16381.zip`安装并启动本机 Redis |
 | `--redis-port PORT` | `16381` | 配合`--init-local-redis`使用，指定本机 Redis 端口 |
 | `--redis-password PASSWORD` | `Push@789` | 配合`--init-local-redis`使用，指定本机 Redis 密码 |
+| `--redis-db DB` | `0` | 配合`--init-local-redis`使用，指定本机 Redis 库号 |
 
 常见部署场景：
 
 | 场景 | 安装命令 | 安装前需要确认 |
 |---|---|---|
 | master 使用外部 MySQL 和外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的`mysql`和`redis`连接信息 |
-| master 使用外部 MySQL，本机 Redis | `sudo ./install.sh --role master --init-local-redis --redis-password Push@789` | MySQL 连接仍从`conf/system-master.json`读取；Redis 会自动切到`127.0.0.1:16381` |
-| master 同时初始化本机 MySQL 和本机 Redis | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac --init-local-redis --redis-password Push@789` | MySQL 会自动切到`127.0.0.1:3306`，Redis 会自动切到`127.0.0.1:16381` |
+| master 使用外部 MySQL，本机 Redis | `sudo ./install.sh --role master --init-local-redis --redis-password Push@789` | MySQL 连接仍从`conf/system-master.json`读取；Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
+| master 同时初始化本机 MySQL 和本机 Redis | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac --init-local-redis --redis-password Push@789` | MySQL 会自动切到`127.0.0.1:3306`，Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
 | node 节点 | `sudo ./install.sh --role node` | 先修改`conf/system-node.json`中的 Redis 连接信息；node 不需要 MySQL |
 | 单机模式 | `sudo ./install.sh --role master` | 先将`conf/system-master.json`中的`centralized.state`改为`off`，并按需配置 MySQL/Redis |
 

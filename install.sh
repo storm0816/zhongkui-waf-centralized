@@ -17,6 +17,7 @@ INIT_LOCAL_REDIS="off"
 MYSQL_USER="zhongkui_mac"
 REDIS_PORT="16381"
 REDIS_PASSWORD="Push@789"
+REDIS_DB="0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="/usr/local/src"
 
@@ -74,13 +75,25 @@ while [ $# -gt 0 ]; do
             REDIS_PASSWORD="${1#*=}"
             shift
             ;;
+        --redis-db)
+            if [ $# -lt 2 ]; then
+                echo -e "\033[31m[--redis-db 需要指定库号]\033[0m"
+                exit 1
+            fi
+            REDIS_DB="$2"
+            shift 2
+            ;;
+        --redis-db=*)
+            REDIS_DB="${1#*=}"
+            shift
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD]"
+            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
             exit 0
             ;;
         *)
             echo -e "\033[31m[未知参数: $1]\033[0m"
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD]"
+            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
             exit 1
             ;;
     esac
@@ -96,8 +109,13 @@ if [ -z "$MYSQL_USER" ]; then
     exit 1
 fi
 
-if [ -z "$REDIS_PORT" ] || [ -z "$REDIS_PASSWORD" ]; then
-    echo -e "\033[31m[redis-port 和 redis-password 不能为空]\033[0m"
+if [ -z "$REDIS_PORT" ] || [ -z "$REDIS_PASSWORD" ] || [ -z "$REDIS_DB" ]; then
+    echo -e "\033[31m[redis-port、redis-password 和 redis-db 不能为空]\033[0m"
+    exit 1
+fi
+
+if ! [[ "$REDIS_DB" =~ ^[0-9]+$ ]]; then
+    echo -e "\033[31m[redis-db 必须是非负整数]\033[0m"
     exit 1
 fi
 
@@ -455,9 +473,10 @@ EOF
         s/"host": *"[^"]*"/"host": "127.0.0.1"/
         s/"password": *"[^"]*"/"password": "'"$REDIS_PASSWORD"'"/
         s/"port": *[0-9][0-9]*/"port": '"$REDIS_PORT"'/
+        s/"db": *[0-9][0-9]*/"db": '"$REDIS_DB"'/
     }' "$ZHONGKUI_PATH/conf/system.json"
 
-    echo -e "\033[34m[Redis 安装完成: 127.0.0.1:$REDIS_PORT]\033[0m"
+    echo -e "\033[34m[Redis 安装完成: 127.0.0.1:$REDIS_PORT db=$REDIS_DB]\033[0m"
 else
     echo -e "\033[34m[跳过本机 Redis 安装；请确认 conf/system.json 中的 Redis 配置可用]\033[0m"
 fi

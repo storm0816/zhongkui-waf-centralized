@@ -30,6 +30,7 @@
         "degrade_seconds": 10,
         "ssl": "off",
         "port": 16381,
+        "db": 0,
         "expire_time": 1800
     },
     "rulesSort": {
