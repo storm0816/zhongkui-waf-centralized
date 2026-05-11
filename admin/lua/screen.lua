@@ -24,6 +24,9 @@ local _M = {}
 local TOKEN_TTL_SECONDS = 0
 local TOKEN_SIGN_VERSION = "v1"
 local SCREEN_PAGE_PATH = config.ZHONGKUI_PATH .. "/admin/view/node-attack-global.html"
+local SCREEN_LIGHT_PAGE_PATH = config.ZHONGKUI_PATH .. "/admin/view/node-attack-global-light.html"
+local SCREEN_CHINA_PAGE_PATH = config.ZHONGKUI_PATH .. "/admin/view/node-attack-china.html"
+local SCREEN_CHINA_LIGHT_PAGE_PATH = config.ZHONGKUI_PATH .. "/admin/view/node-attack-china-light.html"
 local DEFAULT_EXPIRE = 120
 local DEFAULT_OFFLINE_GRACE = 120
 
@@ -203,9 +206,66 @@ local function build_node_summary(window_minutes)
     return res, master_ip
 end
 
+local function build_china_fallback_from_attack_log()
+    local sql_china = [[
+        SELECT
+            COALESCE(NULLIF(ip_province_code, ''), NULLIF(ip_province_cn, ''), NULLIF(ip_province_en, '')) AS iso_code,
+            COALESCE(NULLIF(ip_province_cn, ''), NULLIF(ip_province_en, ''), '未知') AS name_cn,
+            COALESCE(NULLIF(ip_province_en, ''), NULLIF(ip_province_cn, ''), 'Unknown') AS name_en,
+            COUNT(*) AS attack_times,
+            SUM(CASE WHEN UPPER(action) IN ('DENY','REDIRECT','CAPTCHA') THEN 1 ELSE 0 END) AS block_times
+        FROM attack_log
+        WHERE request_time >= NOW() - INTERVAL 30 DAY
+          AND COALESCE(ip_province_cn, ip_province_en, ip_province_code, '') <> ''
+        GROUP BY ip_province_code, ip_province_cn, ip_province_en
+        ORDER BY attack_times DESC
+        LIMIT 200
+    ]]
+    local res, err = mysql.query(sql_china)
+    if not res then
+        ngx_log(ERR, "screen data china fallback query error: ", err or "nil")
+        return {}
+    end
+    return res
+end
+
+local function build_china_intranet_from_traffic_stats()
+    local sql_china = [[
+        SELECT
+            '' AS iso_code,
+            '内网' AS name_cn,
+            'intranet' AS name_en,
+            SUM(request_times) AS request_times,
+            SUM(attack_times) AS attack_times,
+            SUM(block_times) AS block_times,
+            SUM(block_times_attack) AS block_times_attack,
+            SUM(block_times_captcha) AS block_times_captcha,
+            SUM(block_times_cc) AS block_times_cc,
+            SUM(captcha_pass_times) AS captcha_pass_times
+        FROM traffic_stats
+        WHERE DATE(request_date) >= CURDATE() - INTERVAL 30 DAY
+          AND (
+            COALESCE(ip_country_cn, '') = '内网'
+            OR COALESCE(ip_province_cn, '') = '内网'
+            OR COALESCE(ip_country_en, '') = 'intranet'
+            OR COALESCE(ip_province_en, '') = 'intranet'
+          )
+    ]]
+    local res, err = mysql.query(sql_china)
+    if not res or not res[1] then
+        ngx_log(ERR, "screen data china intranet query error: ", err or "nil")
+        return nil
+    end
+    if (tonumber(res[1].attack_times) or 0) <= 0 and (tonumber(res[1].request_times) or 0) <= 0 then
+        return nil
+    end
+    return res[1]
+end
+
 local function build_screen_payload()
     local waf_status = {}
     local world = {}
+    local china = {}
 
     local waf_res, waf_err = sql.get_today_waf_status()
     if waf_res and waf_res[1] then
@@ -219,6 +279,20 @@ local function build_screen_payload()
         world = world_res
     elseif world_err then
         ngx_log(ERR, "screen data world traffic query error: ", world_err)
+    end
+
+    local china_res, china_err = sql.get_30days_china_traffic_stats()
+    if china_res then
+        china = china_res
+    elseif china_err then
+        ngx_log(ERR, "screen data china traffic query error: ", china_err)
+    end
+    if (not china) or (#china == 0) then
+        china = build_china_fallback_from_attack_log()
+    end
+    local intranet = build_china_intranet_from_traffic_stats()
+    if intranet then
+        china[#china + 1] = intranet
     end
 
     local traffic_rows = build_traffic_rows()
@@ -235,7 +309,7 @@ local function build_screen_payload()
 
     return {
         wafStatus = waf_status,
-        sourceRegion = { world = world },
+        sourceRegion = { world = world, china = china },
         trafficRows = traffic_rows,
         nodeStat = node_stat,
         nodeSummary = node_summary,
@@ -270,7 +344,17 @@ local function handle_create_url()
     local token, exp = issue_screen_token()
     local host = ngx.var.http_host or ngx.var.host or "localhost"
     local scheme = ngx.var.scheme or "http"
-    local url = scheme .. "://" .. host .. "/screen/global?token=" .. ngx.escape_uri(token)
+    local args = ngx.req.get_uri_args()
+    local mode = tostring(args.mode or "")
+    local page_path = "/screen/global"
+    if mode == "light" then
+        page_path = "/screen/global/light"
+    elseif mode == "china" then
+        page_path = "/screen/china"
+    elseif mode == "china_light" then
+        page_path = "/screen/china/light"
+    end
+    local url = scheme .. "://" .. host .. page_path .. "?token=" .. ngx.escape_uri(token)
 
     return send_json(200, {
         code = 0,
@@ -284,7 +368,7 @@ local function handle_create_url()
     })
 end
 
-local function handle_global_page()
+local function handle_global_page(page_path)
     local ok, err = access_allowed_for_screen()
     if not ok then
         ngx.status = 403
@@ -293,7 +377,7 @@ local function handle_global_page()
         return
     end
 
-    local html = read_file_to_string(SCREEN_PAGE_PATH)
+    local html = read_file_to_string(page_path or SCREEN_PAGE_PATH)
     if not html then
         ngx.status = 500
         ngx.header.content_type = "text/plain; charset=utf-8"
@@ -325,7 +409,16 @@ function _M.do_request()
         return handle_global_data()
     end
     if uri == "/screen/global" then
-        return handle_global_page()
+        return handle_global_page(SCREEN_PAGE_PATH)
+    end
+    if uri == "/screen/global/light" then
+        return handle_global_page(SCREEN_LIGHT_PAGE_PATH)
+    end
+    if uri == "/screen/china" then
+        return handle_global_page(SCREEN_CHINA_PAGE_PATH)
+    end
+    if uri == "/screen/china/light" then
+        return handle_global_page(SCREEN_CHINA_LIGHT_PAGE_PATH)
     end
 
     return send_json(404, { code = 404, msg = "invalid path" })

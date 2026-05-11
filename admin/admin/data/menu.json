@@ -164,10 +164,31 @@
 			},
 			{
 				"id": 83,
-				"title": "全球攻击态势",
+				"title": "深全球攻击态势",
 				"icon": "pear-icon pear-icon-map",
 				"type": 1,
 				"href": "view/node-attack-global.html"
+			},
+			{
+				"id": 84,
+				"title": "浅全球攻击态势",
+				"icon": "layui-icon layui-icon-theme",
+				"type": 1,
+				"href": "view/node-attack-global-light.html"
+			},
+			{
+				"id": 85,
+				"title": "深中国攻击态势",
+				"icon": "pear-icon pear-icon-map",
+				"type": 1,
+				"href": "view/node-attack-china.html"
+			},
+			{
+				"id": 86,
+				"title": "浅中国攻击态势",
+				"icon": "layui-icon layui-icon-theme",
+				"type": 1,
+				"href": "view/node-attack-china-light.html"
 			}
 		]
 	}
