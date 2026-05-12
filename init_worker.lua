@@ -39,6 +39,15 @@ local read_file_to_table = file_utils.read_file_to_table
 local prefix = "waf_rules_hits:"
 local master_blacklist_redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
 local master_blacklist_version_dict_key = "cluster:master:blacklist:version"
+local whitelist_version_dict_key = "cluster:ip_whitelist:version"
+local rules_sync_status_dict_key = "cluster:sync:rules:status"
+local rules_sync_at_dict_key = "cluster:sync:rules:at"
+local whitelist_sync_status_dict_key = "cluster:sync:whitelist:status"
+local whitelist_sync_at_dict_key = "cluster:sync:whitelist:at"
+local blacklist_sync_status_dict_key = "cluster:sync:blacklist:status"
+local blacklist_sync_at_dict_key = "cluster:sync:blacklist:at"
+local last_sync_status_dict_key = "cluster:sync:last:status"
+local last_sync_at_dict_key = "cluster:sync:last:at"
 local cluster_rules_publish_interval = 10
 local cluster_rules_pull_interval_base = 30
 local cluster_rules_pull_jitter_max = 10
@@ -82,6 +91,14 @@ local function start_timer_every_with_jitter(base_interval, jitter_max, callback
     return utils.start_timer_every_after(initial_delay, interval, callback, ...)
 end
 
+local function mark_sync(dict_status_key, dict_at_key, status)
+    local now_str = ngx.localtime()
+    dict_config:set(dict_status_key, status)
+    dict_config:set(dict_at_key, now_str)
+    dict_config:set(last_sync_status_dict_key, status)
+    dict_config:set(last_sync_at_dict_key, now_str)
+end
+
 local function safe_publish_cluster_rules_snapshot(premature)
     if premature then
         return
@@ -89,7 +106,10 @@ local function safe_publish_cluster_rules_snapshot(premature)
     -- 定时发布时强制从文件重载，避免手工改配置文件后快照内容不更新。
     local ok, err = publish_cluster_rules_snapshot(true)
     if not ok and err and err ~= "not master node" then
+        mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "failed")
         ngx.log(ngx.ERR, "failed to publish cluster rules snapshot: ", err)
+    else
+        mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "ok")
     end
 end
 
@@ -99,7 +119,10 @@ local function safe_pull_cluster_rules_snapshot(premature)
     end
     local ok, err = pull_cluster_rules_snapshot()
     if not ok and err and err ~= "not node" then
+        mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "failed")
         ngx.log(ngx.ERR, "failed to pull cluster rules snapshot: ", err)
+    else
+        mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "ok")
     end
 end
 
@@ -193,17 +216,20 @@ local function init_redis_blacklist()
     local redis_value, err = cjson_encode(payload)
 
     if not redis_value then
+        mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "failed")
         ngx.log(4, "failed to encode json for redis: ", err)
         return
     end
     -- 设置key 不过期，  -1长期有效
     local ok, err = redis_cli.set(master_blacklist_redis_key, redis_value, -1)
     if not ok then
+        mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "failed")
         ngx.log(4, "failed to write attack log to redis: ", err)
         return
     end
 
     dict_config:set(master_blacklist_version_dict_key, version)
+    mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "ok")
 end
 
 local function add_ip_group(group, ips)
@@ -265,12 +291,14 @@ end
 local function load_ip_blacklist_from_redis()
     local redis_value, err = redis_cli.get(master_blacklist_redis_key)
     if not redis_value then
+        mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "failed")
         ngx.log(4, "failed to get redis_value from redis: ", err)
         return
     end
 
     local ip_blacklist, version, updated_at, source = parse_master_blacklist_payload(redis_value)
     if not ip_blacklist then
+        mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "failed")
         ngx.log(4, "failed to parse master blacklist payload")
         return
     end
@@ -282,16 +310,51 @@ local function load_ip_blacklist_from_redis()
 
     local ok = add_ip_group(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, ip_blacklist)
     if not ok then
+        mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "failed")
         ngx.log(4, "failed to refresh master blacklist matcher")
         return
     end
 
     dict_config:set(master_blacklist_version_dict_key, tostring(version))
+    mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "ok")
     if updated_at then
         ngx.log(ngx.INFO, "master blacklist updated, version=", version, ", source=", source or "unknown", ", updated_at=", updated_at)
     else
         ngx.log(ngx.INFO, "master blacklist updated, version=", version, ", source=", source or "unknown")
     end
+end
+
+local function init_redis_whitelist()
+    local ok, err = config.sync_ip_whitelist_to_redis()
+    if not ok and err and err ~= "not master node" then
+        mark_sync(whitelist_sync_status_dict_key, whitelist_sync_at_dict_key, "failed")
+        ngx.log(ngx.ERR, "failed to sync ip whitelist to redis: ", err)
+    else
+        mark_sync(whitelist_sync_status_dict_key, whitelist_sync_at_dict_key, "ok")
+    end
+end
+
+local function load_ip_whitelist_from_redis()
+    local payload, err = config.load_ip_whitelist_from_redis()
+    if not payload then
+        if err then
+            mark_sync(whitelist_sync_status_dict_key, whitelist_sync_at_dict_key, "failed")
+            ngx.log(ngx.WARN, "failed to load ip whitelist from redis: ", err)
+        end
+        return
+    end
+
+    local version = payload.version and tostring(payload.version) or ""
+    local local_version = dict_config:get(whitelist_version_dict_key)
+    if version ~= "" and local_version and tostring(local_version) == version then
+        return
+    end
+
+    if version ~= "" then
+        dict_config:set(whitelist_version_dict_key, version)
+    end
+    mark_sync(whitelist_sync_status_dict_key, whitelist_sync_at_dict_key, "ok")
+    ngx.log(ngx.INFO, "ip whitelist updated, version=", version ~= "" and version or "unknown", ", source=", payload.source or "unknown")
 end
 
 if is_global_option_on("waf") then
@@ -346,6 +409,7 @@ if is_global_option_on("waf") then
     -- 异步加载 落地文件ipblacklist 导入到 Redis，启动时的初始化
     if is_timer_owner and master_node then
         ngx.timer.at(0.5, init_redis_blacklist)
+        ngx.timer.at(0.5, init_redis_whitelist)
     end
 
     -- 将 Redis blacklist 导入到 ipmatcher
@@ -368,8 +432,10 @@ if is_global_option_on("waf") then
 
         -- 黑名单 matcher 存在 worker 内存中，每个 worker 都需要定时拉取 master 黑名单。
         ngx.timer.at(1, load_ip_blacklist_from_redis)
+        ngx.timer.at(1, load_ip_whitelist_from_redis)
         -- 定时将文件加载到redis中
         utils.start_timer_every(10, load_ip_blacklist_from_redis)
+        utils.start_timer_every(10, load_ip_whitelist_from_redis)
 
         if is_timer_owner then
             -- 定时将攻击拦击名单加载到redis中

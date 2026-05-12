@@ -253,6 +253,7 @@
 
       var params = new URLSearchParams(window.location.search || "");
       var token = params.get("token") || "";
+      var enableMockChina = params.get("mock") === "1";
       var isShareMode = window.location.pathname === "/screen/china/light";
       var dataUrl = "/screen/global/data" + (token ? ("?token=" + encodeURIComponent(token)) : "");
 
@@ -273,7 +274,7 @@
         "青海": [101.78, 36.62], "宁夏": [106.23, 38.49], "新疆": [87.62, 43.82], "香港": [114.17, 22.30],
         "澳门": [113.54, 22.19], "台湾": [121.50, 25.03], "内网": [116.40, 39.90], "未知": [112.93, 28.23]
       };
-      var MOCK_CHINA_REGION = [
+      var FALLBACK_CHINA_REGION = [
         { name_cn: "广东", attack_times: 2860 },
         { name_cn: "浙江", attack_times: 2240 },
         { name_cn: "江苏", attack_times: 1980 },
@@ -295,7 +296,7 @@
         var d = new Date();
         $("#nowTime").text(d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()));
       }
-      function withMockChinaRegion(region) {
+      function normalizeChinaRegion(region) {
         var list = [];
         var exists = {};
         (Array.isArray(region) ? region : []).forEach(function (item) {
@@ -308,9 +309,9 @@
             attack_times: n(item.attack_times)
           });
         });
-        if (list.length >= 6) return list;
+        if (!enableMockChina || list.length >= 6) return list;
 
-        MOCK_CHINA_REGION.forEach(function (item, idx) {
+        FALLBACK_CHINA_REGION.forEach(function (item) {
           if (exists[item.name_cn]) return;
           exists[item.name_cn] = true;
           list.push({
@@ -341,7 +342,7 @@
         }
         $("#ruleVersion").text(version);
 
-        var region = withMockChinaRegion((data.sourceRegion && data.sourceRegion.china) || []);
+        var region = normalizeChinaRegion((data.sourceRegion && data.sourceRegion.china) || []);
         var totalAttack = region.reduce(function (s, x) { return s + n(x.attack_times); }, 0);
         $("#reqTotal").text(fmt(totalAttack));
         $("#attackTotal").text(fmt(ws.request_times));
@@ -360,7 +361,7 @@
 
       function renderMap(data) {
         if (!chinaReady) return;
-        var region = withMockChinaRegion((data.sourceRegion && data.sourceRegion.china) || []);
+        var region = normalizeChinaRegion((data.sourceRegion && data.sourceRegion.china) || []);
         var mapData = region.map(function (x) {
           return { name: x.name_cn || x.name_en || "", value: n(x.attack_times) };
         }).filter(function (x) {

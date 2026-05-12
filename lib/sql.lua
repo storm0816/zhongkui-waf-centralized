@@ -43,6 +43,16 @@ local DEFAULT_ATTACK_LOG_RETENTION_INTERVAL = 300
 local MIN_ATTACK_LOG_RETENTION_INTERVAL = 60
 local ATTACK_LOG_RETENTION_LAST_RUN_KEY = "attack_log_retention:last_run"
 local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
+local CLUSTER_WHITELIST_VERSION_DICT_KEY = "cluster:ip_whitelist:version"
+local CLUSTER_BLACKLIST_VERSION_DICT_KEY = "cluster:master:blacklist:version"
+local CLUSTER_RULES_SYNC_STATUS_DICT_KEY = "cluster:sync:rules:status"
+local CLUSTER_RULES_SYNC_AT_DICT_KEY = "cluster:sync:rules:at"
+local CLUSTER_WHITELIST_SYNC_STATUS_DICT_KEY = "cluster:sync:whitelist:status"
+local CLUSTER_WHITELIST_SYNC_AT_DICT_KEY = "cluster:sync:whitelist:at"
+local CLUSTER_BLACKLIST_SYNC_STATUS_DICT_KEY = "cluster:sync:blacklist:status"
+local CLUSTER_BLACKLIST_SYNC_AT_DICT_KEY = "cluster:sync:blacklist:at"
+local CLUSTER_LAST_SYNC_STATUS_DICT_KEY = "cluster:sync:last:status"
+local CLUSTER_LAST_SYNC_AT_DICT_KEY = "cluster:sync:last:at"
 local DEFAULT_RULE_CANDIDATE_LOOKBACK_HOURS = 24
 local DEFAULT_RULE_CANDIDATE_MIN_HITS = 20
 local DEFAULT_RULE_CANDIDATE_LIMIT = 200
@@ -488,6 +498,16 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
         id INT AUTO_INCREMENT PRIMARY KEY,
         ip VARCHAR(64) NOT NULL COMMENT '节点IP',
         rules_version VARCHAR(32) COMMENT '规则版本',
+        whitelist_version VARCHAR(32) COMMENT '白名单版本',
+        blacklist_version VARCHAR(32) COMMENT '黑名单版本',
+        rules_sync_status VARCHAR(32) COMMENT '规则同步结果',
+        rules_sync_at DATETIME NULL COMMENT '规则同步时间',
+        whitelist_sync_status VARCHAR(32) COMMENT '白名单同步结果',
+        whitelist_sync_at DATETIME NULL COMMENT '白名单同步时间',
+        blacklist_sync_status VARCHAR(32) COMMENT '黑名单同步结果',
+        blacklist_sync_at DATETIME NULL COMMENT '黑名单同步时间',
+        last_sync_status VARCHAR(32) COMMENT '最近同步结果',
+        last_sync_at DATETIME NULL COMMENT '最近同步时间',
         hostname VARCHAR(128) COMMENT '节点主机名',
         last_seen DATETIME COMMENT '最近活跃时间',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -498,10 +518,26 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
 
 
 local SQL_INSERT_CLUSTER_NODE = [[
-    INSERT INTO waf_cluster_node (ip, rules_version, hostname, last_seen)
-    VALUES (%s, %s, %s, %s)
+    INSERT INTO waf_cluster_node (
+        ip, rules_version, whitelist_version, blacklist_version,
+        rules_sync_status, rules_sync_at,
+        whitelist_sync_status, whitelist_sync_at,
+        blacklist_sync_status, blacklist_sync_at,
+        last_sync_status, last_sync_at, hostname, last_seen
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
         rules_version = VALUES(rules_version),
+        whitelist_version = VALUES(whitelist_version),
+        blacklist_version = VALUES(blacklist_version),
+        rules_sync_status = VALUES(rules_sync_status),
+        rules_sync_at = VALUES(rules_sync_at),
+        whitelist_sync_status = VALUES(whitelist_sync_status),
+        whitelist_sync_at = VALUES(whitelist_sync_at),
+        blacklist_sync_status = VALUES(blacklist_sync_status),
+        blacklist_sync_at = VALUES(blacklist_sync_at),
+        last_sync_status = VALUES(last_sync_status),
+        last_sync_at = VALUES(last_sync_at),
         hostname = VALUES(hostname),
         last_seen = VALUES(last_seen)
 ]]
@@ -820,6 +856,26 @@ function _M.check_table(premature)
     ensure_column("waf_cluster_node", "rules_version",
         "ALTER TABLE waf_cluster_node ADD COLUMN rules_version VARCHAR(32) NULL COMMENT '规则版本' AFTER ip",
         "UPDATE waf_cluster_node SET rules_version = version WHERE (rules_version IS NULL OR rules_version = '') AND version IS NOT NULL")
+    ensure_column("waf_cluster_node", "whitelist_version",
+        "ALTER TABLE waf_cluster_node ADD COLUMN whitelist_version VARCHAR(32) NULL COMMENT '白名单版本' AFTER rules_version")
+    ensure_column("waf_cluster_node", "blacklist_version",
+        "ALTER TABLE waf_cluster_node ADD COLUMN blacklist_version VARCHAR(32) NULL COMMENT '黑名单版本' AFTER whitelist_version")
+    ensure_column("waf_cluster_node", "rules_sync_status",
+        "ALTER TABLE waf_cluster_node ADD COLUMN rules_sync_status VARCHAR(32) NULL COMMENT '规则同步结果' AFTER blacklist_version")
+    ensure_column("waf_cluster_node", "rules_sync_at",
+        "ALTER TABLE waf_cluster_node ADD COLUMN rules_sync_at DATETIME NULL COMMENT '规则同步时间' AFTER rules_sync_status")
+    ensure_column("waf_cluster_node", "whitelist_sync_status",
+        "ALTER TABLE waf_cluster_node ADD COLUMN whitelist_sync_status VARCHAR(32) NULL COMMENT '白名单同步结果' AFTER rules_sync_at")
+    ensure_column("waf_cluster_node", "whitelist_sync_at",
+        "ALTER TABLE waf_cluster_node ADD COLUMN whitelist_sync_at DATETIME NULL COMMENT '白名单同步时间' AFTER whitelist_sync_status")
+    ensure_column("waf_cluster_node", "blacklist_sync_status",
+        "ALTER TABLE waf_cluster_node ADD COLUMN blacklist_sync_status VARCHAR(32) NULL COMMENT '黑名单同步结果' AFTER whitelist_sync_at")
+    ensure_column("waf_cluster_node", "blacklist_sync_at",
+        "ALTER TABLE waf_cluster_node ADD COLUMN blacklist_sync_at DATETIME NULL COMMENT '黑名单同步时间' AFTER blacklist_sync_status")
+    ensure_column("waf_cluster_node", "last_sync_status",
+        "ALTER TABLE waf_cluster_node ADD COLUMN last_sync_status VARCHAR(32) NULL COMMENT '最近同步结果' AFTER blacklist_sync_at")
+    ensure_column("waf_cluster_node", "last_sync_at",
+        "ALTER TABLE waf_cluster_node ADD COLUMN last_sync_at DATETIME NULL COMMENT '最近同步时间' AFTER last_sync_status")
     ensure_column("waf_rule_candidate", "publish_status",
         "ALTER TABLE waf_rule_candidate ADD COLUMN publish_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '发布状态' AFTER review_time")
     ensure_column("waf_rule_candidate", "publish_module",
@@ -1719,16 +1775,76 @@ function _M.report_node_info()
     local expire = get_cluster_node_expire_seconds()
     local dict_config = ngx.shared.dict_config
     local rules_version = "unknown"
+    local whitelist_version = "unknown"
+    local blacklist_version = "unknown"
+    local rules_sync_status = "unknown"
+    local rules_sync_at = ngx.localtime()
+    local whitelist_sync_status = "unknown"
+    local whitelist_sync_at = ngx.localtime()
+    local blacklist_sync_status = "unknown"
+    local blacklist_sync_at = ngx.localtime()
+    local last_sync_status = "unknown"
+    local last_sync_at = ngx.localtime()
     if dict_config then
         local v = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
         if v then
             rules_version = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_WHITELIST_VERSION_DICT_KEY)
+        if v then
+            whitelist_version = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_BLACKLIST_VERSION_DICT_KEY)
+        if v then
+            blacklist_version = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_RULES_SYNC_STATUS_DICT_KEY)
+        if v then
+            rules_sync_status = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_RULES_SYNC_AT_DICT_KEY)
+        if v then
+            rules_sync_at = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_WHITELIST_SYNC_STATUS_DICT_KEY)
+        if v then
+            whitelist_sync_status = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_WHITELIST_SYNC_AT_DICT_KEY)
+        if v then
+            whitelist_sync_at = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_BLACKLIST_SYNC_STATUS_DICT_KEY)
+        if v then
+            blacklist_sync_status = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_BLACKLIST_SYNC_AT_DICT_KEY)
+        if v then
+            blacklist_sync_at = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_LAST_SYNC_STATUS_DICT_KEY)
+        if v then
+            last_sync_status = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_LAST_SYNC_AT_DICT_KEY)
+        if v then
+            last_sync_at = tostring(v)
         end
     end
 
     local info = {
         ip = node_id,
         rules_version = rules_version,
+        whitelist_version = whitelist_version,
+        blacklist_version = blacklist_version,
+        rules_sync_status = rules_sync_status,
+        rules_sync_at = rules_sync_at,
+        whitelist_sync_status = whitelist_sync_status,
+        whitelist_sync_at = whitelist_sync_at,
+        blacklist_sync_status = blacklist_sync_status,
+        blacklist_sync_at = blacklist_sync_at,
+        last_sync_status = last_sync_status,
+        last_sync_at = last_sync_at,
         hostname = get_hostname(),
         timestamp = tostring(os.time())
     }
@@ -1768,6 +1884,16 @@ function _M.write_cluster_nodes_to_mysql()
         local sql = format(SQL_INSERT_CLUSTER_NODE,
             quote_sql_str(node.ip),
             quote_sql_str(rules_version),
+            quote_sql_str(node.whitelist_version or "unknown"),
+            quote_sql_str(node.blacklist_version or "unknown"),
+            quote_sql_str(node.rules_sync_status or "unknown"),
+            quote_sql_str(node.rules_sync_at or node.last_seen),
+            quote_sql_str(node.whitelist_sync_status or "unknown"),
+            quote_sql_str(node.whitelist_sync_at or node.last_seen),
+            quote_sql_str(node.blacklist_sync_status or "unknown"),
+            quote_sql_str(node.blacklist_sync_at or node.last_seen),
+            quote_sql_str(node.last_sync_status or "unknown"),
+            quote_sql_str(node.last_sync_at or node.last_seen),
             quote_sql_str(node.hostname),
             quote_sql_str(node.last_seen)
         )

@@ -14,6 +14,92 @@
       margin-right: 6px;
       vertical-align: middle;
     }
+    .node-pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 20px;
+      background: #f2f4f7;
+      color: #475467;
+    }
+    .node-pill.ok {
+      background: #ecfdf3;
+      color: #067647;
+    }
+    .node-pill.warn {
+      background: #fffaeb;
+      color: #b54708;
+    }
+    .node-pill.err {
+      background: #fef3f2;
+      color: #b42318;
+    }
+    .node-pill.master {
+      background: #eff8ff;
+      color: #175cd3;
+    }
+    .node-meta {
+      line-height: 1.7;
+    }
+    .node-meta .main {
+      color: #101828;
+      font-weight: 600;
+    }
+    .node-meta .sub {
+      color: #667085;
+      font-size: 12px;
+    }
+    .state-stack {
+      line-height: 1.7;
+    }
+    .state-stack .main {
+      color: #101828;
+      font-weight: 600;
+    }
+    .state-stack .sub {
+      color: #667085;
+      font-size: 12px;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 4px 2px;
+    }
+    .detail-card {
+      border: 1px solid #eaecf0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: #fff;
+    }
+    .detail-card h4 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: #344054;
+    }
+    .layui-table-cell {
+      height: auto !important;
+      line-height: 1.7 !important;
+      padding-top: 10px;
+      padding-bottom: 10px;
+    }
+    .layui-table-view .layui-table td {
+      padding-top: 2px;
+      padding-bottom: 2px;
+    }
+    .detail-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 6px 0;
+      font-size: 13px;
+      color: #475467;
+    }
+    .detail-item strong {
+      color: #101828;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body class="pear-container">
@@ -74,6 +160,8 @@
       var $ = layui.$;
       var layer = layui.layer;
       var masterRulesVersion = 'unknown';
+      var masterWhitelistVersion = 'unknown';
+      var masterBlacklistVersion = 'unknown';
 
       function pad2(n) {
         return n < 10 ? '0' + n : '' + n;
@@ -106,74 +194,222 @@
         return formatDateTime(n);
       }
 
+      function timeAgo(ts) {
+        if (!ts) return '-';
+        var d = new Date(String(ts).replace(/-/g, '/'));
+        if (isNaN(d.getTime())) return '-';
+        var diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+        if (diff < 60) return diff + '秒前';
+        if (diff < 3600) return Math.floor(diff / 60) + '分钟前';
+        if (diff < 86400) return Math.floor(diff / 3600) + '小时前';
+        return Math.floor(diff / 86400) + '天前';
+      }
+
+      function statusClass(status) {
+        if (status === 'ok') return 'ok';
+        if (status === 'failed') return 'err';
+        return 'warn';
+      }
+
+      function statusText(status) {
+        if (status === 'ok') return '成功';
+        if (status === 'failed') return '失败';
+        return status || 'unknown';
+      }
+
+      function syncStateHtml(row) {
+        if (row.node_role === 'master') {
+          return '<span class="node-pill master">主节点</span>';
+        }
+        if (row.sync_state === 'ok') {
+          return '<span class="node-pill ok">已同步</span>';
+        }
+        if (row.rules_sync_status === 'failed' || row.whitelist_sync_status === 'failed' || row.blacklist_sync_status === 'failed') {
+          return '<span class="node-pill err">同步失败</span>';
+        }
+        return '<span class="node-pill warn">版本落后</span>';
+      }
+
+      function versionSummaryHtml(row) {
+        return '' +
+          '<div class="node-meta">' +
+            '<div class="main">规则 ' + (row.rules_version || 'unknown') + '</div>' +
+            '<div class="sub">白名单 ' + (row.whitelist_version || 'unknown') + ' / 黑名单 ' + (row.blacklist_version || 'unknown') + '</div>' +
+          '</div>';
+      }
+
+      function versionStateHtml(row) {
+        if (row.node_role === 'master') {
+          return '<div class="state-stack"><div class="main">基准版本</div><div class="sub">主节点当前版本</div></div>';
+        }
+        var rulesOk = row.rules_version && row.rules_version !== 'unknown'
+          && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion;
+        var whiteOk = row.whitelist_version && row.whitelist_version !== 'unknown'
+          && masterWhitelistVersion !== 'unknown' && row.whitelist_version === masterWhitelistVersion;
+        var blackOk = row.blacklist_version && row.blacklist_version !== 'unknown'
+          && masterBlacklistVersion !== 'unknown' && row.blacklist_version === masterBlacklistVersion;
+
+        var bad = [];
+        if (!rulesOk) bad.push('规则');
+        if (!whiteOk) bad.push('白名单');
+        if (!blackOk) bad.push('黑名单');
+
+        if (bad.length === 0) {
+          return '<div class="state-stack"><div class="main">版本一致</div><div class="sub">已对齐主节点</div></div>';
+        }
+        return '<div class="state-stack"><div class="main">版本不一致</div><div class="sub">' + bad.join(' / ') + ' 未对齐</div></div>';
+      }
+
+      function syncSummaryHtml(row) {
+        if (row.node_role === 'master') {
+          return '<div class="state-stack"><div class="main">规则 / 白 / 黑</div><div class="sub">主节点本地状态</div></div>';
+        }
+        var failed = [];
+        var pending = [];
+        if (row.rules_sync_status === 'failed') failed.push('规则');
+        else if (row.rules_sync_status !== 'ok') pending.push('规则');
+        if (row.whitelist_sync_status === 'failed') failed.push('白名单');
+        else if (row.whitelist_sync_status !== 'ok') pending.push('白名单');
+        if (row.blacklist_sync_status === 'failed') failed.push('黑名单');
+        else if (row.blacklist_sync_status !== 'ok') pending.push('黑名单');
+
+        if (failed.length > 0) {
+          return '<div class="state-stack"><div class="main">同步失败</div><div class="sub">' + failed.join(' / ') + ' 失败</div></div>';
+        }
+        if (pending.length > 0) {
+          return '<div class="state-stack"><div class="main">等待同步</div><div class="sub">' + pending.join(' / ') + ' 未完成</div></div>';
+        }
+        return '<div class="state-stack"><div class="main">同步正常</div><div class="sub">规则 / 白名单 / 黑名单</div></div>';
+      }
+
+      function detailHtml(row) {
+        return '' +
+          '<div class="detail-grid">' +
+            '<div class="detail-card">' +
+              '<h4>基础信息</h4>' +
+              '<div class="detail-item"><span>节点 IP</span><strong>' + (row.ip || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>主机名</span><strong>' + (row.hostname || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>角色</span><strong>' + (row.node_role || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>最后上报</span><strong>' + (row.last_seen || '-') + '</strong></div>' +
+            '</div>' +
+            '<div class="detail-card">' +
+              '<h4>版本信息</h4>' +
+              '<div class="detail-item"><span>规则版本</span><strong>' + (row.rules_version || 'unknown') + '</strong></div>' +
+              '<div class="detail-item"><span>白名单版本</span><strong>' + (row.whitelist_version || 'unknown') + '</strong></div>' +
+              '<div class="detail-item"><span>黑名单版本</span><strong>' + (row.blacklist_version || 'unknown') + '</strong></div>' +
+              '<div class="detail-item"><span>规则发布时间</span><strong>' + formatRulePublishTime(row.rules_version) + '</strong></div>' +
+            '</div>' +
+            '<div class="detail-card">' +
+              '<h4>同步状态</h4>' +
+              '<div class="detail-item"><span>综合状态</span><strong>' + $('<div>').html(syncStateHtml(row)).text() + '</strong></div>' +
+              '<div class="detail-item"><span>最近同步结果</span><strong>' + statusText(row.last_sync_status) + '</strong></div>' +
+              '<div class="detail-item"><span>最近同步时间</span><strong>' + (row.last_sync_at || '-') + '</strong></div>' +
+            '</div>' +
+            '<div class="detail-card">' +
+              '<h4>分项同步</h4>' +
+              '<div class="detail-item"><span>规则</span><strong>' + statusText(row.rules_sync_status) + ' / ' + (row.rules_sync_at || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>白名单</span><strong>' + statusText(row.whitelist_sync_status) + ' / ' + (row.whitelist_sync_at || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>黑名单</span><strong>' + statusText(row.blacklist_sync_status) + ' / ' + (row.blacklist_sync_at || '-') + '</strong></div>' +
+            '</div>' +
+          '</div>';
+      }
+
       var tableIns = table.render({
+        id: 'id-table-nodes',
         elem: '#id-table-nodes',
         url: '/clusternode/list',
+        cellMinWidth: 88,
         parseData: function (res) {
           masterRulesVersion = res.master_rules_version || 'unknown';
+          masterWhitelistVersion = res.master_whitelist_version || 'unknown';
+          masterBlacklistVersion = res.master_blacklist_version || 'unknown';
           var rows = res.data || [];
           for (var i = 0; i < rows.length; i++) {
             var row = rows[i];
             if (row.node_role === 'master') {
               row.sync_state = 'master';
             } else {
-              row.sync_state = (row.rules_version && row.rules_version !== 'unknown'
-                && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion) ? 'ok' : 'lagging';
+              var rulesOk = row.rules_version && row.rules_version !== 'unknown'
+                && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion;
+              var whiteOk = row.whitelist_version && row.whitelist_version !== 'unknown'
+                && masterWhitelistVersion !== 'unknown' && row.whitelist_version === masterWhitelistVersion;
+              var blackOk = row.blacklist_version && row.blacklist_version !== 'unknown'
+                && masterBlacklistVersion !== 'unknown' && row.blacklist_version === masterBlacklistVersion;
+              var rulesSyncOk = row.rules_sync_status === 'ok';
+              var whiteSyncOk = row.whitelist_sync_status === 'ok';
+              var blackSyncOk = row.blacklist_sync_status === 'ok';
+              row.sync_state = (rulesOk && whiteOk && blackOk && rulesSyncOk && whiteSyncOk && blackSyncOk) ? 'ok' : 'lagging';
             }
           }
           return res;
         },
         cols: [[
-          { field: 'ip', title: '节点 IP' },
+          {
+            field: 'ip',
+            title: '节点',
+            minWidth: 180,
+            templet: function (d) {
+              return '' +
+                '<div class="node-meta">' +
+                  '<div class="main">' + (d.ip || '-') + '</div>' +
+                  '<div class="sub">' + (d.hostname || '-') + '</div>' +
+                '</div>';
+            }
+          },
           {
             field: 'node_role',
             title: '角色',
-            minWidth: 90,
+            width: 88,
             templet: function (d) {
               if (d.node_role === 'master') {
-                return '<span style="color:#1e9fff;">master</span>';
+                return '<span class="node-pill master">master</span>';
               }
-              return 'node';
-            }
-          },
-          { field: 'hostname', title: '主机名' },
-          {
-            field: 'rules_version',
-            title: '规则版本',
-            minWidth: 120,
-            templet: function (d) {
-              return d.rules_version && d.rules_version !== '' ? d.rules_version : 'unknown';
-            }
-          },
-          {
-            title: '规则发布时间',
-            minWidth: 170,
-            templet: function (d) {
-              return formatRulePublishTime(d.rules_version);
+              return '<span class="node-pill">node</span>';
             }
           },
           {
             title: '同步状态',
-            minWidth: 110,
+            width: 108,
             templet: function (d) {
-              if (d.sync_state === 'master') {
-                return '<span style="color:#1e9fff;">主节点</span>';
-              }
-              if (d.sync_state === 'ok') {
-                return '<span style="color:#16b777;">已同步</span>';
-              }
-              return '<span style="color:#ff5722;">待同步</span>';
+              return syncStateHtml(d);
             }
           },
-          { field: 'last_seen', title: '最后上报时间' },
+          {
+            title: '版本状态',
+            minWidth: 156,
+            templet: function (d) {
+              return versionStateHtml(d);
+            }
+          },
+          {
+            title: '同步摘要',
+            minWidth: 156,
+            templet: function (d) {
+              return syncSummaryHtml(d);
+            }
+          },
+          {
+            field: 'last_seen',
+            title: '最后上报',
+            minWidth: 156,
+            templet: function (d) {
+              return '' +
+                '<div class="state-stack">' +
+                  '<div class="main">' + timeAgo(d.last_seen) + '</div>' +
+                  '<div class="sub">' + (d.last_seen || '-') + '</div>' +
+                '</div>';
+            }
+          },
           {
             title: '操作',
             align: 'center',
+            width: 132,
             templet: function (d) {
+              var html = '<button class="layui-btn layui-btn-primary layui-btn-xs btn-detail" data-ip="' + d.ip + '">详情</button>';
               if (Number(d.is_online) === 0) {
-                return '<button class="layui-btn layui-btn-danger layui-btn-xs btn-del" data-ip="' + d.ip + '">删除</button>';
+                html += ' <button class="layui-btn layui-btn-danger layui-btn-xs btn-del" data-ip="' + d.ip + '">删除</button>';
               }
-              return '';
+              return html;
             }
           }
         ]],
@@ -205,6 +441,29 @@
 
       $('#btn-show-offline').on('click', function () {
         tableIns.reload({ where: { offline: 1 }, page: { curr: 1 } });
+      });
+
+      $(document).on('click', '.btn-detail', function () {
+        var ip = $(this).data('ip');
+        var cache = table.cache['id-table-nodes'] || [];
+        var row = null;
+        for (var i = 0; i < cache.length; i++) {
+          if (cache[i].ip === ip) {
+            row = cache[i];
+            break;
+          }
+        }
+        if (!row) {
+          layer.msg('未找到节点详情');
+          return;
+        }
+        layer.open({
+          type: 1,
+          title: '节点详情 · ' + ip,
+          area: ['760px', '520px'],
+          shadeClose: true,
+          content: '<div style="padding:16px 18px;background:#f8fafc;min-height:100%;">' + detailHtml(row) + '</div>'
+        });
       });
 
       // 删除按钮事件

@@ -402,7 +402,8 @@
         "青海": [101.78, 36.62], "宁夏": [106.23, 38.49], "新疆": [87.62, 43.82], "香港": [114.17, 22.30],
         "澳门": [113.54, 22.19], "台湾": [121.50, 25.03], "未知": [112.93, 28.23]
       };
-      var MOCK_CHINA_REGION = [
+      var enableMockChina = params.get("mock") === "1";
+      var FALLBACK_CHINA_REGION = [
         { name_cn: "广东", attack_times: 2860 },
         { name_cn: "浙江", attack_times: 2240 },
         { name_cn: "江苏", attack_times: 1980 },
@@ -443,7 +444,7 @@
           pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
         );
       }
-      function withMockChinaRegion(region) {
+      function normalizeChinaRegion(region) {
         var list = [];
         var exists = {};
         (Array.isArray(region) ? region : []).forEach(function (item) {
@@ -456,9 +457,9 @@
             attack_times: num(item.attack_times)
           });
         });
-        if (list.length >= 6) return list;
+        if (!enableMockChina || list.length >= 6) return list;
 
-        MOCK_CHINA_REGION.forEach(function (item, idx) {
+        FALLBACK_CHINA_REGION.forEach(function (item) {
           if (exists[item.name_cn]) return;
           exists[item.name_cn] = true;
           list.push({
@@ -725,7 +726,7 @@
             return;
           }
           state.wafStatus = res.data.wafStatus || {};
-          state.chinaRegion = withMockChinaRegion((res.data.sourceRegion && res.data.sourceRegion.china) || []);
+          state.chinaRegion = normalizeChinaRegion((res.data.sourceRegion && res.data.sourceRegion.china) || []);
           state.trafficRows = Array.isArray(res.data.trafficRows) ? res.data.trafficRows : [];
           state.nodeSummary = Array.isArray(res.data.nodeSummary) ? res.data.nodeSummary : [];
           state.nodeStat = res.data.nodeStat || {};

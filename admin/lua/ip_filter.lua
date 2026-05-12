@@ -18,6 +18,10 @@ local write_string_to_file = file.write_string_to_file
 local get_site_config = config.get_site_config
 local get_site_config_file = config.get_site_config_file
 local update_site_config_file = config.update_site_config_file
+local get_ip_whitelist_content = config.get_ip_whitelist_content
+local update_ip_whitelist_content = config.update_ip_whitelist_content
+local get_ip_blacklist_content = config.get_ip_blacklist_content
+local update_ip_blacklist_content = config.update_ip_blacklist_content
 
 local cjson_decode = cjson.decode
 local cjson_encode = cjson.encode
@@ -108,7 +112,13 @@ function _M.do_request()
         local data = {}
         local content = ''
 
-        local ip_white_list = read_file_to_table(IP_WHITELIST_PATH)
+        local whitelist_content = get_ip_whitelist_content()
+        local ip_white_list = {}
+        if whitelist_content and whitelist_content ~= "" then
+            for line in whitelist_content:gmatch("[^\r\n]+") do
+                ip_white_list[#ip_white_list + 1] = line
+            end
+        end
         if ip_white_list then
             local len = nkeys(ip_white_list)
             if len > 1 then
@@ -121,7 +131,13 @@ function _M.do_request()
         data[1] = {id = 1, state = get_site_config("whiteIP").state, content = content}
 
         content = ''
-        local ip_black_list = read_file_to_table(IP_BLACKLIST_PATH)
+        local blacklist_content = get_ip_blacklist_content()
+        local ip_black_list = {}
+        if blacklist_content and blacklist_content ~= "" then
+            for line in blacklist_content:gmatch("[^\r\n]+") do
+                ip_black_list[#ip_black_list + 1] = line
+            end
+        end
         if ip_black_list then
             local len = nkeys(ip_black_list)
             if len > 1 then
@@ -144,9 +160,9 @@ function _M.do_request()
             if id then
                 local content = ''
                 if id == 1 then
-                    content = read_file_to_string(IP_WHITELIST_PATH) or ''
+                    content = get_ip_whitelist_content() or ''
                 elseif id == 2 then
-                    content = read_file_to_string(IP_BLACKLIST_PATH) or ''
+                    content = get_ip_blacklist_content() or ''
                 end
                 response.data = {id = id, content = content}
             end
@@ -180,9 +196,9 @@ function _M.do_request()
                 end
 
                 if id == 1 then
-                    reload = save_or_fail(response, write_string_to_file(IP_WHITELIST_PATH, trim(content)))
+                    reload = save_or_fail(response, update_ip_whitelist_content(trim(content)))
                 elseif id == 2 then
-                    reload = save_or_fail(response, write_string_to_file(IP_BLACKLIST_PATH, trim(content)))
+                    reload = save_or_fail(response, update_ip_blacklist_content(trim(content)))
                 end
             end
         end

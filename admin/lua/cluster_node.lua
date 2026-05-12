@@ -11,6 +11,8 @@ local get_system_config = config.get_system_config
 local ngx_log = ngx.log
 local ERR = ngx.ERR
 local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
+local CLUSTER_WHITELIST_VERSION_DICT_KEY = "cluster:ip_whitelist:version"
+local CLUSTER_BLACKLIST_VERSION_DICT_KEY = "cluster:master:blacklist:version"
 
 local _M = {}
 
@@ -86,6 +88,8 @@ local function listNodes()
     response.count = tonumber(res[1].total) or 0
 
     local master_rules_version = "unknown"
+    local master_whitelist_version = "unknown"
+    local master_blacklist_version = "unknown"
     local master_ip = get_local_ip()
     local dict_config = ngx.shared.dict_config
     if dict_config then
@@ -93,20 +97,38 @@ local function listNodes()
         if v then
             master_rules_version = tostring(v)
         end
+        v = dict_config:get(CLUSTER_WHITELIST_VERSION_DICT_KEY)
+        if v then
+            master_whitelist_version = tostring(v)
+        end
+        v = dict_config:get(CLUSTER_BLACKLIST_VERSION_DICT_KEY)
+        if v then
+            master_blacklist_version = tostring(v)
+        end
     end
 
     if response.count > 0 then
         local sql_data = string.format([[
             SELECT ip,
                    COALESCE(NULLIF(rules_version, ''), 'unknown') AS rules_version,
+                   COALESCE(NULLIF(whitelist_version, ''), 'unknown') AS whitelist_version,
+                   COALESCE(NULLIF(blacklist_version, ''), 'unknown') AS blacklist_version,
+                   COALESCE(NULLIF(rules_sync_status, ''), 'unknown') AS rules_sync_status,
+                   rules_sync_at,
+                   COALESCE(NULLIF(whitelist_sync_status, ''), 'unknown') AS whitelist_sync_status,
+                   whitelist_sync_at,
+                   COALESCE(NULLIF(blacklist_sync_status, ''), 'unknown') AS blacklist_sync_status,
+                   blacklist_sync_at,
+                   COALESCE(NULLIF(last_sync_status, ''), 'unknown') AS last_sync_status,
+                   last_sync_at,
                    hostname,
                    last_seen,
                    CASE WHEN last_seen >= NOW() - INTERVAL %d SECOND THEN 1 ELSE 0 END AS is_online
             FROM waf_cluster_node
             %s
-            ORDER BY last_seen DESC
+            ORDER BY CASE WHEN ip = %s THEN 0 ELSE 1 END ASC, last_seen DESC
             LIMIT %d OFFSET %d
-        ]], online_window, filter, limit, offset)
+        ]], online_window, filter, quote_sql_str(master_ip), limit, offset)
 
         res, err = mysql.query(sql_data)
         if res then
@@ -125,6 +147,8 @@ local function listNodes()
     response.base_expire = expire
     response.offline_grace = grace
     response.master_rules_version = master_rules_version
+    response.master_whitelist_version = master_whitelist_version
+    response.master_blacklist_version = master_blacklist_version
     response.master_ip = master_ip
     return response
 end

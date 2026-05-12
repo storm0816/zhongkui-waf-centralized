@@ -21,6 +21,7 @@ local mkdir = file_utils.mkdir
 
 local sub = string.sub
 local default_if_blank = stringutf8.default_if_blank
+local trim = stringutf8.trim
 
 local cjson_decode = cjson.decode
 local cjson_encode = cjson.encode
@@ -244,6 +245,118 @@ local function add_ip_group(group, ips)
     _M.ipgroups[group] = matcher
 end
 
+local function clear_custom_ip_groups()
+    for group, _ in pairs(_M.ipgroups) do
+        if type(group) == "number" then
+            _M.ipgroups[group] = nil
+        end
+    end
+end
+
+local function load_custom_ip_groups(groups)
+    clear_custom_ip_groups()
+    if type(groups) ~= "table" then
+        return
+    end
+
+    for _, g in pairs(groups) do
+        local id = tonumber(g.id)
+        if id then
+            add_ip_group(id, g.ips)
+        end
+    end
+end
+
+local function read_json_file(file_path, default)
+    local json = read_file_to_string(file_path)
+    if not json or json == "" then
+        return default
+    end
+
+    local ok, data = pcall(cjson_decode, json)
+    if not ok or type(data) ~= "table" then
+        return default
+    end
+    return data
+end
+
+local function normalize_ip_items(items)
+    local normalized = {}
+    if type(items) ~= "table" then
+        return normalized
+    end
+
+    for _, item in ipairs(items) do
+        if type(item) == "string" then
+            local value = trim(item)
+            if value ~= "" then
+                insert(normalized, value)
+            end
+        end
+    end
+    return normalized
+end
+
+local function split_multiline_ips(content)
+    local items = {}
+    if type(content) ~= "string" or content == "" then
+        return items
+    end
+
+    local normalized = content:gsub("\r\n", "\n"):gsub("\r", "\n")
+    for line in normalized:gmatch("[^\n]+") do
+        local value = trim(line)
+        if value ~= "" then
+            insert(items, value)
+        end
+    end
+    return items
+end
+
+local function join_multiline_ips(items)
+    return concat(normalize_ip_items(items), "\n")
+end
+
+local function parse_cluster_ip_group_payload(redis_value)
+    if not redis_value then
+        return nil, nil, nil, "empty payload"
+    end
+
+    local ok, data = pcall(cjson_decode, redis_value)
+    if not ok or type(data) ~= "table" then
+        return nil, nil, nil, "invalid json payload"
+    end
+
+    if type(data.items) == "table" then
+        local version = data.version and tostring(data.version) or ""
+        if version == "" then
+            version = "legacy-" .. md5(redis_value)
+        end
+        return normalize_ip_items(data.items), version, data.updated_at, data.source
+    end
+
+    if data[1] ~= nil then
+        return normalize_ip_items(data), "legacy-" .. md5(redis_value), nil, "legacy"
+    end
+
+    return {}, "legacy-" .. md5(redis_value), nil, "legacy"
+end
+
+local function build_cluster_ip_group_payload(items)
+    local normalized = normalize_ip_items(items)
+    local payload = {
+        version = tostring((ngx.now and math.floor(ngx.now() * 1000)) or os.time()),
+        updated_at = ngx.localtime(),
+        source = getenv("HOSTNAME") or "master",
+        items = normalized
+    }
+    local json = cjson_encode(payload)
+    if not json then
+        return nil, "failed to encode ip group payload"
+    end
+    return json, payload
+end
+
 local function get_cluster_rules_snapshot_payload()
     local payload = {
         version = "",
@@ -254,7 +367,8 @@ local function get_cluster_rules_snapshot_payload()
         sites = {},
         ip_groups = {
             ip_blacklist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList") or {},
-            ip_whitelist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipWhiteList") or {}
+            ip_whitelist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipWhiteList") or {},
+            custom_groups = (read_json_file(_M.CONF_PATH .. "/ipgroup.json", { rules = {} }).rules or {})
         }
     }
 
@@ -340,12 +454,203 @@ local function apply_cluster_rules_snapshot(payload)
     local ip_groups = payload.ip_groups or {}
     add_ip_group(constants.KEY_IP_GROUPS_BLACKLIST, ip_groups.ip_blacklist or {})
     add_ip_group(constants.KEY_IP_GROUPS_WHITELIST, ip_groups.ip_whitelist or {})
+    load_custom_ip_groups(ip_groups.custom_groups or {})
 
     return true
 end
 
 function _M.get_config_table()
     return config
+end
+
+function _M.get_ip_whitelist_content()
+    if _M.is_centralized_mode() and _M.is_system_option_on("redis") then
+        local ok, redis_cli = pcall(require, "redis_cli")
+        if ok and redis_cli and redis_cli.is_available() then
+            local redis_value = redis_cli.get(constants.KEY_REDIS_IP_WHITELIST)
+            if redis_value and redis_value ~= ngx.null and redis_value ~= "" then
+                local items = select(1, parse_cluster_ip_group_payload(redis_value))
+                if items then
+                    return join_multiline_ips(items)
+                end
+            end
+        end
+    end
+
+    return read_file_to_string(_M.CONF_PATH .. "/global_rules/ipWhiteList") or ""
+end
+
+function _M.get_ip_blacklist_content()
+    if _M.is_centralized_mode() and _M.is_system_option_on("redis") then
+        local payload = _M.load_ip_blacklist_from_redis()
+        if payload and type(payload.content) == "string" then
+            return payload.content
+        end
+    end
+
+    return read_file_to_string(_M.CONF_PATH .. "/global_rules/ipBlackList") or ""
+end
+
+function _M.update_ip_whitelist_content(content)
+    local value = trim(content or "")
+    local ok, err = write_string_to_file(_M.CONF_PATH .. "/global_rules/ipWhiteList", value)
+    if not ok then
+        return ok, err
+    end
+
+    if _M.is_centralized_mode() and _M.is_master_node() and _M.is_system_option_on("redis") then
+        local redis_ok, sync_err = _M.sync_ip_whitelist_to_redis(split_multiline_ips(value))
+        if not redis_ok then
+            return nil, sync_err
+        end
+    end
+
+    return true
+end
+
+function _M.update_ip_blacklist_content(content)
+    local value = trim(content or "")
+    local ok, err = write_string_to_file(_M.CONF_PATH .. "/global_rules/ipBlackList", value)
+    if not ok then
+        return ok, err
+    end
+
+    if _M.is_centralized_mode() and _M.is_master_node() and _M.is_system_option_on("redis") then
+        local redis_ok, sync_err = _M.sync_ip_blacklist_to_redis(split_multiline_ips(value))
+        if not redis_ok then
+            return nil, sync_err
+        end
+    end
+
+    return true
+end
+
+function _M.sync_ip_whitelist_to_redis(items)
+    if not _M.is_centralized_mode() or not _M.is_master_node() or not _M.is_system_option_on("redis") then
+        return nil, "not master node"
+    end
+
+    local ok, redis_cli = pcall(require, "redis_cli")
+    if not ok or not redis_cli then
+        return nil, "failed to load redis_cli"
+    end
+
+    local normalized = items
+    if type(normalized) ~= "table" then
+        normalized = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipWhiteList") or {}
+    end
+
+    local redis_value, payload_or_err = build_cluster_ip_group_payload(normalized)
+    if not redis_value then
+        return nil, payload_or_err
+    end
+
+    local ok_set, set_err = redis_cli.set(constants.KEY_REDIS_IP_WHITELIST, redis_value, -1)
+    if not ok_set then
+        return nil, set_err
+    end
+    return true
+end
+
+function _M.sync_ip_blacklist_to_redis(items)
+    if not _M.is_centralized_mode() or not _M.is_master_node() or not _M.is_system_option_on("redis") then
+        return nil, "not master node"
+    end
+
+    local ok, redis_cli = pcall(require, "redis_cli")
+    if not ok or not redis_cli then
+        return nil, "failed to load redis_cli"
+    end
+
+    local normalized = items
+    if type(normalized) ~= "table" then
+        normalized = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList") or {}
+    end
+
+    local redis_value, payload_or_err = build_cluster_ip_group_payload(normalized)
+    if not redis_value then
+        return nil, payload_or_err
+    end
+
+    local key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
+    local ok_set, set_err = redis_cli.set(key, redis_value, -1)
+    if not ok_set then
+        return nil, set_err
+    end
+    return true
+end
+
+function _M.load_ip_whitelist_from_redis()
+    if not _M.is_centralized_mode() or not _M.is_system_option_on("redis") then
+        return nil, "redis centralized mode disabled"
+    end
+
+    local ok, redis_cli = pcall(require, "redis_cli")
+    if not ok or not redis_cli then
+        return nil, "failed to load redis_cli"
+    end
+
+    local redis_value, err = redis_cli.get(constants.KEY_REDIS_IP_WHITELIST)
+    if not redis_value then
+        return nil, err or "empty redis value"
+    end
+
+    local items, version, updated_at, source = parse_cluster_ip_group_payload(redis_value)
+    if not items then
+        return nil, version
+    end
+
+    add_ip_group(constants.KEY_IP_GROUPS_WHITELIST, items)
+    return {
+        items = items,
+        version = version,
+        updated_at = updated_at,
+        source = source,
+        content = join_multiline_ips(items)
+    }
+end
+
+function _M.load_ip_blacklist_from_redis()
+    if not _M.is_centralized_mode() or not _M.is_system_option_on("redis") then
+        return nil, "redis centralized mode disabled"
+    end
+
+    local ok, redis_cli = pcall(require, "redis_cli")
+    if not ok or not redis_cli then
+        return nil, "failed to load redis_cli"
+    end
+
+    local key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
+    local redis_value, err = redis_cli.get(key)
+    if not redis_value then
+        return nil, err or "empty redis value"
+    end
+
+    local items, version, updated_at, source = parse_cluster_ip_group_payload(redis_value)
+    if not items then
+        return nil, version
+    end
+
+    add_ip_group(constants.KEY_MASTER_IP_GROUPS_BLACKLIST, items)
+    return {
+        items = items,
+        version = version,
+        updated_at = updated_at,
+        source = source,
+        content = join_multiline_ips(items)
+    }
+end
+
+function _M.get_sensitive_words(server_name)
+    if not server_name or server_name == "global" then
+        return (config.global and config.global.sensitive_words) or {}
+    end
+
+    local site_conf = config[server_name]
+    if site_conf and type(site_conf.sensitive_words) == "table" then
+        return site_conf.sensitive_words
+    end
+    return (config.global and config.global.sensitive_words) or {}
 end
 
 local function load_security_modules(rulePath, site_config)
@@ -434,7 +739,8 @@ local function load_global_config()
         end
     end
 
-    config.global = { config = global_config, security_modules = security_modules }
+    local global_sensitive_words = read_file_to_table(_M.CONF_PATH .. '/global_rules/sensitiveWords') or {}
+    config.global = { config = global_config, security_modules = security_modules, sensitive_words = global_sensitive_words }
 
     local ip_blacklist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList")
     local ip_whitelist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipWhiteList")
@@ -452,6 +758,7 @@ local function load_site_config()
         local sites = t.rules
 
         if sites then
+            local global_sensitive_words = config.global.sensitive_words or {}
             for _, site in pairs(sites) do
                 local site_config = {}
 
@@ -474,6 +781,7 @@ local function load_site_config()
                 end
 
                 local security_modules = load_security_modules(site_dir .. '/rules/', site_config)
+                local site_sensitive_words = read_file_to_table(site_dir .. '/rules/sensitiveWords') or global_sensitive_words
 
                 -- 站点有独立安全模块设置则使用独立设置，否则使用全局设置
                 for k, v in pairs(global.security_modules) do
@@ -482,7 +790,7 @@ local function load_site_config()
 
                 local serverNames = site.serverNames
                 for _, server_name in pairs(serverNames) do
-                    config[server_name] = { config = site_config, security_modules = security_modules }
+                    config[server_name] = { config = site_config, security_modules = security_modules, sensitive_words = site_sensitive_words }
                     storage_security_modules(server_name, security_modules)
                 end
             end
@@ -492,16 +800,9 @@ end
 
 local function load_ip_groups()
     local path = _M.CONF_PATH .. '/ipgroup.json'
-    local json = read_file_to_string(path)
-    if json then
-        local table_rule = cjson_decode(json)
-        local groups = table_rule.rules
-
-        if groups then
-            for _, g in pairs(groups) do
-                add_ip_group(tonumber(g.id), g.ips)
-            end
-        end
+    local table_rule = read_json_file(path, { rules = {} })
+    if table_rule then
+        load_custom_ip_groups(table_rule.rules)
     end
 end
 
@@ -556,6 +857,16 @@ function _M.reload_config_file()
         ngx.timer.at(0, function(premature)
             if premature then
                 return
+            end
+
+            local sync_ok, sync_err = _M.sync_ip_whitelist_to_redis()
+            if not sync_ok and sync_err and sync_err ~= "not master node" then
+                ngx.log(ngx.ERR, "failed to sync ip whitelist to redis after config reload: ", sync_err)
+            end
+
+            local black_ok, black_err = _M.sync_ip_blacklist_to_redis()
+            if not black_ok and black_err and black_err ~= "not master node" then
+                ngx.log(ngx.ERR, "failed to sync ip blacklist to redis after config reload: ", black_err)
             end
 
             local ok, err = _M.publish_cluster_rules_snapshot(true)
