@@ -67,9 +67,14 @@ cp conf/system-node.json conf/system.json
 
 node 配置中保留`mysql.state = off`只是为了让代码按统一配置结构读取；node 不需要 MySQL 账号密码，也不会执行 Redis 到 MySQL 的汇总落库任务。
 
-### 黑名单同步机制
+### 黑白名单同步机制
 
-master 节点会将黑名单写入 Redis（key: `waf:masterIpBlackList`），采用结构化 payload：
+当前规范 key：
+
+- 白名单：`waf:rules:ip_whitelist`
+- 黑名单：`waf:rules:ip_blacklist`
+
+master 节点会将黑名单写入 Redis，采用结构化 payload：
 
 ```json
 {
@@ -106,7 +111,8 @@ node 节点职责：
 
 | Key/Pattern | 类型 | 写入方 | 读取/消费方 | TTL | 用途 |
 |---|---|---|---|---|---|
-| `waf:masterIpBlackList` | String(JSON) | master | node | 不过期 | master 下发的全局黑名单，包含`version`、`updated_at`、`source`、`items` |
+| `waf:rules:ip_whitelist` | String(JSON) | master | node | 不过期 | 全局白名单，包含`version`、`updated_at`、`source`、`items` |
+| `waf:rules:ip_blacklist` | String(JSON) | master | node | 不过期 | 全局黑名单，包含`version`、`updated_at`、`source`、`items` |
 | `waf:cluster:nodes:<node_ip>` | Hash | master/node | master | `system.expire` | 节点心跳，上报`ip`、`rules_version`（规则版本号）、`hostname`、`timestamp` |
 | `waf:queue:attack_log` | List(JSON) | node | master | `redis.expire_time` | 攻击日志队列，master 批量消费写入`attack_log` |
 | `waf:cluster:rules:snapshot` | String(JSON) | master | node | `max(redis.expire_time*2, 86400)` | 规则快照（含`hash`字段，global+sites+ip_groups），node 先校验 hash 再按版本增量应用 |
@@ -141,7 +147,8 @@ redis-cli SMEMBERS waf:dirty:traffic_stats
 redis-cli SMEMBERS waf:dirty:attack_type_dates
 redis-cli SMEMBERS waf:retry:traffic_stats
 redis-cli SMEMBERS waf:retry:attack_type_dates
-redis-cli GET waf:masterIpBlackList
+redis-cli GET waf:rules:ip_whitelist
+redis-cli GET waf:rules:ip_blacklist
 ```
 
 约定：新增集群共享 key 时优先使用`waf:<module>:<biz_id>`或`waf:<module>:<yyyy-mm-dd>`格式，并在本节同步说明。已有线上 key 不轻易改名，避免 master/node 版本不一致时丢数据。

@@ -572,11 +572,11 @@ function _M.sync_ip_blacklist_to_redis(items)
         return nil, payload_or_err
     end
 
-    local key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
-    local ok_set, set_err = redis_cli.set(key, redis_value, -1)
+    local ok_set, set_err = redis_cli.set(constants.KEY_REDIS_IP_BLACKLIST, redis_value, -1)
     if not ok_set then
         return nil, set_err
     end
+
     return true
 end
 
@@ -620,8 +620,7 @@ function _M.load_ip_blacklist_from_redis()
         return nil, "failed to load redis_cli"
     end
 
-    local key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
-    local redis_value, err = redis_cli.get(key)
+    local redis_value, err = redis_cli.get(constants.KEY_REDIS_IP_BLACKLIST)
     if not redis_value then
         return nil, err or "empty redis value"
     end

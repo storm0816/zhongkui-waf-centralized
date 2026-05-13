@@ -23,7 +23,7 @@
     "state": "on"
   },
   "whiteIP": {
-    "state": "off"
+    "state": "on"
   },
   "sensitiveDataFilter": {
     "state": "off"

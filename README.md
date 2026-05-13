@@ -22,6 +22,7 @@
 - master 集中发布规则快照，node 增量拉取并热更新
 - 快照带 `hash`（md5）校验，node 校验通过后才应用
 - 节点页面显示 `规则版本`、`规则发布时间`、`同步状态`
+- 白名单 / 黑名单支持 Redis 集中同步（master 写入，node 拉取）
 - 统计/日志链路支持 dirty set、retry set、队列化落库，降低扫描与写库压力
 
 ### 安装与部署
@@ -132,6 +133,10 @@ Redis 故障降级（第 1 步）：
 redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:cluster:rules:snapshot:version
 redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:cluster:rules:snapshot | head -c 300
 
+# 1.1) 查看白名单 / 黑名单集中化 key
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:rules:ip_whitelist | head -c 300
+redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' GET waf:rules:ip_blacklist | head -c 300
+
 # 2) 查看节点心跳中的规则版本字段（rules_version）
 redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' --scan --pattern 'waf:cluster:nodes:*'
 redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' HGETALL waf:cluster:nodes:<node_ip>
@@ -146,7 +151,8 @@ curl -I http://<master_ip>:1226/
 
 推荐：上线前按统一勾选清单执行一次完整回归，见：
 
-- [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
+- [docs/RELEASE_CHECKLIST.md](./docs/RELEASE_CHECKLIST.md)
+- [docs/DEPLOY_UPGRADE_GUIDE.md](./docs/DEPLOY_UPGRADE_GUIDE.md)
 
 ### 管理后台
 
@@ -239,4 +245,4 @@ user nginx;
 
 ## 私有化开发（集群模式）
 
-详细说明请查看：[CLUSTER_MODE.md](./CLUSTER_MODE.md)。
+详细说明请查看：[docs/CLUSTER_MODE.md](./docs/CLUSTER_MODE.md)。

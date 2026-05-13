@@ -37,7 +37,7 @@ local pull_cluster_rules_snapshot = config.pull_cluster_rules_snapshot
 local read_file_to_table = file_utils.read_file_to_table
 
 local prefix = "waf_rules_hits:"
-local master_blacklist_redis_key = "waf:" .. constants.KEY_MASTER_IP_GROUPS_BLACKLIST
+local master_blacklist_redis_key = constants.KEY_REDIS_IP_BLACKLIST
 local master_blacklist_version_dict_key = "cluster:master:blacklist:version"
 local whitelist_version_dict_key = "cluster:ip_whitelist:version"
 local rules_sync_status_dict_key = "cluster:sync:rules:status"

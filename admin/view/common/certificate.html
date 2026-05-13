@@ -205,7 +205,6 @@
 							table.reloadData('table_rule');
 							layer.closeLast('page');
 							popup.success("已保存");
-							console.log(res.data);
 							return true;
 						} else {
 							popup.failure(res.msg);
@@ -228,7 +227,6 @@
 					},
 					done: function (res) {
 						if(res && res.code == 200) {
-							console.log(res.data);
 							$("#publicKey").val(res.data);
 						} else {
 							popup.failure(res.msg);
@@ -251,7 +249,6 @@
 					},
 					done: function (res) {
 						if(res && res.code == 200) {
-							console.log(res.data);
 							$("#privateKey").val(res.data);
 						} else {
 							popup.failure(res.msg);
