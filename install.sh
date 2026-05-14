@@ -18,6 +18,7 @@ MYSQL_USER="zhongkui_mac"
 REDIS_PORT="16381"
 REDIS_PASSWORD="Push@789"
 REDIS_DB="0"
+PHP_SUPPORT="on"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="/usr/local/src"
 
@@ -37,6 +38,18 @@ while [ $# -gt 0 ]; do
             ;;
         --init-local-redis)
             INIT_LOCAL_REDIS="on"
+            shift
+            ;;
+        --php)
+            if [ $# -lt 2 ]; then
+                echo -e "\033[31m[--php 需要指定 on 或 off]\033[0m"
+                exit 1
+            fi
+            PHP_SUPPORT="$2"
+            shift 2
+            ;;
+        --php=*)
+            PHP_SUPPORT="${1#*=}"
             shift
             ;;
         --mysql-user)
@@ -88,12 +101,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
+            echo "Usage: ./install.sh [--role master|node] [--php on|off] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
             exit 0
             ;;
         *)
             echo -e "\033[31m[未知参数: $1]\033[0m"
-            echo "Usage: ./install.sh [--role master|node] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
+            echo "Usage: ./install.sh [--role master|node] [--php on|off] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
             exit 1
             ;;
     esac
@@ -101,6 +114,11 @@ done
 
 if [ "$ROLE" != "master" ] && [ "$ROLE" != "node" ]; then
     echo -e "\033[31m[role 只能是 master 或 node]\033[0m"
+    exit 1
+fi
+
+if [ "$PHP_SUPPORT" != "on" ] && [ "$PHP_SUPPORT" != "off" ]; then
+    echo -e "\033[31m[php 只能是 on 或 off]\033[0m"
     exit 1
 fi
 
@@ -120,6 +138,7 @@ if ! [[ "$REDIS_DB" =~ ^[0-9]+$ ]]; then
 fi
 
 echo -e "\033[34m[部署角色: $ROLE]\033[0m"
+echo -e "\033[34m[PHP-FPM 支持: $PHP_SUPPORT]\033[0m"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo -e "\033[31m[请使用 root 用户执行 install.sh]\033[0m"
@@ -179,26 +198,42 @@ rm -rf openresty-1.25.3.2
 tar zxf openresty-1.25.3.2.tar.gz
 cd openresty-1.25.3.2
 
-./configure --prefix=$OPENRESTY_PATH \
---user=webuser \
---group=users \
---with-http_ssl_module \
---with-http_v2_module \
---with-http_realip_module \
---with-http_sub_module \
---with-http_stub_status_module \
---with-http_auth_request_module \
---with-http_secure_link_module \
---with-stream \
---with-stream_ssl_module \
---with-stream_realip_module \
---without-http_fastcgi_module \
---without-mail_pop3_module \
---without-mail_imap_module \
---without-mail_smtp_module
+OPENRESTY_CONFIGURE_ARGS=(
+    "--prefix=$OPENRESTY_PATH"
+    "--user=webuser"
+    "--group=users"
+    "--with-http_ssl_module"
+    "--with-http_v2_module"
+    "--with-http_realip_module"
+    "--with-http_sub_module"
+    "--with-http_stub_status_module"
+    "--with-http_auth_request_module"
+    "--with-http_secure_link_module"
+    "--with-stream"
+    "--with-stream_ssl_module"
+    "--with-stream_realip_module"
+    "--without-mail_pop3_module"
+    "--without-mail_imap_module"
+    "--without-mail_smtp_module"
+)
+
+if [ "$PHP_SUPPORT" = "off" ]; then
+    OPENRESTY_CONFIGURE_ARGS+=("--without-http_fastcgi_module")
+fi
+
+./configure "${OPENRESTY_CONFIGURE_ARGS[@]}"
 
 
 make && make install
+if [ "$PHP_SUPPORT" = "on" ] && $OPENRESTY_PATH/nginx/sbin/nginx -V 2>&1 | grep -q -- '--without-http_fastcgi_module'; then
+    echo -e "\033[31m[openresty 编译缺少 http_fastcgi_module，生产 PHP-FPM 场景无法使用 fastcgi_pass]\033[0m"
+    exit 1
+fi
+if [ "$PHP_SUPPORT" = "on" ]; then
+    echo -e "\033[34m[openresty 已启用 PHP-FPM/FastCGI 支持]\033[0m"
+else
+    echo -e "\033[34m[openresty 已按 --php off 禁用 http_fastcgi_module]\033[0m"
+fi
 echo -e "\033[34m[openresty安装成功]\033[0m"
 
 

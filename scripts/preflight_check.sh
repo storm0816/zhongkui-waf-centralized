@@ -70,6 +70,21 @@ fail() {
 json_block_state() {
   local file="$1"
   local block="$2"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$file" "$block" <<'PY'
+import json
+import sys
+
+path, block = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+value = data.get(block, {})
+if isinstance(value, dict):
+    print(value.get("state", ""))
+PY
+    return
+  fi
+
   awk -v block="\"$block\"" '
     $0 ~ block"[[:space:]]*:[[:space:]]*\\{" { in_block=1; next }
     in_block && $0 ~ /"state"[[:space:]]*:/ {

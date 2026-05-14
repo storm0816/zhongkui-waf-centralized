@@ -6,7 +6,7 @@ ROLE=""
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG_PATH=""
 REDIS_CLI="${REDIS_CLI:-}"
-MYSQL_BIN="${MYSQL_BIN:-mysql}"
+MYSQL_BIN="${MYSQL_BIN:-}"
 
 usage() {
   cat <<'EOF'
@@ -69,6 +69,16 @@ if [[ -z "$REDIS_CLI" ]]; then
   fi
 fi
 
+if [[ -z "$MYSQL_BIN" ]]; then
+  if command -v mysql >/dev/null 2>&1; then
+    MYSQL_BIN="$(command -v mysql)"
+  elif [[ -x /opt/mysql/bin/mysql ]]; then
+    MYSQL_BIN="/opt/mysql/bin/mysql"
+  else
+    MYSQL_BIN="mysql"
+  fi
+fi
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -86,6 +96,22 @@ json_field() {
   local file="$1"
   local block="$2"
   local field="$3"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$file" "$block" "$field" <<'PY'
+import json
+import sys
+
+path, block, field = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+value = data.get(block, {})
+if isinstance(value, dict):
+    result = value.get(field, "")
+    print("" if result is None else result)
+PY
+    return
+  fi
+
   awk -v block="\"$block\"" -v field="\"$field\"" '
     $0 ~ block"[[:space:]]*:[[:space:]]*\\{" { in_block=1; next }
     in_block && $0 ~ field"[[:space:]]*:" {
