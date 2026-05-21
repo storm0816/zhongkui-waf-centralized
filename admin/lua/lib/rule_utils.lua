@@ -11,6 +11,7 @@ local tonumber = tonumber
 local pairs = pairs
 local insert = table.insert
 local remove = table.remove
+local sort = table.sort
 local cjson_decode = cjson.decode
 local cjson_encode = cjson.encode
 
@@ -30,6 +31,17 @@ function _M.list_rules(file_path, list_key)
         if json then
             local rule_table = cjson_decode(json)
             local rules = rule_table[list_key or 'rules']
+            local valid_rules = {}
+            if type(rules) == "table" then
+                for _, r in pairs(rules) do
+                    if type(r) == "table" and next(r) ~= nil then
+                        insert(valid_rules, r)
+                    end
+                end
+                sort(valid_rules, function(a, b)
+                    return (tonumber(a.id) or 0) < (tonumber(b.id) or 0)
+                end)
+            end
             local data = {}
 
             local args, err = ngx.req.get_uri_args()
@@ -42,7 +54,7 @@ function _M.list_rules(file_path, list_key)
                 local k = 1
 
                 for i = begin, endPage do
-                    data[k] = rules[i]
+                    data[k] = valid_rules[i]
                     k = k + 1
                 end
             else
@@ -51,7 +63,7 @@ function _M.list_rules(file_path, list_key)
             end
 
             response.code = 0
-            response.count = nkeys(rule_table[list_key or 'rules'])
+            response.count = #valid_rules
             response.data = data
         end
     else

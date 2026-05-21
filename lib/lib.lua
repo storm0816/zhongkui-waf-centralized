@@ -54,15 +54,52 @@ local function matches(input, regex, options, ctx, nth)
     return ngxfind(input, regex, options, ctx, nth)
 end
 
+local function field_matches(rule_value, current_value)
+    if rule_value == nil or rule_value == "" or rule_value == "*" then
+        return true
+    end
+    return tostring(rule_value) == tostring(current_value or "")
+end
 
-local function match_rule(rule_table, str, options)
+local function is_rule_exception(module_id)
+    local exception_cfg = get_site_config("ruleException")
+    if type(exception_cfg) == "table" and exception_cfg.state == "off" then
+        return false
+    end
+
+    local module = get_site_security_modules("ruleException")
+    if not module or not module.rules or next(module.rules) == nil then
+        return false
+    end
+
+    local server_name = ngx.ctx.server_name or ngx.var.server_name or ""
+    local method = ngx.req.get_method()
+    local uri = ngx.var.uri or ""
+
+    for _, exception in ipairs(module.rules) do
+        if (exception.state == nil or exception.state == "on")
+            and field_matches(exception.serverName, server_name)
+            and field_matches(exception.method, method)
+            and field_matches(exception.module, module_id)
+            and matches(uri, exception.uri or ".*") then
+            return true
+        end
+    end
+    return false
+end
+
+local function match_rule(rule_table, str, options, module_id)
     if str == nil or next(rule_table) == nil then
         return false
     end
 
     for _, t in ipairs(rule_table) do
         if matches(str, t.rule, options) then
-            return true, t
+            if module_id and is_rule_exception(module_id) then
+                -- 命中例外白名单时仅跳过当前检测，继续尝试后续规则
+            else
+                return true, t
+            end
         end
     end
 
@@ -146,6 +183,9 @@ function _M.is_unsafe_http_method()
         local module = get_site_security_modules("httpMethod")
         for _, r in pairs(module.rules) do
             if method_name == r.rule then
+                if is_rule_exception("httpMethod") then
+                    return false
+                end
                 do_action(module.moduleName, r, method_name)
                 break
             end
@@ -175,7 +215,7 @@ function _M.is_bot()
         local ua = ngx.ctx.ua
 
         local module = get_site_security_modules("user-agent")
-        local m, rule_table = match_rule(module.rules, ua)
+        local m, rule_table = match_rule(module.rules, ua, nil, "user-agent")
         if m then
             block_ip(ip, rule_table)
             do_action(module.moduleName, rule_table)
@@ -218,6 +258,9 @@ function _M.is_cc()
                     key = "cc_req_count:" .. key
                     local count, _ = redis_cli.incr(key, rule_table.duration)
                     if count and count >= rule_table.threshold then
+                        if is_rule_exception("cc") then
+                            return false
+                        end
                         ngx.ctx.is_cc = true
                         block_ip(ip, rule_table)
                         do_action(module.moduleName, rule_table, nil, rule_table.rule, 503)
@@ -230,6 +273,9 @@ function _M.is_cc()
                         if not lcount then
                             limit:set(key, 1, rule_table.duration)
                         elseif lcount >= rule_table.threshold then
+                            if is_rule_exception("cc") then
+                                return false
+                            end
                             ngx.ctx.is_cc = true
                             block_ip(ip, rule_table)
                             do_action(module.moduleName, rule_table, nil, rule_table.rule, 503)
@@ -243,6 +289,9 @@ function _M.is_cc()
                     if not count then
                         limit:set(key, 1, rule_table.duration)
                     elseif count >= rule_table.threshold then
+                        if is_rule_exception("cc") then
+                            return false
+                        end
                         ngx.ctx.is_cc = true
                         block_ip(ip, rule_table)
                         do_action(module.moduleName, rule_table, nil, rule_table.rule, 503)
@@ -334,6 +383,9 @@ function _M.is_acl()
             end
 
             if match then
+                if is_rule_exception("acl") then
+                    return false
+                end
                 local ip = ngx.ctx.ip
                 block_ip(ip, rule_table)
                 do_action(module.moduleName, rule_table)
@@ -351,7 +403,7 @@ function _M.is_white_url()
             return false
         end
         local module = get_site_security_modules("whiteUrl")
-        local m, rule_table = match_rule(module.rules, url)
+        local m, rule_table = match_rule(module.rules, url, nil, "whiteUrl")
         if m then
             do_action(module.moduleName, rule_table)
             return true
@@ -369,7 +421,7 @@ function _M.is_black_url()
         end
 
         local module = get_site_security_modules("blackUrl")
-        local m, rule_table = match_rule(module.rules, url)
+        local m, rule_table = match_rule(module.rules, url, nil, "blackUrl")
         if m then
             local ip = ngx.ctx.ip
             -- blackUrl 历史规则文件多数未配置 autoIpBlock，这里给默认值兜底，
@@ -402,7 +454,7 @@ function _M.is_evil_args()
                 if vals and type(vals) ~= "boolean" and vals ~= "" then
                     vals = unescape_uri(vals)
                     local module = get_site_security_modules("args")
-                    local m, rule_table = match_rule(module.rules, vals)
+                    local m, rule_table = match_rule(module.rules, vals, nil, "args")
                     if m then
                         do_action(module.moduleName, rule_table)
                         return true
@@ -419,7 +471,7 @@ function _M.is_evil_headers()
         local module = get_site_security_modules("headers")
         local referer = ngx.var.http_referer
         if referer and referer ~= "" then
-            local m, rule_table = match_rule(module.rules, referer)
+            local m, rule_table = match_rule(module.rules, referer, nil, "headers")
             if m then
                 do_action(module.moduleName, rule_table, referer)
                 return true
@@ -428,7 +480,7 @@ function _M.is_evil_headers()
 
         local ua = ngx.ctx.ua
         if ua and ua ~= "" then
-            local m, rule_table = match_rule(module.rules, ua)
+            local m, rule_table = match_rule(module.rules, ua, nil, "headers")
             if m then
                 do_action(module.moduleName, rule_table)
                 return true
@@ -447,6 +499,9 @@ function _M.is_black_file_ext(ext, line)
         local module = get_site_security_modules("fileExt")
         for _, r in ipairs(module.rules) do
             if ext == lower(r.rule) then
+                if is_rule_exception("fileExt") then
+                    break
+                end
                 if is_system_option_on("attackLog") and get_system_config("attackLog").jsonFormat.state == "off" then
                     line = "[" .. line .. "]"
                 end
@@ -459,7 +514,7 @@ end
 
 function _M.is_evil_file(body)
     local module = get_site_security_modules("post")
-    local m, rule_table = match_rule(module.rules, body)
+    local m, rule_table = match_rule(module.rules, body, nil, "post")
     if m then
         do_action(module.moduleName, rule_table)
         return true
@@ -470,7 +525,7 @@ end
 
 function _M.is_evil_body(body)
     local module = get_site_security_modules("post")
-    local m, rule_table = match_rule(module.rules, body)
+    local m, rule_table = match_rule(module.rules, body, nil, "post")
     if m then
         do_action(module.moduleName, rule_table)
         return true
@@ -603,7 +658,7 @@ function _M.is_evil_cookies()
     local cookie = ngx.var.http_cookie
     if is_site_option_on("cookie") and cookie then
         local module = get_site_security_modules("cookie")
-        local m, rule_table = match_rule(module.rules, cookie)
+        local m, rule_table = match_rule(module.rules, cookie, nil, "cookie")
         if m then
             do_action(module.moduleName, rule_table)
             return true
@@ -637,6 +692,9 @@ function _M.is_sqli_or_xss(data)
                 if is_sqli_on then
                     local is_sqli = libinjection.sqli(v)
                     if is_sqli then
+                        if is_rule_exception("sqli") then
+                            return false
+                        end
                         do_action(module_sqli.moduleName, rule_sqli)
                         return true
                     end
@@ -645,6 +703,9 @@ function _M.is_sqli_or_xss(data)
                 if is_xss_on then
                     local is_xss = libinjection.xss(v)
                     if is_xss then
+                        if is_rule_exception("xss") then
+                            return false
+                        end
                         do_action(module_xss.moduleName, rule_xss)
                         return true
                     end

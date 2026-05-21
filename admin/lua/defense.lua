@@ -107,6 +107,9 @@ function _M.do_request()
                 local _, content = get_site_config_file(site_id)
                 if content then
                     local t = cjson_decode(content)
+                    if type(t[module_id]) ~= "table" then
+                        t[module_id] = {}
+                    end
                     t[module_id]['state'] = state
 
                     local json = cjson_encode(t)

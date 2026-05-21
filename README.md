@@ -23,6 +23,7 @@
 - 快照带 `hash`（md5）校验，node 校验通过后才应用
 - 节点页面显示 `规则版本`、`规则发布时间`、`同步状态`
 - 白名单 / 黑名单支持 Redis 集中同步（master 写入，node 拉取）
+- 网站防护支持 `规则例外白名单`（按域名+方法+路径+模块定向放行）
 - 统计/日志链路支持 dirty set、retry set、队列化落库，降低扫描与写库压力
 
 ### 安装与部署
@@ -124,6 +125,36 @@ Redis 故障降级（第 1 步）：
 - `min_hits`：最小命中次数阈值。
 - `limit`：单次最多生成/更新候选数量。
 
+### 规则例外白名单（网站防护）
+
+入口：
+- `网站防护 -> 规则引擎 -> 规则例外白名单`
+
+用途：
+- 当某些业务接口会稳定触发特定检测模块（如 `xss`），但业务上确认是正常请求时，可按条件做“定向放行”。
+- 放行只影响命中条件的请求，不会全局关闭 WAF。
+
+当前匹配维度：
+- `serverName`（域名）
+- `method`（HTTP 方法）
+- `uri`（路径正则）
+- `module`（检测模块）
+
+示例：
+
+```json
+{
+  "serverName": "wfwfabioapi.gw.com.cn",
+  "method": "POST",
+  "uri": "^/inotes/(addMyStock|removeMyStock)$",
+  "module": "xss"
+}
+```
+
+说明：
+- 当前实现为“按模块放行”（例如 `module=xss` 命中后跳过本次 xss 检测流程）。
+- 这是有意的简化设计，降低配置和维护成本；如需更细粒度，可后续扩展“按规则标识放行”。
+
 ### 重部署后验收（建议）
 
 在 master 上执行：
@@ -145,6 +176,10 @@ redis-cli -h <redis_host> -p <redis_port> -a '<redis_password>' HGETALL waf:clus
 mysql -h <mysql_host> -P <mysql_port> -u <mysql_user> -p'<mysql_password>' -D <mysql_db> \
   -e "SELECT ip,rules_version,last_seen FROM waf_cluster_node ORDER BY last_seen DESC LIMIT 10;"
 
+# 3.1) 验证白名单同步状态（node 应显示 ok）
+mysql -h <mysql_host> -P <mysql_port> -u <mysql_user> -p'<mysql_password>' -D <mysql_db> \
+  -e "SELECT ip,whitelist_version,whitelist_sync_status,whitelist_sync_at,last_sync_status,last_seen FROM waf_cluster_node ORDER BY last_seen DESC LIMIT 20;"
+
 # 4) 打开在线节点页面，确认“规则版本 / 规则发布时间 / 同步状态”三列已更新
 curl -I http://<master_ip>:1226/
 ```
@@ -153,6 +188,14 @@ curl -I http://<master_ip>:1226/
 
 - [docs/RELEASE_CHECKLIST.md](./docs/RELEASE_CHECKLIST.md)
 - [docs/DEPLOY_UPGRADE_GUIDE.md](./docs/DEPLOY_UPGRADE_GUIDE.md)
+
+白名单同步状态判定建议：
+- `ok`：节点已拉取并应用白名单。
+- `unknown`：节点未上报同步状态（常见于节点版本未升级、节点离线、或 Redis 链路异常）。
+- 若 master 为 `ok`、node 长期 `unknown`，优先检查：
+  - node 是否已升级到当前版本；
+  - `conf/system.json` 中 `centralized/redis/master` 角色配置是否正确；
+  - node 到 Redis 的连通性与认证信息是否一致。
 
 ### 管理后台
 

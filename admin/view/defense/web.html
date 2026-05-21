@@ -69,6 +69,7 @@
 									<li module-id="post" description="开启后将对请求体进行检测">Post检测</li>
 									<li module-id="httpMethod" description="如不允许某HTTP方法的请求，请设置该方法状态为开启状态">HTTP方法检测</li>
 									<li module-id="fileExt" description="如不允许上传某类型的文件，请设置该类型状态为开启状态">文件上传检测</li>
+									<li module-id="ruleException" description="按域名+方法+路径+模块定向放行，仅跳过命中的特定规则">规则例外白名单</li>
 									<li module-id="sqlixss">语义分析</li>
 								</ul>
 								<div class="layui-tab-content">
@@ -106,43 +107,107 @@
 			
 			<div class="layui-row">
 				<div class="layui-col-md12">
-					<div class="layui-form-item">
-						<label class="layui-form-label">规则状态</label>
-						<div class="layui-input-block">
-							<input type="checkbox" id="id-rule-state" name="state" lay-skin="switch" title="ON|OFF" />
+					<div id="id-form-rule-common">
+						<div class="layui-form-item">
+							<label class="layui-form-label">规则状态</label>
+							<div class="layui-input-block">
+								<input type="checkbox" id="id-rule-state" name="state" lay-skin="switch" title="ON|OFF" />
+							</div>
 						</div>
-					</div>
-					<div class="layui-form-item">
-						<label class="layui-form-label">规则正则</label>
-						<div class="layui-input-block">
-							<input type="text" name="rule" lay-verify="required" autocomplete="off" class="layui-input" />
+						<div class="layui-form-item">
+							<label class="layui-form-label">规则正则</label>
+							<div class="layui-input-block">
+								<input type="text" name="rule" lay-verify="required" autocomplete="off" class="layui-input" />
+							</div>
 						</div>
-					</div>
 
-					<div class="layui-form-item">
-						<label class="layui-form-label">攻击类型</label>
-						<div class="layui-input-block">
-							<select id="id-attackType" name="attackType"></select>
+						<div class="layui-form-item">
+							<label class="layui-form-label">攻击类型</label>
+							<div class="layui-input-block">
+								<select id="id-attackType" name="attackType"></select>
+							</div>
 						</div>
-					</div>
 					
-					<div class="layui-form-item">
-						<label class="layui-form-label">危险级别</label>
-						<div class="layui-input-block">
-							<select id="id-severityLevel" name="severityLevel"></select>
+						<div class="layui-form-item">
+							<label class="layui-form-label">危险级别</label>
+							<div class="layui-input-block">
+								<select id="id-severityLevel" name="severityLevel"></select>
+							</div>
+						</div>
+
+						<div class="layui-form-item">
+							<label class="layui-form-label">处置动作</label>
+							<div class="layui-input-block">
+								<select id="id-action" name="action"></select>
+							</div>
+						</div>
+						<div class="layui-form-item layui-form-text">
+							<label class="layui-form-label">规则描述</label>
+							<div class="layui-input-block">
+							  <textarea name="description" placeholder="规则描述" class="layui-textarea"></textarea>
+							</div>
 						</div>
 					</div>
 
-					<div class="layui-form-item">
-						<label class="layui-form-label">处置动作</label>
-						<div class="layui-input-block">
-							<select id="id-action" name="action"></select>
+					<div id="id-form-rule-exception" class="layui-hide">
+						<div class="layui-form-item">
+							<label class="layui-form-label">规则状态</label>
+							<div class="layui-input-block">
+								<input type="checkbox" id="id-rule-exception-state" name="state" lay-skin="switch" title="ON|OFF" />
+							</div>
 						</div>
-					</div>
-					<div class="layui-form-item layui-form-text">
-						<label class="layui-form-label">规则描述</label>
-						<div class="layui-input-block">
-						  <textarea name="description" placeholder="规则描述" class="layui-textarea"></textarea>
+						<div class="layui-form-item">
+							<label class="layui-form-label">域名</label>
+							<div class="layui-input-block">
+								<input type="text" name="serverName" placeholder="如: example.com 或 *" autocomplete="off" class="layui-input" />
+							</div>
+						</div>
+						<div class="layui-form-item">
+							<label class="layui-form-label">方法</label>
+							<div class="layui-input-block">
+								<select name="method" id="id-exception-method">
+									<option value="*">*</option>
+									<option value="GET">GET</option>
+									<option value="POST">POST</option>
+									<option value="PUT">PUT</option>
+									<option value="DELETE">DELETE</option>
+									<option value="PATCH">PATCH</option>
+									<option value="OPTIONS">OPTIONS</option>
+								</select>
+							</div>
+						</div>
+						<div class="layui-form-item">
+							<label class="layui-form-label">路径正则</label>
+							<div class="layui-input-block">
+								<input type="text" name="uri" placeholder="如: ^/inotes/(addMyStock|removeMyStock)$" autocomplete="off" class="layui-input" />
+							</div>
+						</div>
+						<div class="layui-form-item">
+							<label class="layui-form-label">模块</label>
+							<div class="layui-input-block">
+								<select name="module" id="id-exception-module">
+									<option value="xss">xss</option>
+									<option value="sqli">sqli</option>
+									<option value="args">args</option>
+									<option value="post">post</option>
+									<option value="headers">headers</option>
+									<option value="cookie">cookie</option>
+									<option value="fileExt">fileExt</option>
+									<option value="httpMethod">httpMethod</option>
+									<option value="blackUrl">blackUrl</option>
+									<option value="acl">acl</option>
+									<option value="cc">cc</option>
+									<option value="user-agent">user-agent</option>
+									<option value="whiteUrl">whiteUrl</option>
+									<option value="*">*</option>
+								</select>
+							</div>
+						</div>
+						<div class="layui-form-item layui-form-text">
+							<label class="layui-form-label">说明</label>
+							<div class="layui-input-block">
+								<textarea name="description" placeholder="例外原因说明（建议填写）" class="layui-textarea"></textarea>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -200,6 +265,7 @@
 		<script src="../../js/severityLevel.js"></script>
 		<script>
 			var config = {};
+			var currentModuleId = "blackUrl";
 
 			layui.use(['form','table','util','tag','popup'], function() {
 				var $ = layui.jquery;
@@ -210,9 +276,19 @@
 				var popup = layui.popup;
 				var util = layui.util;
 
-				table.render({
-					elem: '#id-table-rules',
-					cols: [[
+				function getRuleColumns(moduleId) {
+					if (moduleId === 'ruleException') {
+						return [[
+							{field: 'serverName', title: '域名', minWidth: 220},
+							{field: 'method', title: '方法', width: 100},
+							{field: 'uri', title: '路径正则', minWidth: 260},
+							{field: 'module', title: '模块', width: 120},
+							{field: 'description', title: '说明', minWidth: 180},
+							{field: 'state', title: '状态', width: 100, templet: '#id-template-rule-state'},
+							{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#id-template-bar'}
+						]];
+					}
+					return [[
 						{field: 'rule', title: '规则'},
 						{field: 'attackType', title: '攻击类型', width: 200, templet: function(d) {
 							return '<div>' + getAttackTypeText(d.attackType) + '</div>';
@@ -228,7 +304,28 @@
 						}},
 						{field: 'state', title: '状态', width: 100, templet: '#id-template-rule-state'},
 						{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#id-template-bar'}
-					]],
+					]];
+				}
+
+				function setupRuleFormForModule(moduleId) {
+					var isException = moduleId === 'ruleException';
+					if (isException) {
+						$('#id-form-rule-common').addClass('layui-hide');
+						$('#id-form-rule-exception').removeClass('layui-hide');
+						$('#id-form-rule-common').find('input,select,textarea').prop('disabled', true);
+						$('#id-form-rule-exception').find('input,select,textarea').prop('disabled', false);
+					} else {
+						$('#id-form-rule-exception').addClass('layui-hide');
+						$('#id-form-rule-common').removeClass('layui-hide');
+						$('#id-form-rule-exception').find('input,select,textarea').prop('disabled', true);
+						$('#id-form-rule-common').find('input,select,textarea').prop('disabled', false);
+					}
+					form.render();
+				}
+
+				table.render({
+					elem: '#id-table-rules',
+					cols: getRuleColumns(currentModuleId),
 					toolbar: '#id-toolbar',
 					defaultToolbar: [],
 					page: true,
@@ -259,7 +356,8 @@
 					if (moduleId == 'sqlixss') {
 						return;
 					}
-					table.reloadData('id-table-rules', {
+					table.reload('id-table-rules', {
+						cols: getRuleColumns(moduleId),
 						url: '/defense/rule/list',
 						page: {
 							curr: 1
@@ -267,6 +365,15 @@
 						where: {
 							siteId: $('#site').val(), 
 							moduleId: moduleId
+						},
+						done: function() {
+							if (moduleId == 'ruleException') {
+								var reState = (config['ruleException'] && config['ruleException'].state) ? config['ruleException'].state : 'on';
+								$('#id-module-state').prop('checked', reState == 'on' ? true : false);
+							} else if (config[moduleId]) {
+								$('#id-module-state').prop('checked', config[moduleId].state == 'on' ? true : false);
+							}
+							form.render('checkbox');
 						}
 					});
 				}
@@ -323,6 +430,7 @@
 				});
 
 				function openLayer(title) {
+					setupRuleFormForModule(currentModuleId);
 					layer.open({
 						type: 1,
 						title: title,
@@ -333,21 +441,36 @@
 						end: function() {
 							$("#id-form-rule").trigger("reset");
 							$("#id-form-rule").find("input[type='hidden']").val("");
+							form.val('filter-form-rule', {
+								state: true,
+								method: '*',
+								module: '*'
+							});
 						}
 					});
 				}
 
 				// 规则提交保存事件
 				form.on('submit(filter-rule-save)', function(data) {
-					var field = data.field; // 获取表单字段值
-
-					if (field.state != 'on') {
-						field.state = 'off';
+					var field = data.field;
+					if (currentModuleId === 'ruleException') {
+						field.state = $('#id-rule-exception-state').prop('checked') ? 'on' : 'off';
+					} else {
+						field.state = $('#id-rule-state').prop('checked') ? 'on' : 'off';
 					}
 
 					var param = {};
 					param.siteId = $('#site').val();
-					param.moduleId = $('#id-tab-rules li.layui-this').attr('module-id');
+					param.moduleId = currentModuleId;
+					if (currentModuleId === 'ruleException') {
+						field.serverName = field.serverName ? field.serverName.trim() : '*';
+						field.method = field.method || '*';
+						field.uri = field.uri ? field.uri.trim() : '.*';
+						field.module = field.module || '*';
+						if (!field.serverName) {
+							field.serverName = '*';
+						}
+					}
 					param.rule = JSON.stringify(field);
 					
 					$.post('/defense/rule/save',  param, function(res) {
@@ -373,6 +496,18 @@
 						openLayer('编辑规则');
 						var state = data.state == 'on' ? true : false;
 						data.state = state;
+						if (!data.method) {
+							data.method = '*';
+						}
+						if (!data.module) {
+							data.module = '*';
+						}
+						if (!data.serverName) {
+							data.serverName = '*';
+						}
+						if (!data.uri) {
+							data.uri = '.*';
+						}
 						form.val('filter-form-rule', data);
 					} else if(obj.event === 'remove') {
 						layer.confirm('确定删除该规则吗？', {
@@ -382,7 +517,7 @@
 						function(index) {
 							var param = {};
 							param.siteId = $('#site').val();
-							param.moduleId = $('#id-tab-rules li.layui-this').attr('module-id');
+							param.moduleId = currentModuleId;
 							param.ruleId = data.id;
 
 							$.post('/defense/rule/remove',  param, function(res) {
@@ -413,12 +548,12 @@
 				});
 
 				element.on('tab(filter-tab-rules)', function(data) {
-					var id = $(this).attr('lay-id');
-					var currentTabId = $(this).attr('lay-id');
 					var moduleId = $(this).attr('module-id');
+					currentModuleId = moduleId;
 
 					$('#id-tab-rules').find(".layui-tab-item").removeClass('layui-show');
 					$('#id-file-content').addClass('layui-hide');
+					$('#id-module-state').prop('disabled', false);
 					if (moduleId == 'sqlixss') {
 						$('#id-module-sqli-state').prop('checked', config['sqli'].state == 'on' ? true : false);
 						$('#id-module-xss-state').prop('checked', config['xss'].state == 'on' ? true : false);
@@ -429,7 +564,12 @@
 							$('#id-file-content').removeClass('layui-hide').addClass('layui-show');
 							$('#id-file-content-state').prop('checked', config['fileContentCheck'].state == 'on' ? true : false);
 						}
-						$('#id-module-state').prop('checked', config[moduleId].state == 'on' ? true : false);
+						if (moduleId == 'ruleException') {
+							var reState = (config['ruleException'] && config['ruleException'].state) ? config['ruleException'].state : 'on';
+							$('#id-module-state').prop('checked', reState == 'on' ? true : false);
+						} else {
+							$('#id-module-state').prop('checked', config[moduleId].state == 'on' ? true : false);
+						}
 						
 						reloadTableData();
 						$("#id-rules-common").addClass('layui-show');
@@ -451,6 +591,9 @@
 							var moduleId = $('#id-tab-rules li.layui-this').attr('module-id');
 							if (config[moduleId]) {
 								$('#id-module-state').prop('checked', config[moduleId].state == 'on' ? true : false);
+							} else if (moduleId == 'ruleException') {
+								var reState = (config['ruleException'] && config['ruleException'].state) ? config['ruleException'].state : 'on';
+								$('#id-module-state').prop('checked', reState == 'on' ? true : false);
 							}
 							$('#id-file-content-state').prop('checked', config['fileContentCheck'].state == 'on' ? true : false);
 							$('#id-module-sqli-state').prop('checked', config['sqli'].state == 'on' ? true : false);
