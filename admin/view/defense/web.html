@@ -117,7 +117,7 @@
 						<div class="layui-form-item">
 							<label class="layui-form-label">规则正则</label>
 							<div class="layui-input-block">
-								<input type="text" name="rule" lay-verify="required" autocomplete="off" class="layui-input" />
+								<input type="text" name="rule" autocomplete="off" class="layui-input" />
 							</div>
 						</div>
 
@@ -459,6 +459,13 @@
 						field.state = $('#id-rule-state').prop('checked') ? 'on' : 'off';
 					}
 
+					if (currentModuleId !== 'ruleException') {
+						if (!field.rule || !field.rule.trim()) {
+							popup.failure('规则正则不能为空');
+							return false;
+						}
+					}
+
 					var param = {};
 					param.siteId = $('#site').val();
 					param.moduleId = currentModuleId;
@@ -469,6 +476,9 @@
 						field.module = field.module || '*';
 						if (!field.serverName) {
 							field.serverName = '*';
+						}
+						if (!field.uri) {
+							field.uri = '.*';
 						}
 					}
 					param.rule = JSON.stringify(field);
