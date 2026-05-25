@@ -164,12 +164,12 @@
 					elem: '#id-table-events',
 					url: '/events/list',
 					cols: [[ //标题栏
-						{field: 'server_name', title: '域名', minWidth: 180},
+						{field: 'server_name', title: '域名', minWidth: 150},
 						{field: 'node_ip', title: '节点IP', width: 150, templet: function(d) {
 							return '<div>' + (d.node_ip && d.node_ip !== '' ? d.node_ip : '-') + '</div>';
 						}},
-						{field: 'request_uri', title: '请求地址', minWidth: 180},
-						{field: 'ip', title: '攻击者IP', minWidth: 180, templet: function(d) {
+						{field: 'request_uri', title: '请求地址', minWidth: 150},
+						{field: 'ip', title: '攻击者IP', minWidth: 150, templet: function(d) {
 							return '<div>' + d.ip + getIPGeoName(d) + '</div>';
 						}},
 						{field: 'attack_type', title: '攻击类型', width: 130, templet: function(d) {
@@ -196,7 +196,7 @@
 
 							return '<div>' + levelStr + '</div>';
 						}},
-						{field: 'action', title: '处置动作', width: 90, templet: function(d) {
+						{field: 'action', title: '处置动作', width: 180, templet: function(d) {
 							return '<div>' + getActionText(d.action) + '</div>';
 						}},
 						{field: 'request_time', title: '攻击时间', width: 170},

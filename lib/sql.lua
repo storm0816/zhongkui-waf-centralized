@@ -81,19 +81,25 @@ local SQL_CHECK_COLUMN = [[
     FROM INFORMATION_SCHEMA.COLUMNS
     WHERE table_schema = %s AND table_name = %s AND column_name = %s
 ]]
+local SQL_GET_COLUMN_META = [[
+    SELECT DATA_TYPE AS data_type, COLUMN_TYPE AS column_type
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE table_schema = %s AND table_name = %s AND column_name = %s
+    LIMIT 1
+]]
 
 local SQL_CREATE_TABLE_WAF_STATUS = [[
     CREATE TABLE `waf_status` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-        `http4xx` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'http状态码4xx数',
-        `http5xx` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'http状态码5xx数',
-        `request_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '请求数',
-        `attack_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击请求数',
-        `block_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '总拦截数',
-        `block_times_attack` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击拦截数',
-        `block_times_captcha` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '触发人机验证数',
-        `block_times_cc` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'cc拦截数',
-        `captcha_pass_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '人机验证通过数',
+        `http4xx` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'http状态码4xx数',
+        `http5xx` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'http状态码5xx数',
+        `request_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '请求数',
+        `attack_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击请求数',
+        `block_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '总拦截数',
+        `block_times_attack` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击拦截数',
+        `block_times_captcha` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '触发人机验证数',
+        `block_times_cc` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'cc拦截数',
+        `captcha_pass_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '人机验证通过数',
         `request_date` CHAR(10) NOT NULL COMMENT '日期',
 
         `update_time` datetime NULL,
@@ -162,13 +168,13 @@ local SQL_CREATE_TABLE_TRAFFIC_STATS = [[
         `ip_city_cn` VARCHAR(255) NULL COMMENT 'ip所属城市_中文',
         `ip_city_en` VARCHAR(255) NULL COMMENT 'ip所属城市_英文',
 
-        `request_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '请求数',
-        `attack_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击请求数',
-        `block_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '拦截数',
-        `block_times_attack` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击拦截数',
-        `block_times_captcha` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '触发人机验证数',
-        `block_times_cc` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'cc拦截数',
-        `captcha_pass_times` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '人机验证通过数',
+        `request_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '请求数',
+        `attack_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击请求数',
+        `block_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '拦截数',
+        `block_times_attack` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '攻击拦截数',
+        `block_times_captcha` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '触发人机验证数',
+        `block_times_cc` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'cc拦截数',
+        `captcha_pass_times` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '人机验证通过数',
 
         `request_date` CHAR(10) NOT NULL COMMENT '日期',
 
@@ -311,7 +317,7 @@ local SQL_GET_ATTACK_TYPE_TRAFFIC = [[
 local SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC = [[
     CREATE TABLE `attack_type_traffic` (
     `attack_type` varchar(255) NOT NULL,
-    `attack_count` int(11) NOT NULL DEFAULT '0',
+    `attack_count` BIGINT UNSIGNED NOT NULL DEFAULT '0',
     `request_date` date NOT NULL,
     PRIMARY KEY (`attack_type`,`request_date`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -321,9 +327,9 @@ local SQL_CREATE_TABLE_WAF_TRAFFIC_STATS = [[
     CREATE TABLE waf_traffic_stats (
         id INT AUTO_INCREMENT PRIMARY KEY,
         access_time DATETIME NOT NULL COMMENT '时间',
-        total_requests INT UNSIGNED DEFAULT 0 COMMENT '总请求数',
-        blocked_requests INT UNSIGNED DEFAULT 0 COMMENT '拦截数',
-        attack_requests INT UNSIGNED DEFAULT 0 COMMENT '攻击数',
+        total_requests BIGINT UNSIGNED DEFAULT 0 COMMENT '总请求数',
+        blocked_requests BIGINT UNSIGNED DEFAULT 0 COMMENT '拦截数',
+        attack_requests BIGINT UNSIGNED DEFAULT 0 COMMENT '攻击数',
         website_id VARCHAR(64) NOT NULL DEFAULT 'global' COMMENT '站点ID',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
         update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -818,6 +824,30 @@ function _M.check_table(premature)
         end
     end
 
+    local function ensure_bigint_unsigned(table_name, column_name)
+        local meta_res, meta_err = mysql.query(format(SQL_GET_COLUMN_META,
+            quote_sql_str(database), quote_sql_str(table_name), quote_sql_str(column_name)))
+        if not meta_res or not meta_res[1] then
+            ngx.log(ngx.ERR, "failed to read column meta ", table_name, ".", column_name, ": ", meta_err or "nil")
+            return
+        end
+
+        local data_type = tostring(meta_res[1].data_type or "")
+        local column_type = tostring(meta_res[1].column_type or "")
+        if data_type == "bigint" and string.find(string.lower(column_type), "unsigned", 1, true) then
+            return
+        end
+
+        local ddl = format(
+            "ALTER TABLE %s MODIFY COLUMN %s BIGINT UNSIGNED NOT NULL DEFAULT 0",
+            table_name, column_name
+        )
+        local ok, err = mysql.query(ddl)
+        if not ok then
+            ngx.log(ngx.ERR, "failed to alter column to BIGINT UNSIGNED ", table_name, ".", column_name, ": ", err)
+        end
+    end
+
     -- 兼容老版本表结构：attack_log 可能没有 request_id 唯一索引，这里补齐一次。
     ensure_index("attack_log", "idx_unique_attack_log_request_id",
         "ALTER TABLE attack_log ADD UNIQUE INDEX idx_unique_attack_log_request_id (request_id)")
@@ -891,6 +921,27 @@ function _M.check_table(premature)
         "ALTER TABLE waf_rule_candidate ADD COLUMN published_time DATETIME NULL COMMENT '发布时间' AFTER published_rule_id")
     ensure_column("waf_rule_candidate", "publish_note",
         "ALTER TABLE waf_rule_candidate ADD COLUMN publish_note VARCHAR(255) NULL COMMENT '发布备注' AFTER published_time")
+
+    local traffic_counter_columns = {
+        "http4xx",
+        "http5xx",
+        "request_times",
+        "attack_times",
+        "block_times",
+        "block_times_attack",
+        "block_times_captcha",
+        "block_times_cc",
+        "captcha_pass_times"
+    }
+
+    for _, col in ipairs(traffic_counter_columns) do
+        ensure_bigint_unsigned("waf_status", col)
+        ensure_bigint_unsigned("traffic_stats", col)
+    end
+    ensure_bigint_unsigned("attack_type_traffic", "attack_count")
+    ensure_bigint_unsigned("waf_traffic_stats", "total_requests")
+    ensure_bigint_unsigned("waf_traffic_stats", "blocked_requests")
+    ensure_bigint_unsigned("waf_traffic_stats", "attack_requests")
 end
 
 function _M.update_traffic_stats()

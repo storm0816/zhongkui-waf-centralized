@@ -1,3 +1,4 @@
+
 admin/index.html
 admin/lua/cluster_node.lua
 admin/lua/defense.lua
@@ -5,8 +6,13 @@ admin/lua/events.lua
 admin/lua/lib/rule_utils.lua
 admin/lua/system.lua
 admin/view/cluster-nodes.html
+admin/view/dashboard.html
 admin/view/defense/web.html
 admin/view/events.html
+admin/view/node-attack-china-light.html
+admin/view/node-attack-china.html
+admin/view/node-attack-global-light.html
+admin/view/node-attack-global.html
 conf/global_rules/ruleException.json
 config.lua
 lib/constants.lua
