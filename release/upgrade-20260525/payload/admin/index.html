@@ -181,7 +181,7 @@
 				<!-- 菜 单 内 容 -->
 				<div class="layui-side-scroll">
 					<div id="sideMenu"></div>
-					<div class="version-info">Version 1.4.0</div>
+					<div class="version-info" id="appVersionText">Version -</div>
 				</div>
 			</div>
 			<!-- 视 图 页 面 -->
@@ -225,6 +225,11 @@
 				admin.setConfigPath("config/pear.config.yml");
 				
 				admin.render();
+				$.get('/system/get', function(res) {
+					if (res && (res.code === 200 || res.code === 0) && res.app_version) {
+						$('#appVersionText').text('Version ' + res.app_version);
+					}
+				}, 'json');
 
 				// 避免连续快速点击一级菜单时出现二次收缩抖动
 				(function bindMenuToggleDebounce() {
