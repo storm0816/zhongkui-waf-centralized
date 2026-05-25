@@ -2,7 +2,8 @@
     "attackLog": {
         "state": "on",
         "logPath": "/opt/openresty/nginx/logs/hack/",
-        "jsonFormat": "off"
+        "jsonFormat": "off",
+        "response_body_max_bytes": 1024
     },
     "attackLogRetention": {
         "state": "on",
@@ -35,6 +36,7 @@
         "failure_threshold": 3,
         "failure_window_seconds": 30,
         "degrade_seconds": 10,
+        "queue_max_len": 200000,
         "ssl": "off",
         "port": 16381,
         "db": 0,
