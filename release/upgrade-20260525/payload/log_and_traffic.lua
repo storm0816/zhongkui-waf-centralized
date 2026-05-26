@@ -44,9 +44,14 @@ local function truncate_response_body(body)
     return sub(body, 1, RESPONSE_BODY_MAX_BYTES) .. "[TRUNCATED:" .. tostring(size) .. "B]"
 end
 
-local function normalize_response_body(action, request_id, status, body)
+local function normalize_response_body(action, request_id, client_ip, attack_time, body)
     if upper(tostring(action or "")) == "DENY" then
-        return "[WAF_BLOCK_PAGE status=" .. tostring(status or "") .. " request_id=" .. tostring(request_id or "") .. "]"
+        local compact = concat({
+            "<p>请求ID: ", tostring(request_id or ""), "</p>\n",
+            "<p>拦截时间: ", tostring(attack_time or ""), "</p>\n",
+            "<p>客户端IP: ", tostring(client_ip or ""), "</p>"
+        })
+        return truncate_response_body(compact)
     end
     return truncate_response_body(body)
 end
@@ -80,7 +85,6 @@ local function write_attack_log()
     local geoip = ctx.geoip
     local realIp = ctx.ip
     local request_body = ctx.request_body
-    local response_body = normalize_response_body(action, request_id, ngx.status, ctx.response_body)
 
     local country = geoip.country
     local province = geoip.province
@@ -99,6 +103,7 @@ local function write_attack_log()
     local protocol = ngx.var.server_protocol
     local referer = ngx.var.http_referer
     local attackTime = ngx.localtime()
+    local response_body = normalize_response_body(action, request_id, realIp, attackTime, ctx.response_body)
     local req_header = ngx.req.raw_header() or ''
 
     local log_table = {
