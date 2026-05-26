@@ -33,6 +33,8 @@ local _M = {}
 local database = get_system_config('mysql').database
 
 local BATCH_SIZE = 300
+local DEFAULT_ATTACK_LOG_FLUSH_BATCH_SIZE = 2000
+local DEFAULT_ATTACK_LOG_FLUSH_MAX_BATCHES = 10
 local DEFAULT_NODE_EXPIRE = 120
 local DEFAULT_NODE_RETENTION = 86400
 local RETRY_SET_EXPIRE = 86400
@@ -413,6 +415,23 @@ local function get_attack_log_retention_config()
     end
 
     return state == "on", floor(days), floor(batch), floor(interval)
+end
+
+local function get_attack_log_flush_config()
+    local sys = get_system_config("system") or {}
+    local batch_size = tonumber(sys.attack_log_flush_batch_size) or DEFAULT_ATTACK_LOG_FLUSH_BATCH_SIZE
+    local max_batches = tonumber(sys.attack_log_flush_max_batches_per_round) or DEFAULT_ATTACK_LOG_FLUSH_MAX_BATCHES
+    if batch_size < 100 then
+        batch_size = 100
+    elseif batch_size > 10000 then
+        batch_size = 10000
+    end
+    if max_batches < 1 then
+        max_batches = 1
+    elseif max_batches > 200 then
+        max_batches = 200
+    end
+    return floor(batch_size), floor(max_batches)
 end
 
 local function get_intel_sources_config()
@@ -1762,30 +1781,35 @@ local function build_attack_log_sql_value(redis_value)
 end
 
 function _M.write_attack_log_redis_to_mysql()
-    local raw_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_ATTACK_LOG, BATCH_SIZE)
-    local sql_values = newtab(BATCH_SIZE, 0)
-    local index = 1
-
-    for _, value in ipairs(raw_values or {}) do
-        local sql_value, err = build_attack_log_sql_value(value)
-        if sql_value then
-            sql_values[index] = sql_value
-            index = index + 1
-        else
-            ngx.log(4, "failed to decode attack log queue json: ", err)
-        end
-    end
-
-    if sql_values[1] then
-        local sql_str = SQL_INSERT_ATTACK_LOG .. concat(sql_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
-        local res, err = mysql.query(sql_str)
-        if not res then
-            ngx.log(4, "failed to write attack log queue to mysql: ", err)
-            redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, raw_values, get_system_config('redis').expire_time)
+    local batch_size, max_batches = get_attack_log_flush_config()
+    for _ = 1, max_batches do
+        local raw_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_ATTACK_LOG, batch_size)
+        if not raw_values or not raw_values[1] then
             return
         end
-    end
 
+        local sql_values = newtab(batch_size, 0)
+        local index = 1
+        for _, value in ipairs(raw_values) do
+            local sql_value, err = build_attack_log_sql_value(value)
+            if sql_value then
+                sql_values[index] = sql_value
+                index = index + 1
+            else
+                ngx.log(4, "failed to decode attack log queue json: ", err)
+            end
+        end
+
+        if sql_values[1] then
+            local sql_str = SQL_INSERT_ATTACK_LOG .. concat(sql_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
+            local res, err = mysql.query(sql_str)
+            if not res then
+                ngx.log(4, "failed to write attack log queue to mysql: ", err)
+                redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, raw_values, get_system_config('redis').expire_time)
+                return
+            end
+        end
+    end
 end
 
 local function detect_local_ip()

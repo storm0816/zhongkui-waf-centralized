@@ -14,6 +14,9 @@ admin/view/node-attack-china.html
 admin/view/node-attack-global-light.html
 admin/view/node-attack-global.html
 conf/global_rules/ruleException.json
+conf/system-master.json
+conf/system-node.json
+conf/system.json
 config.lua
 lib/constants.lua
 lib/lib.lua

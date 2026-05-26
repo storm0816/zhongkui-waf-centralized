@@ -82,6 +82,17 @@ local function start_master_timer(name, interval, first_delay, lock_ttl, callbac
     end)
 end
 
+local function get_attack_log_flush_interval()
+    local sys = config.get_system_config("system") or {}
+    local interval = tonumber(sys.attack_log_flush_interval_seconds) or 10
+    if interval < 2 then
+        interval = 2
+    elseif interval > 120 then
+        interval = 120
+    end
+    return interval
+end
+
 local function start_timer_every_with_jitter(base_interval, jitter_max, callback, ...)
     local interval = base_interval
     if jitter_max and jitter_max > 0 then
@@ -381,7 +392,10 @@ if is_global_option_on("waf") then
 
             if master_node then
                 -- master 聚合任务做错峰和 Redis 锁保护，避免多任务同时压 Redis/MySQL。
-                start_master_timer("attack_log_to_mysql", 120, 10, 110, sql.write_attack_log_redis_to_mysql)
+                local attack_log_flush_interval = get_attack_log_flush_interval()
+                local attack_log_first_delay = attack_log_flush_interval > 2 and 2 or 1
+                local attack_log_lock_ttl = math.max(attack_log_flush_interval - 1, 1)
+                start_master_timer("attack_log_to_mysql", attack_log_flush_interval, attack_log_first_delay, attack_log_lock_ttl, sql.write_attack_log_redis_to_mysql)
                 start_master_timer("waf_status_to_mysql", 120, 30, 110, sql.write_waf_status_redis_to_mysql)
                 start_master_timer("traffic_stats_to_mysql", 120, 50, 110, sql.write_traffic_stats_redis_to_mysql)
                 start_master_timer("ip_block_log_to_mysql", 120, 70, 110, sql.write_ip_block_log_redis_to_mysql)
