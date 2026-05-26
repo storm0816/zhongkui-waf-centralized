@@ -846,8 +846,11 @@ function _M.check_table(premature)
     local function ensure_bigint_unsigned(table_name, column_name)
         local meta_res, meta_err = mysql.query(format(SQL_GET_COLUMN_META,
             quote_sql_str(database), quote_sql_str(table_name), quote_sql_str(column_name)))
-        if not meta_res or not meta_res[1] then
+        if not meta_res then
             ngx.log(ngx.ERR, "failed to read column meta ", table_name, ".", column_name, ": ", meta_err or "nil")
+            return
+        end
+        if not meta_res[1] then
             return
         end
 
@@ -941,7 +944,7 @@ function _M.check_table(premature)
     ensure_column("waf_rule_candidate", "publish_note",
         "ALTER TABLE waf_rule_candidate ADD COLUMN publish_note VARCHAR(255) NULL COMMENT '发布备注' AFTER published_time")
 
-    local traffic_counter_columns = {
+    local waf_status_counter_columns = {
         "http4xx",
         "http5xx",
         "request_times",
@@ -952,9 +955,20 @@ function _M.check_table(premature)
         "block_times_cc",
         "captcha_pass_times"
     }
+    local traffic_stats_counter_columns = {
+        "request_times",
+        "attack_times",
+        "block_times",
+        "block_times_attack",
+        "block_times_captcha",
+        "block_times_cc",
+        "captcha_pass_times"
+    }
 
-    for _, col in ipairs(traffic_counter_columns) do
+    for _, col in ipairs(waf_status_counter_columns) do
         ensure_bigint_unsigned("waf_status", col)
+    end
+    for _, col in ipairs(traffic_stats_counter_columns) do
         ensure_bigint_unsigned("traffic_stats", col)
     end
     ensure_bigint_unsigned("attack_type_traffic", "attack_count")
