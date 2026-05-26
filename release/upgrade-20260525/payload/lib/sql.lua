@@ -33,6 +33,8 @@ local _M = {}
 local database = get_system_config('mysql').database
 
 local BATCH_SIZE = 300
+local DEFAULT_ATTACK_LOG_FLUSH_BATCH_SIZE = 2000
+local DEFAULT_ATTACK_LOG_FLUSH_MAX_BATCHES = 10
 local DEFAULT_NODE_EXPIRE = 120
 local DEFAULT_NODE_RETENTION = 86400
 local RETRY_SET_EXPIRE = 86400
@@ -413,6 +415,23 @@ local function get_attack_log_retention_config()
     end
 
     return state == "on", floor(days), floor(batch), floor(interval)
+end
+
+local function get_attack_log_flush_config()
+    local sys = get_system_config("system") or {}
+    local batch_size = tonumber(sys.attack_log_flush_batch_size) or DEFAULT_ATTACK_LOG_FLUSH_BATCH_SIZE
+    local max_batches = tonumber(sys.attack_log_flush_max_batches_per_round) or DEFAULT_ATTACK_LOG_FLUSH_MAX_BATCHES
+    if batch_size < 100 then
+        batch_size = 100
+    elseif batch_size > 10000 then
+        batch_size = 10000
+    end
+    if max_batches < 1 then
+        max_batches = 1
+    elseif max_batches > 200 then
+        max_batches = 200
+    end
+    return floor(batch_size), floor(max_batches)
 end
 
 local function get_intel_sources_config()
@@ -827,8 +846,11 @@ function _M.check_table(premature)
     local function ensure_bigint_unsigned(table_name, column_name)
         local meta_res, meta_err = mysql.query(format(SQL_GET_COLUMN_META,
             quote_sql_str(database), quote_sql_str(table_name), quote_sql_str(column_name)))
-        if not meta_res or not meta_res[1] then
+        if not meta_res then
             ngx.log(ngx.ERR, "failed to read column meta ", table_name, ".", column_name, ": ", meta_err or "nil")
+            return
+        end
+        if not meta_res[1] then
             return
         end
 
@@ -922,7 +944,7 @@ function _M.check_table(premature)
     ensure_column("waf_rule_candidate", "publish_note",
         "ALTER TABLE waf_rule_candidate ADD COLUMN publish_note VARCHAR(255) NULL COMMENT '发布备注' AFTER published_time")
 
-    local traffic_counter_columns = {
+    local waf_status_counter_columns = {
         "http4xx",
         "http5xx",
         "request_times",
@@ -933,9 +955,20 @@ function _M.check_table(premature)
         "block_times_cc",
         "captcha_pass_times"
     }
+    local traffic_stats_counter_columns = {
+        "request_times",
+        "attack_times",
+        "block_times",
+        "block_times_attack",
+        "block_times_captcha",
+        "block_times_cc",
+        "captcha_pass_times"
+    }
 
-    for _, col in ipairs(traffic_counter_columns) do
+    for _, col in ipairs(waf_status_counter_columns) do
         ensure_bigint_unsigned("waf_status", col)
+    end
+    for _, col in ipairs(traffic_stats_counter_columns) do
         ensure_bigint_unsigned("traffic_stats", col)
     end
     ensure_bigint_unsigned("attack_type_traffic", "attack_count")
@@ -1762,30 +1795,35 @@ local function build_attack_log_sql_value(redis_value)
 end
 
 function _M.write_attack_log_redis_to_mysql()
-    local raw_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_ATTACK_LOG, BATCH_SIZE)
-    local sql_values = newtab(BATCH_SIZE, 0)
-    local index = 1
-
-    for _, value in ipairs(raw_values or {}) do
-        local sql_value, err = build_attack_log_sql_value(value)
-        if sql_value then
-            sql_values[index] = sql_value
-            index = index + 1
-        else
-            ngx.log(4, "failed to decode attack log queue json: ", err)
-        end
-    end
-
-    if sql_values[1] then
-        local sql_str = SQL_INSERT_ATTACK_LOG .. concat(sql_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
-        local res, err = mysql.query(sql_str)
-        if not res then
-            ngx.log(4, "failed to write attack log queue to mysql: ", err)
-            redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, raw_values, get_system_config('redis').expire_time)
+    local batch_size, max_batches = get_attack_log_flush_config()
+    for _ = 1, max_batches do
+        local raw_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_ATTACK_LOG, batch_size)
+        if not raw_values or not raw_values[1] then
             return
         end
-    end
 
+        local sql_values = newtab(batch_size, 0)
+        local index = 1
+        for _, value in ipairs(raw_values) do
+            local sql_value, err = build_attack_log_sql_value(value)
+            if sql_value then
+                sql_values[index] = sql_value
+                index = index + 1
+            else
+                ngx.log(4, "failed to decode attack log queue json: ", err)
+            end
+        end
+
+        if sql_values[1] then
+            local sql_str = SQL_INSERT_ATTACK_LOG .. concat(sql_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
+            local res, err = mysql.query(sql_str)
+            if not res then
+                ngx.log(4, "failed to write attack log queue to mysql: ", err)
+                redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, raw_values, get_system_config('redis').expire_time)
+                return
+            end
+        end
+    end
 end
 
 local function detect_local_ip()
