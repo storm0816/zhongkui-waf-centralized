@@ -45,7 +45,8 @@ local function truncate_response_body(body)
 end
 
 local function normalize_response_body(action, request_id, client_ip, attack_time, body)
-    if upper(tostring(action or "")) == "DENY" then
+    local act = upper(tostring(action or ""))
+    if act == "DENY" or act == "REDIRECT" or act == "CAPTCHA" then
         local compact = concat({
             "<p>请求ID: ", tostring(request_id or ""), "</p>\n",
             "<p>拦截时间: ", tostring(attack_time or ""), "</p>\n",
