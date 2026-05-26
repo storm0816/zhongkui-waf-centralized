@@ -19,6 +19,7 @@ REDIS_PORT="16381"
 REDIS_PASSWORD="Push@789"
 REDIS_DB="0"
 PHP_SUPPORT="on"
+FRESH_INSTALL="off"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="/usr/local/src"
 
@@ -50,6 +51,10 @@ while [ $# -gt 0 ]; do
             ;;
         --php=*)
             PHP_SUPPORT="${1#*=}"
+            shift
+            ;;
+        --fresh)
+            FRESH_INSTALL="on"
             shift
             ;;
         --mysql-user)
@@ -101,12 +106,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: ./install.sh [--role master|node] [--php on|off] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
+            echo "Usage: ./install.sh [--role master|node] [--php on|off] [--fresh] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
             exit 0
             ;;
         *)
             echo -e "\033[31m[未知参数: $1]\033[0m"
-            echo "Usage: ./install.sh [--role master|node] [--php on|off] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
+            echo "Usage: ./install.sh [--role master|node] [--php on|off] [--fresh] [--init-local-mysql] [--mysql-user USER] [--init-local-redis] [--redis-port PORT] [--redis-password PASSWORD] [--redis-db DB]"
             exit 1
             ;;
     esac
@@ -139,6 +144,7 @@ fi
 
 echo -e "\033[34m[部署角色: $ROLE]\033[0m"
 echo -e "\033[34m[PHP-FPM 支持: $PHP_SUPPORT]\033[0m"
+echo -e "\033[34m[清理模式: $FRESH_INSTALL]\033[0m"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo -e "\033[31m[请使用 root 用户执行 install.sh]\033[0m"
@@ -167,6 +173,28 @@ fi
 OPENRESTY_PATH=/opt/openresty
 ZHONGKUI_PATH=$OPENRESTY_PATH/zhongkui-waf
 GEOIP_DATABASE_PATH=/opt/openresty/share/GeoIP
+PRESERVED_NGINX_CONF=""
+PRESERVED_NGINX_SOURCE=""
+FRESH_BACKUP_PATH=""
+
+if [ "$FRESH_INSTALL" = "on" ] && [ -d "$OPENRESTY_PATH" ]; then
+    FRESH_BACKUP_PATH="${OPENRESTY_PATH}.fresh.bak.$(date +%Y%m%d%H%M%S)"
+    echo -e "\033[33m[--fresh 已启用：将清理 $OPENRESTY_PATH，备份到 $FRESH_BACKUP_PATH]\033[0m"
+    mv "$OPENRESTY_PATH" "$FRESH_BACKUP_PATH"
+fi
+
+# 已部署 OpenResty 的服务器：优先保留现网 nginx 主配置，避免安装模板覆盖。
+if [ "$FRESH_INSTALL" != "on" ] && [ -f "$OPENRESTY_PATH/nginx/conf/nginx.conf" ]; then
+    PRESERVED_NGINX_SOURCE="$OPENRESTY_PATH/nginx/conf/nginx.conf"
+elif [ "$FRESH_INSTALL" != "on" ] && [ -f "$OPENRESTY_PATH/nginx/conf/nginx.cnf" ]; then
+    PRESERVED_NGINX_SOURCE="$OPENRESTY_PATH/nginx/conf/nginx.cnf"
+fi
+
+if [ -n "$PRESERVED_NGINX_SOURCE" ]; then
+    PRESERVED_NGINX_CONF="/tmp/nginx_conf_preserved_$(date +%Y%m%d%H%M%S).conf"
+    cp -f "$PRESERVED_NGINX_SOURCE" "$PRESERVED_NGINX_CONF"
+    echo -e "\033[34m[已备份现网 nginx 主配置: $PRESERVED_NGINX_SOURCE -> $PRESERVED_NGINX_CONF]\033[0m"
+fi
 
 mkdir -p "$SRC_DIR"
 if [ -d "$SCRIPT_DIR/waf" ]; then
@@ -454,6 +482,12 @@ sed \
     "$NGINX_TEMPLATE" > "$OPENRESTY_PATH/nginx/conf/nginx.conf"
 
 echo -e "\033[34m[nginx.conf 已生成，当前角色: $ROLE]\033[0m"
+
+# 已有部署场景：恢复安装前备份的主配置，防止覆盖现网 nginx.conf。
+if [ -n "$PRESERVED_NGINX_CONF" ] && [ -f "$PRESERVED_NGINX_CONF" ]; then
+    cp -f "$PRESERVED_NGINX_CONF" "$OPENRESTY_PATH/nginx/conf/nginx.conf"
+    echo -e "\033[34m[已恢复现网 nginx 主配置到 $OPENRESTY_PATH/nginx/conf/nginx.conf]\033[0m"
+fi
 
 # =================OpenResty nginx.conf 配置end=================
 

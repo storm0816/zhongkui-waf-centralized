@@ -39,6 +39,7 @@ chmod +x install.sh
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `--role master\|node` | `master` | 指定当前机器部署为 master 或 node |
+| `--fresh` | 关闭 | 清理重装模式：安装前将`/opt/openresty`整体备份后移走，再进行全新安装 |
 | `--init-local-mysql` | 关闭 | master 机器上同时安装并初始化本机 MySQL |
 | `--mysql-user USER` | `zhongkui_mac` | 配合`--init-local-mysql`使用，指定要创建并写入配置的 MySQL 账号 |
 | `--init-local-redis` | 关闭 | 使用`waf/redis16381.zip`安装并启动本机 Redis |
@@ -51,6 +52,7 @@ chmod +x install.sh
 | 场景 | 安装命令 | 安装前需要确认 |
 |---|---|---|
 | master 使用外部 MySQL 和外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的`mysql`和`redis`连接信息 |
+| master 清理重装（保留一份整目录备份） | `sudo ./install.sh --role master --fresh` | 适用于重建环境；会把`/opt/openresty`移动到`/opt/openresty.fresh.bak.<时间>` |
 | master 使用外部 MySQL，本机 Redis | `sudo ./install.sh --role master --init-local-redis --redis-password Push@789` | MySQL 连接仍从`conf/system-master.json`读取；Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
 | master 同时初始化本机 MySQL 和本机 Redis | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac --init-local-redis --redis-password Push@789` | MySQL 会自动切到`127.0.0.1:3306`，Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
 | node 节点 | `sudo ./install.sh --role node` | 先修改`conf/system-node.json`中的 Redis 连接信息；node 不需要 MySQL |
@@ -59,6 +61,8 @@ chmod +x install.sh
 ### 安装脚本行为说明
 
 - `install.sh` 会安装 OpenResty 与依赖，并按角色生成 `conf/system.json`。
+- 默认不是全新清理安装，会尽量保留现网配置与数据；若需彻底重装请加`--fresh`。
+- `--fresh` 会在安装前将`/opt/openresty`整体备份并移走，再执行全新安装（备份目录：`/opt/openresty.fresh.bak.<时间>`）。
 - 脚本优先使用项目 `waf/` 下离线包，缺失时才尝试联网下载。
 - 基于 `waf/nginx.conf.default` 覆盖 OpenResty 默认配置：
   - 保留默认 80 端口 `server`
