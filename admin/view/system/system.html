@@ -58,7 +58,7 @@
 						<div class="layui-card-header">攻击日志归档清理（懒人模式）</div>
 						<div class="layui-card-body">
 							<div class="layui-row layui-col-space10">
-								<div class="layui-col-md8" style="padding-left: 20px;">仅在 master 自动执行：将旧 attack_log 归档到 attack_log_archive，并按批次清理主表。</div>
+								<div class="layui-col-md8" style="padding-left: 20px;">仅在 master 自动执行：将旧 attack_log 按月份归档到 attack_log_archive_YYYYMM，并按批次清理主表。</div>
 							</div>
 							<div class="layui-row layui-col-space10">
 								<div class="layui-col-md2">
@@ -523,7 +523,15 @@
 					$.post('/system/attacklog/archive/run', {}, function(data) {
 						if (data && (data.code == 0 || data.code == 200)) {
 							var detail = data.data || {};
-							popup.success("已执行：inserted=" + (detail.inserted || 0) + ", deleted=" + (detail.deleted || 0));
+							if (detail.skipped) {
+								popup.warning("已跳过执行：" + (data.msg || detail.msg || "当前节点未启用 MySQL 或不满足执行条件"));
+								return;
+							}
+							var msg = "已执行：inserted=" + (detail.inserted || 0) + ", deleted=" + (detail.deleted || 0);
+							if (data.msg) {
+								msg += "，" + data.msg;
+							}
+							popup.success(msg);
 						} else {
 							popup.failure((data && data.msg) ? data.msg : '执行失败');
 						}

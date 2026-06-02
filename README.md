@@ -90,6 +90,7 @@ chmod +x install.sh
 
 统计与落库策略：
 - 攻击日志/封禁日志：Redis List 队列（`waf:queue:attack_log`、`waf:queue:ip_block_log`）
+- 攻击日志归档：按月落表到 `attack_log_archive_YYYYMM`，避免单表无限增长
 - 流量/攻击类型：dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）
 - MySQL 异常时：retry set 回放补写（`waf:retry:*`）
 
