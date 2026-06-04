@@ -589,44 +589,62 @@ local SQL_DELETE_ATTACK_LOG_ARCHIVE_SOURCE = [[
     LIMIT %d
 ]]
 
-local function get_attack_log_archive_month_table_name(request_time)
-    local dt = tostring(request_time or "")
-    local y, m = dt:match("^(%d%d%d%d)%-(%d%d)%-%d%d")
-    if not y or not m then
+local function get_attack_log_archive_week_table_name(yearweek)
+    local yw = tonumber(yearweek)
+    if not yw then
         return nil
     end
-    return "attack_log_archive_" .. y .. m, y, m
+    return "attack_log_archive_" .. string.format("%06d", yw)
 end
 
-local function get_month_bounds(y, m)
-    local year = tonumber(y)
-    local month = tonumber(m)
-    if not year or not month then
+local function get_week_bounds_from_request_time(request_time)
+    local dt = tostring(request_time or "")
+    local year, month, day = dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
+    if not year or not month or not day then
         return nil, nil
     end
-    local start_time = os.time({ year = year, month = month, day = 1, hour = 0, min = 0, sec = 0 })
-    if not start_time then
+
+    local t = os.time({
+        year = tonumber(year),
+        month = tonumber(month),
+        day = tonumber(day),
+        hour = 0,
+        min = 0,
+        sec = 0
+    })
+    if not t then
         return nil, nil
     end
-    local next_month = month + 1
-    local next_year = year
-    if next_month > 12 then
-        next_month = 1
-        next_year = year + 1
-    end
-    local end_time = os.time({ year = next_year, month = next_month, day = 1, hour = 0, min = 0, sec = 0 })
-    if not end_time then
-        return nil, nil
-    end
+
+    local wday = tonumber(os.date("%w", t)) or 0
+    local monday_offset = (wday == 0) and 6 or (wday - 1)
+    local start_time = t - monday_offset * 86400
+    local end_time = start_time + 7 * 86400
     return os.date("%Y-%m-%d %H:%M:%S", start_time), os.date("%Y-%m-%d %H:%M:%S", end_time)
 end
 
-local function ensure_attack_log_month_archive_table(table_name)
+local function ensure_attack_log_week_archive_table(table_name)
     local create_sql = format(
         "CREATE TABLE IF NOT EXISTS `%s` LIKE `attack_log`",
         table_name
     )
     return mysql.query(create_sql)
+end
+
+local function get_oldest_archive_request_time(days)
+    local sql = format([[
+        SELECT MIN(request_time) AS request_time
+        FROM attack_log
+        WHERE request_time < NOW() - INTERVAL %d DAY
+    ]], days)
+    local res, err = mysql.query(sql)
+    if not res then
+        return nil, err
+    end
+    if not res[1] or not res[1].request_time then
+        return nil, nil
+    end
+    return res[1].request_time, nil
 end
 
 local SQL_CREATE_TABLE_RULE_CANDIDATE = [[
@@ -2450,17 +2468,17 @@ function _M.archive_attack_log_once(force)
         return { code = 0, msg = "attackLogRetention is off, skip", skipped = true }
     end
 
-    local month_sql = format([[
-        SELECT DATE_FORMAT(MIN(request_time), '%%Y%%m') AS ym
+    local week_sql = format([[
+        SELECT YEARWEEK(MIN(request_time), 3) AS yw
         FROM attack_log
         WHERE request_time < NOW() - INTERVAL %d DAY
     ]], days)
-    local month_res, month_err = mysql.query(month_sql)
-    if not month_res then
-        ngx.log(ngx.ERR, "failed to query attack_log archive month: ", month_err)
-        return { code = 500, msg = "query archive month failed", error = month_err }
+    local week_res, week_err = mysql.query(week_sql)
+    if not week_res then
+        ngx.log(ngx.ERR, "failed to query attack_log archive week: ", week_err)
+        return { code = 500, msg = "query archive week failed", error = week_err }
     end
-    if not month_res[1] or not month_res[1].ym then
+    if not week_res[1] or not week_res[1].yw then
         return {
             code = 0,
             msg = "no archive rows",
@@ -2471,22 +2489,32 @@ function _M.archive_attack_log_once(force)
         }
     end
 
-    local ym = tostring(month_res[1].ym)
-    local table_name = "attack_log_archive_" .. ym
-    local month_start, month_end = get_month_bounds(ym:sub(1, 4), ym:sub(5, 6))
-    if not month_start or not month_end then
-        return { code = 500, msg = "invalid archive month", error = ym }
+    local yw = tonumber(week_res[1].yw)
+    local table_name = get_attack_log_archive_week_table_name(yw)
+    if not table_name then
+        return { code = 500, msg = "invalid archive week", error = tostring(week_res[1].yw) }
     end
 
-    local create_res, create_err = ensure_attack_log_month_archive_table(table_name)
+    local oldest_request_time, oldest_err = get_oldest_archive_request_time(days)
+    if oldest_err then
+        ngx.log(ngx.ERR, "failed to query oldest archive request time: ", oldest_err)
+        return { code = 500, msg = "query oldest archive request time failed", error = oldest_err }
+    end
+
+    local week_start, week_end = get_week_bounds_from_request_time(oldest_request_time)
+    if not week_start or not week_end then
+        return { code = 500, msg = "invalid archive week bounds", error = tostring(yw) }
+    end
+
+    local create_res, create_err = ensure_attack_log_week_archive_table(table_name)
     if not create_res then
-        ngx.log(ngx.ERR, "failed to ensure attack log month archive table: ", table_name, ", err=", create_err)
+        ngx.log(ngx.ERR, "failed to ensure attack log week archive table: ", table_name, ", err=", create_err)
         return { code = 500, msg = "ensure archive table failed", error = create_err }
     end
 
     local insert_sql = format(
         "INSERT IGNORE INTO `%s` SELECT * FROM attack_log WHERE request_time < NOW() - INTERVAL %d DAY AND request_time >= %s AND request_time < %s LIMIT %d",
-        table_name, days, quote_sql_str(month_start), quote_sql_str(month_end), batch
+        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch
     )
     local insert_res, insert_err = mysql.query(insert_sql)
     if not insert_res then
@@ -2496,7 +2524,7 @@ function _M.archive_attack_log_once(force)
 
     local delete_sql = format(
         "DELETE FROM attack_log WHERE request_time < NOW() - INTERVAL %d DAY AND request_time >= %s AND request_time < %s LIMIT %d",
-        days, quote_sql_str(month_start), quote_sql_str(month_end), batch
+        days, quote_sql_str(week_start), quote_sql_str(week_end), batch
     )
     local delete_res, delete_err = mysql.query(delete_sql)
     if not delete_res then
@@ -2507,7 +2535,7 @@ function _M.archive_attack_log_once(force)
     local inserted = insert_res.affected_rows or 0
     local deleted = delete_res.affected_rows or 0
     if inserted > 0 or deleted > 0 then
-        ngx.log(ngx.INFO, "attack_log retention run success, month=", ym, ", days=", days, ", batch=", batch,
+        ngx.log(ngx.INFO, "attack_log retention run success, week=", yw, ", days=", days, ", batch=", batch,
             ", inserted=", inserted, ", deleted=", deleted)
     end
 
@@ -2519,7 +2547,7 @@ function _M.archive_attack_log_once(force)
         days = days,
         batch = batch,
         archive_table = table_name,
-        archive_month = ym
+        archive_week = yw
     }
 end
 
