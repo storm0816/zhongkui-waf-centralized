@@ -589,12 +589,39 @@ local SQL_DELETE_ATTACK_LOG_ARCHIVE_SOURCE = [[
     LIMIT %d
 ]]
 
-local function get_attack_log_archive_week_table_name(yearweek)
-    local yw = tonumber(yearweek)
-    if not yw then
+local function get_attack_log_archive_range_table_name(range_start, range_end)
+    local start_dt = tostring(range_start or "")
+    local end_dt = tostring(range_end or "")
+
+    local start_year, start_month, start_day = start_dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
+    local end_year, end_month, end_day = end_dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
+    if not start_year or not start_month or not start_day or not end_year or not end_month or not end_day then
         return nil
     end
-    return "attack_log_archive_" .. string.format("%06d", yw)
+
+    local start_label = string.format("%s%s%s", start_year, start_month, start_day)
+    local end_ts = os.time({
+        year = tonumber(end_year),
+        month = tonumber(end_month),
+        day = tonumber(end_day),
+        hour = 0,
+        min = 0,
+        sec = 0
+    })
+    if not end_ts then
+        return nil
+    end
+    local end_label = os.date("%Y%m%d", end_ts - 86400)
+    return "attack_log_archive_" .. start_label .. "_" .. end_label
+end
+
+local function get_datetime_label(datetime_str)
+    local dt = tostring(datetime_str or "")
+    local year, month, day = dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
+    if not year or not month or not day then
+        return nil
+    end
+    return string.format("%s%s%s", year, month, day)
 end
 
 local function get_week_bounds_from_request_time(request_time)
@@ -2468,17 +2495,17 @@ function _M.archive_attack_log_once(force)
         return { code = 0, msg = "attackLogRetention is off, skip", skipped = true }
     end
 
-    local week_sql = format([[
-        SELECT YEARWEEK(MIN(request_time), 3) AS yw
+    local range_sql = format([[
+        SELECT MIN(request_time) AS request_time
         FROM attack_log
         WHERE request_time < NOW() - INTERVAL %d DAY
     ]], days)
-    local week_res, week_err = mysql.query(week_sql)
-    if not week_res then
-        ngx.log(ngx.ERR, "failed to query attack_log archive week: ", week_err)
-        return { code = 500, msg = "query archive week failed", error = week_err }
+    local range_res, range_err = mysql.query(range_sql)
+    if not range_res then
+        ngx.log(ngx.ERR, "failed to query attack_log archive range: ", range_err)
+        return { code = 500, msg = "query archive range failed", error = range_err }
     end
-    if not week_res[1] or not week_res[1].yw then
+    if not range_res[1] or not range_res[1].request_time then
         return {
             code = 0,
             msg = "no archive rows",
@@ -2489,26 +2516,21 @@ function _M.archive_attack_log_once(force)
         }
     end
 
-    local yw = tonumber(week_res[1].yw)
-    local table_name = get_attack_log_archive_week_table_name(yw)
-    if not table_name then
-        return { code = 500, msg = "invalid archive week", error = tostring(week_res[1].yw) }
-    end
-
-    local oldest_request_time, oldest_err = get_oldest_archive_request_time(days)
-    if oldest_err then
-        ngx.log(ngx.ERR, "failed to query oldest archive request time: ", oldest_err)
-        return { code = 500, msg = "query oldest archive request time failed", error = oldest_err }
-    end
+    local oldest_request_time = tostring(range_res[1].request_time)
 
     local week_start, week_end = get_week_bounds_from_request_time(oldest_request_time)
     if not week_start or not week_end then
-        return { code = 500, msg = "invalid archive week bounds", error = tostring(yw) }
+        return { code = 500, msg = "invalid archive range bounds", error = oldest_request_time }
+    end
+
+    local table_name = get_attack_log_archive_range_table_name(week_start, week_end)
+    if not table_name then
+        return { code = 500, msg = "invalid archive table name", error = oldest_request_time }
     end
 
     local create_res, create_err = ensure_attack_log_week_archive_table(table_name)
     if not create_res then
-        ngx.log(ngx.ERR, "failed to ensure attack log week archive table: ", table_name, ", err=", create_err)
+        ngx.log(ngx.ERR, "failed to ensure attack log archive table: ", table_name, ", err=", create_err)
         return { code = 500, msg = "ensure archive table failed", error = create_err }
     end
 
@@ -2535,9 +2557,19 @@ function _M.archive_attack_log_once(force)
     local inserted = insert_res.affected_rows or 0
     local deleted = delete_res.affected_rows or 0
     if inserted > 0 or deleted > 0 then
-        ngx.log(ngx.INFO, "attack_log retention run success, week=", yw, ", days=", days, ", batch=", batch,
+        ngx.log(ngx.INFO, "attack_log retention run success, table=", table_name, ", days=", days, ", batch=", batch,
             ", inserted=", inserted, ", deleted=", deleted)
     end
+
+    local archive_start = get_datetime_label(week_start)
+    local archive_end = get_datetime_label(os.date("%Y-%m-%d %H:%M:%S", os.time({
+        year = tonumber(week_end:sub(1, 4)),
+        month = tonumber(week_end:sub(6, 7)),
+        day = tonumber(week_end:sub(9, 10)),
+        hour = tonumber(week_end:sub(12, 13)),
+        min = tonumber(week_end:sub(15, 16)),
+        sec = tonumber(week_end:sub(18, 19))
+    }) - 86400))
 
     return {
         code = 0,
@@ -2547,7 +2579,7 @@ function _M.archive_attack_log_once(force)
         days = days,
         batch = batch,
         archive_table = table_name,
-        archive_week = yw
+        archive_range = string.format("%s_%s", archive_start, archive_end)
     }
 end
 
