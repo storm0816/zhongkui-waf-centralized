@@ -2496,7 +2496,18 @@ function _M.archive_attack_log_once(force)
     end
 
     local range_sql = format([[
-        SELECT MIN(request_time) AS request_time
+        SELECT
+            DATE_FORMAT(
+                DATE_SUB(DATE(MIN(request_time)), INTERVAL WEEKDAY(MIN(request_time)) DAY),
+                '%%Y-%%m-%%d 00:00:00'
+            ) AS week_start,
+            DATE_FORMAT(
+                DATE_ADD(
+                    DATE_SUB(DATE(MIN(request_time)), INTERVAL WEEKDAY(MIN(request_time)) DAY),
+                    INTERVAL 7 DAY
+                ),
+                '%%Y-%%m-%%d 00:00:00'
+            ) AS week_end
         FROM attack_log
         WHERE request_time < NOW() - INTERVAL %d DAY
     ]], days)
@@ -2505,7 +2516,7 @@ function _M.archive_attack_log_once(force)
         ngx.log(ngx.ERR, "failed to query attack_log archive range: ", range_err)
         return { code = 500, msg = "query archive range failed", error = range_err }
     end
-    if not range_res[1] or not range_res[1].request_time then
+    if not range_res[1] or not range_res[1].week_start or not range_res[1].week_end then
         return {
             code = 0,
             msg = "no archive rows",
@@ -2516,16 +2527,12 @@ function _M.archive_attack_log_once(force)
         }
     end
 
-    local oldest_request_time = tostring(range_res[1].request_time)
-
-    local week_start, week_end = get_week_bounds_from_request_time(oldest_request_time)
-    if not week_start or not week_end then
-        return { code = 500, msg = "invalid archive range bounds", error = oldest_request_time }
-    end
+    local week_start = tostring(range_res[1].week_start)
+    local week_end = tostring(range_res[1].week_end)
 
     local table_name = get_attack_log_archive_range_table_name(week_start, week_end)
     if not table_name then
-        return { code = 500, msg = "invalid archive table name", error = oldest_request_time }
+        return { code = 500, msg = "invalid archive table name", error = week_start .. "~" .. week_end }
     end
 
     local create_res, create_err = ensure_attack_log_week_archive_table(table_name)
