@@ -231,13 +231,41 @@ function _M.update_site_module_rule_file(site_id, module_id, str)
     return write_string_to_file(rule_file, str)
 end
 
+local function build_ip_matcher_items(items)
+    local matcher_items = {}
+    if type(items) ~= "table" then
+        return matcher_items
+    end
+
+    for _, item in ipairs(items) do
+        if type(item) == "string" then
+            local value = trim(item)
+            if value ~= "" then
+                local ip = value:match("^(%S+)")
+                if ip and ip ~= "" then
+                    insert(matcher_items, ip)
+                end
+            end
+        end
+    end
+
+    return matcher_items
+end
+
 local function add_ip_group(group, ips)
     if type(ips) ~= "table" or nkeys(ips) == 0 then
         _M.ipgroups[group] = nil
         return
     end
 
-    local matcher, err = ipmatcher.new(ips)
+    local matcher_items = build_ip_matcher_items(ips)
+
+    if nkeys(matcher_items) == 0 then
+        _M.ipgroups[group] = nil
+        return
+    end
+
+    local matcher, err = ipmatcher.new(matcher_items)
     if not matcher then
         ngx.log(ngx.ERR, 'error to add ip group ' .. group, err)
         return
@@ -493,13 +521,25 @@ end
 
 function _M.update_ip_whitelist_content(content)
     local value = trim(content or "")
+    local items = split_multiline_ips(value)
+    local matcher_items = build_ip_matcher_items(items)
+    if nkeys(items) > 0 then
+        local matcher, err = ipmatcher.new(matcher_items)
+        if not matcher then
+            return nil, err or "invalid ip whitelist entry"
+        end
+    end
+    if nkeys(items) > 0 and nkeys(matcher_items) == 0 then
+        return nil, "invalid ip whitelist entry"
+    end
+
     local ok, err = write_string_to_file(_M.CONF_PATH .. "/global_rules/ipWhiteList", value)
     if not ok then
         return ok, err
     end
 
     if _M.is_centralized_mode() and _M.is_master_node() and _M.is_system_option_on("redis") then
-        local redis_ok, sync_err = _M.sync_ip_whitelist_to_redis(split_multiline_ips(value))
+        local redis_ok, sync_err = _M.sync_ip_whitelist_to_redis(items)
         if not redis_ok then
             return nil, sync_err
         end
@@ -510,13 +550,25 @@ end
 
 function _M.update_ip_blacklist_content(content)
     local value = trim(content or "")
+    local items = split_multiline_ips(value)
+    local matcher_items = build_ip_matcher_items(items)
+    if nkeys(items) > 0 then
+        local matcher, err = ipmatcher.new(matcher_items)
+        if not matcher then
+            return nil, err or "invalid ip blacklist entry"
+        end
+    end
+    if nkeys(items) > 0 and nkeys(matcher_items) == 0 then
+        return nil, "invalid ip blacklist entry"
+    end
+
     local ok, err = write_string_to_file(_M.CONF_PATH .. "/global_rules/ipBlackList", value)
     if not ok then
         return ok, err
     end
 
     if _M.is_centralized_mode() and _M.is_master_node() and _M.is_system_option_on("redis") then
-        local redis_ok, sync_err = _M.sync_ip_blacklist_to_redis(split_multiline_ips(value))
+        local redis_ok, sync_err = _M.sync_ip_blacklist_to_redis(items)
         if not redis_ok then
             return nil, sync_err
         end

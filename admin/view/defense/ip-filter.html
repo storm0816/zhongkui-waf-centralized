@@ -70,16 +70,16 @@
 			<div class="layui-row layui-col-space10">
 				<div class="layui-col-md12">名单列表</div>
 			</div>
-				<div class="layui-row layui-col-space10">
-					<div class="layui-col-md12">
-						<div class="layui-form-text">
-							<textarea name="content" placeholder="IP或网段，每行一个，不能为空；不要使用逗号分隔。" style="height: 210px;" class="layui-textarea"></textarea>
-							<div class="layui-form-mid layui-word-aux" style="padding-left: 0;">
-								填写示例：<code>1.2.3.4</code> 或 <code>10.0.0.0/24</code>。多条请换行，不要用逗号（`,` 或 `，`）。
-							</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div class="layui-form-text">
+						<textarea name="content" lay-verify="required|whitelistRule" placeholder="IP 或网段，每行一个；IP 后可用空格添加注释。" style="height: 210px;" class="layui-textarea"></textarea>
+						<div class="layui-form-mid layui-word-aux" style="padding-left: 0;">
+							填写示例：<code>1.2.3.4 办公网</code> 或 <code>10.0.0.0/24 生产网段</code>，一个 IP 和对应注释放在同一行。
 						</div>
 					</div>
 				</div>
+			</div>
 			<div class="layui-row layui-col-space10">
 				<div class="layui-col-md12">
 					<div style="float: right;">
@@ -99,6 +99,7 @@
 
 		<script src="../../component/layui/layui.js"></script>
 		<script src="../../component/pear/pear.js"></script>
+		<script src="../../js/validator.js"></script>
 		
 		<script>
 			layui.use(['form','table','util','jquery','popup','element'], function() {
@@ -112,6 +113,30 @@
 
 				var currentTabId;
 				var disallowArray;
+
+				form.verify({
+					whitelistRule: function(value, elem) {
+						var lines = (value || '').split(/\r?\n/);
+						var hasValue = false;
+
+						for (var i = 0; i < lines.length; i++) {
+							var row = (lines[i] || '').trim();
+							if (!row) {
+								continue;
+							}
+
+							hasValue = true;
+							var match = row.match(/^(\S+)(?:\s+.*)?$/);
+							if (!match || validator.isIPWithCIDR(match[1]) == false) {
+								return '每行先写有效的 IP 或网段，后面可以跟注释';
+							}
+						}
+
+						if (!hasValue) {
+							return '名单内容不能为空';
+						}
+					}
+				});
 
 				// 切换域名
 				form.on('select(filter-site)', function(data) {
@@ -315,22 +340,6 @@
 				form.on('submit(filter-iplist-save)', function(data) {
 					var field = data.field;
 					var content = (field.content || '').trim();
-					var lines = content.split('\n');
-					var hasComma = false;
-
-					$.each(lines, function(i, line) {
-						var item = (line || '').trim();
-						if (item.length > 0 && (item.indexOf(',') >= 0 || item.indexOf('，') >= 0)) {
-							hasComma = true;
-							return false;
-						}
-					});
-
-					if (hasComma) {
-						popup.failure("名单格式错误：每行一条IP/网段，不能使用逗号分隔");
-						return false;
-					}
-
 					$.post('/ip/filter/rule/update', {id: field.id, content: content}, function(data) {
 						if (data && data.code == 200) {
 							table.reloadData('id-table-iplist');
