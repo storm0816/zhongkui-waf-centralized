@@ -51,6 +51,8 @@
 									<ul class="layui-tab-title">
 										<li class="layui-this">人机验证</li>
 										<li>Bot陷阱</li>
+										<li>反爬虫</li>
+										<li>爬虫公约</li>
 									</ul>
 									<div class="layui-tab-content">
 										<div class="layui-tab-item layui-show">
@@ -147,6 +149,107 @@
 												</div>
 												<div class="layui-input-block">
 													<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-trap-save">保存</button>
+													<button type="reset" class="pear-btn">重置</button>
+												</div>
+											</form>
+										</div>
+										<div class="layui-tab-item">
+											<form class="layui-form" lay-filter="filter-form-crawler">
+												<div class="layui-form-item">
+													<label class="layui-form-label">状态</label>
+													<div class="layui-input-block">
+														<input type="checkbox" id="id-crawler-state" name="state" lay-skin="switch" lay-filter="filter-bot-crawler-state" title="ON|OFF" />
+													</div>
+												</div>
+												<div class="layui-form-item">
+													<label class="layui-form-label">检测模式</label>
+													<div class="layui-input-group">
+														<select name="mode" id="id-crawler-mode">
+															<option value="bot">仅爬虫特征UA</option>
+															<option value="all">全部高频访问</option>
+														</select>
+														<div class="layui-input-suffix">全部模式防护更强，但阈值过低可能影响正常用户</div>
+													</div>
+												</div>
+												<div class="layui-form-item">
+													<label class="layui-form-label">访问阈值</label>
+													<div class="layui-input-group">
+														<input type="text" id="id-crawler-threshold" name="threshold" lay-verify="required|number" autocomplete="off" class="layui-input" />
+														<div class="layui-input-suffix">次 / 统计周期</div>
+													</div>
+												</div>
+												<div class="layui-form-item">
+													<label class="layui-form-label">统计周期</label>
+													<div class="layui-input-group">
+														<input type="text" id="id-crawler-duration" name="duration" lay-verify="required|number" autocomplete="off" class="layui-input" />
+														<div class="layui-input-suffix">秒</div>
+													</div>
+												</div>
+												<div class="layui-form-item">
+													<label class="layui-form-label">超限动作</label>
+													<div class="layui-input-group">
+														<select name="action" id="id-crawler-action">
+															<option value="deny">返回 429</option>
+															<option value="redirect">返回拦截页面</option>
+															<option value="captcha">人机验证</option>
+														</select>
+													</div>
+												</div>
+												<div class="layui-form-item">
+													<label class="layui-form-label">自动屏蔽IP</label>
+													<div class="layui-input-group">
+														<input type="checkbox" id="id-crawler-autoIpBlock" name="autoIpBlock" lay-skin="switch" title="ON|OFF" />
+														<div class="layui-input-suffix">超限后加入临时IP黑名单</div>
+													</div>
+												</div>
+												<div class="layui-form-item">
+													<label class="layui-form-label">屏蔽时长</label>
+													<div class="layui-input-group">
+														<input type="text" id="id-crawler-ipBlockExpireInSeconds" name="ipBlockExpireInSeconds" lay-verify="required|number" autocomplete="off" class="layui-input" />
+														<div class="layui-input-suffix">秒，0 为永久</div>
+													</div>
+												</div>
+												<div class="layui-form-item layui-form-text">
+													<label class="layui-form-label">UA正则</label>
+													<div class="layui-input-block">
+														<textarea id="id-crawler-userAgentPattern" name="userAgentPattern" placeholder="用于识别爬虫 User-Agent 的正则表达式" class="layui-textarea"></textarea>
+													</div>
+												</div>
+												<div class="layui-form-item layui-form-text">
+													<label class="layui-form-label">UA例外正则</label>
+													<div class="layui-input-block">
+														<textarea id="id-crawler-allowUserAgentPattern" name="allowUserAgentPattern" placeholder="可选；命中的 User-Agent 不参与反爬虫计数" class="layui-textarea"></textarea>
+													</div>
+												</div>
+												<div class="layui-form-item layui-form-text">
+													<label class="layui-form-label">例外URI</label>
+													<div class="layui-input-block">
+														<textarea id="id-crawler-excludeUris" name="excludeUris" placeholder="每行一个URI前缀，例如 /static/" class="layui-textarea"></textarea>
+													</div>
+												</div>
+												<div class="layui-input-block">
+													<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-crawler-save">保存</button>
+													<button type="reset" class="pear-btn">重置</button>
+												</div>
+											</form>
+										</div>
+										<div class="layui-tab-item">
+											<form class="layui-form" lay-filter="filter-form-robots">
+												<div class="layui-form-item">
+													<label class="layui-form-label">状态</label>
+													<div class="layui-input-block">
+														<input type="checkbox" id="id-robots-state" name="state" lay-skin="switch" lay-filter="filter-bot-robots-state" title="ON|OFF" />
+													</div>
+												</div>
+												<div class="layui-form-item layui-form-text">
+													<label class="layui-form-label">robots.txt</label>
+													<div class="layui-input-block">
+														<textarea id="id-robots-content" name="content" lay-verify="required" placeholder="User-agent: *&#10;Allow: /" style="height: 210px;" class="layui-textarea"></textarea>
+														<div class="layui-form-mid layui-word-aux" style="padding-left: 0;">正规爬虫通常遵守本公约，恶意爬虫仍需由反爬虫策略限制。</div>
+													</div>
+												</div>
+												<div class="layui-input-block">
+													<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-robots-save">保存</button>
 													<button type="reset" class="pear-btn">重置</button>
 												</div>
 											</form>
@@ -253,7 +356,7 @@
 					let botChecked = $("#id-bot-state").prop('checked');
 					let stateChecked = fm.find("input[name='state']").prop('checked');
 
-					fm.find('input, select').each(function() {
+					fm.find('input, select, textarea').each(function() {
 						if (botChecked == false || stateChecked == false) {
 							$(this).prop('disabled', true);
 						} else {
@@ -272,6 +375,14 @@
 							var bot = JSON.parse(res.data);
 							var captcha = bot.captcha;
 							var trap = bot.trap;
+							var crawler = bot.crawler || {
+								state: 'off', mode: 'bot', duration: 60, threshold: 120,
+								action: 'deny', autoIpBlock: 'off', ipBlockExpireInSeconds: 600,
+								userAgentPattern: '(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)',
+								allowUserAgentPattern: '',
+								excludeUris: '/favicon.ico\n/static/\n/assets/'
+							};
+							var robots = bot.robots || {state: 'on', content: 'User-agent: *\nAllow: /'};
 
 							$('#id-bot-state').prop('checked', bot.state == 'on');
 
@@ -291,6 +402,22 @@
 							$('#id-trap-action').val(trap.action);
 
 							disableItems('id-trap-state',  trap.state != 'on', true);
+
+							$('#id-crawler-state').prop('checked', crawler.state == 'on');
+							$('#id-crawler-mode').val(crawler.mode);
+							$('#id-crawler-duration').val(crawler.duration);
+							$('#id-crawler-threshold').val(crawler.threshold);
+							$('#id-crawler-action').val(crawler.action);
+							$('#id-crawler-autoIpBlock').prop('checked', crawler.autoIpBlock == 'on');
+							$('#id-crawler-ipBlockExpireInSeconds').val(crawler.ipBlockExpireInSeconds);
+							$('#id-crawler-userAgentPattern').val(crawler.userAgentPattern);
+							$('#id-crawler-allowUserAgentPattern').val(crawler.allowUserAgentPattern || '');
+							$('#id-crawler-excludeUris').val(crawler.excludeUris);
+							disableItems('id-crawler-state', crawler.state != 'on', true);
+
+							$('#id-robots-state').prop('checked', robots.state == 'on');
+							$('#id-robots-content').val(robots.content);
+							disableItems('id-robots-state', robots.state != 'on', true);
 
 							form.render(null, 'filter-form-bot');
 						}
@@ -442,6 +569,52 @@
 					return false;
 				});
 
+				// 反爬虫配置提交保存
+				form.on('submit(filter-crawler-save)', function(data) {
+					var field = {
+						state: $('#id-crawler-state').prop('checked') ? 'on' : 'off',
+						mode: $('#id-crawler-mode').val(),
+						duration: parseInt($('#id-crawler-duration').val()),
+						threshold: parseInt($('#id-crawler-threshold').val()),
+						action: $('#id-crawler-action').val(),
+						autoIpBlock: $('#id-crawler-autoIpBlock').prop('checked') ? 'on' : 'off',
+						ipBlockExpireInSeconds: parseInt($('#id-crawler-ipBlockExpireInSeconds').val()),
+						userAgentPattern: ($('#id-crawler-userAgentPattern').val() || '').trim(),
+						allowUserAgentPattern: ($('#id-crawler-allowUserAgentPattern').val() || '').trim(),
+						excludeUris: ($('#id-crawler-excludeUris').val() || '').trim()
+					};
+
+					var param = {siteId: $('#site').val(), crawler: JSON.stringify(field)};
+					$.post('/bot/config/crawler/update', param, function(res) {
+						if (res && res.code == 200) {
+							popup.success('保存成功');
+						} else {
+							popup.failure(res.msg);
+						}
+					}, 'json');
+
+					return false;
+				});
+
+				// robots.txt 爬虫公约提交保存
+				form.on('submit(filter-robots-save)', function(data) {
+					var field = {
+						state: $('#id-robots-state').prop('checked') ? 'on' : 'off',
+						content: ($('#id-robots-content').val() || '').trim()
+					};
+
+					var param = {siteId: $('#site').val(), robots: JSON.stringify(field)};
+					$.post('/bot/config/robots/update', param, function(res) {
+						if (res && res.code == 200) {
+							popup.success('保存成功');
+						} else {
+							popup.failure(res.msg);
+						}
+					}, 'json');
+
+					return false;
+				});
+
 				// 规则提交保存事件
 				form.on('submit(filter-rule-save)', function(data) {
 					var field = data.field; // 获取表单字段值
@@ -489,6 +662,8 @@
 					var param = {siteId: $('#site').val(), state : state}
 					disableItems('id-captcha-state', !this.checked, true);
 					disableItems('id-trap-state', !this.checked, true);
+					disableItems('id-crawler-state', !this.checked, true);
+					disableItems('id-robots-state', !this.checked, true);
 
 					$.post('/bot/config/state/update', param, function(data) {
 						if (data && data.code == 200) {
@@ -508,6 +683,16 @@
 				form.on('switch(filter-bot-trap-state)', function(obj) {
 					var checked = this.checked;
 					disableItems('id-trap-state', !checked);
+				});
+
+				form.on('switch(filter-bot-crawler-state)', function(obj) {
+					var checked = this.checked;
+					disableItems('id-crawler-state', !checked);
+				});
+
+				form.on('switch(filter-bot-robots-state)', function(obj) {
+					var checked = this.checked;
+					disableItems('id-robots-state', !checked);
 				});
 
 				$(function() {

@@ -827,6 +827,14 @@ local function load_site_config()
                     site_config[k] = site_config[k] or v
                 end
 
+                -- Bot 子配置按功能继承，兼容升级前没有 crawler/robots 字段的站点配置。
+                if type(global_config.bot) == "table" then
+                    site_config.bot = site_config.bot or {}
+                    for k, v in pairs(global_config.bot) do
+                        site_config.bot[k] = site_config.bot[k] or v
+                    end
+                end
+
                 -- waf全局关闭则关闭站点waf
                 if global_config.waf.state == 'off' then
                     site_config.waf.state = 'off'

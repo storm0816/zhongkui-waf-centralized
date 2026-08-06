@@ -52,6 +52,22 @@
       "ipBlockExpireInSeconds": "600",
       "uri": "/zhongkuiwaf/honey/trap",
       "action": "deny"
+    },
+    "crawler": {
+      "state": "off",
+      "mode": "bot",
+      "duration": 60,
+      "threshold": 120,
+      "action": "deny",
+      "autoIpBlock": "off",
+      "ipBlockExpireInSeconds": 600,
+      "userAgentPattern": "(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)",
+      "allowUserAgentPattern": "",
+      "excludeUris": "/favicon.ico\n/static/\n/assets/"
+    },
+    "robots": {
+      "state": "on",
+      "content": "User-agent: *\nAllow: /"
     }
   },
   "waf": {

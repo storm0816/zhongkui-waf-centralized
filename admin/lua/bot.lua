@@ -7,6 +7,7 @@ local user = require "user"
 local rule_utils = require "lib.rule_utils"
 
 local tonumber = tonumber
+local tostring = tostring
 local gsub = string.gsub
 
 local get_site_config_file = config.get_site_config_file
@@ -19,6 +20,36 @@ local cjson_encode = cjson.encode
 local _M = {}
 
 local MODULE_ID = 'user-agent'
+local DEFAULT_CRAWLER_PATTERN = [[(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)]]
+local DEFAULT_ROBOTS_CONTENT = "User-agent: *\nAllow: /"
+
+local function normalize_state(value)
+    return value == "on" and "on" or "off"
+end
+
+local function validate_number(value, minimum, maximum, field_name)
+    local number = tonumber(value)
+    if not number or number < minimum or number > maximum or number ~= math.floor(number) then
+        return nil, field_name .. " must be an integer between " .. minimum .. " and " .. maximum
+    end
+    return number
+end
+
+local function update_bot_section(site_id, section_name, section_value)
+    local _, content = get_site_config_file(site_id)
+    if not content then
+        return nil, "no config file found"
+    end
+
+    local config_table = cjson_decode(content)
+    if not config_table then
+        return nil, "invalid config file"
+    end
+
+    config_table.bot = config_table.bot or {}
+    config_table.bot[section_name] = section_value
+    return update_site_config_file(site_id, cjson_encode(config_table))
+end
 
 local function save_or_fail(response, ...)
     local ok, err = ...
@@ -171,6 +202,94 @@ function _M.do_request()
             else
                 response.code = 500
                 response.msg = 'param error'
+            end
+        else
+            response.code = 500
+            response.msg = err
+        end
+    elseif uri == "/bot/config/crawler/update" then
+        ngx.req.read_body()
+        local args, err = ngx.req.get_post_args()
+        if args then
+            local site_id = tostring(args.siteId or "")
+            local crawler_raw = args.crawler
+            local ok, crawler = pcall(cjson_decode, crawler_raw or "")
+            if site_id == "" or not ok or type(crawler) ~= "table" then
+                response.code = 500
+                response.msg = "param error"
+            else
+                local duration, duration_err = validate_number(crawler.duration, 1, 86400, "duration")
+                local threshold, threshold_err = validate_number(crawler.threshold, 1, 1000000, "threshold")
+                local block_expire, block_err = validate_number(crawler.ipBlockExpireInSeconds, 0, 31536000, "ipBlockExpireInSeconds")
+                local mode = crawler.mode == "all" and "all" or (crawler.mode == "bot" and "bot" or nil)
+                local allowed_actions = { deny = true, redirect = true, captcha = true }
+                local crawler_action = allowed_actions[crawler.action] and crawler.action or nil
+                local pattern = tostring(crawler.userAgentPattern or DEFAULT_CRAWLER_PATTERN)
+                local _, _, regex_err = ngx.re.find("", pattern, "ijo")
+                local allow_pattern = tostring(crawler.allowUserAgentPattern or "")
+                local _, _, allow_regex_err = ngx.re.find("", allow_pattern, "ijo")
+                local exclude_uris = tostring(crawler.excludeUris or "")
+
+                if duration_err or threshold_err or block_err then
+                    response.code = 500
+                    response.msg = duration_err or threshold_err or block_err
+                elseif not mode then
+                    response.code = 500
+                    response.msg = "invalid crawler mode"
+                elseif not crawler_action then
+                    response.code = 500
+                    response.msg = "invalid crawler action"
+                elseif #pattern > 4096 or regex_err then
+                    response.code = 500
+                    response.msg = regex_err or "user-agent pattern is too long"
+                elseif #allow_pattern > 4096 or allow_regex_err then
+                    response.code = 500
+                    response.msg = allow_regex_err or "allow user-agent pattern is too long"
+                elseif #exclude_uris > 32768 then
+                    response.code = 500
+                    response.msg = "exclude URI content is too long"
+                else
+                    local normalized = {
+                        state = normalize_state(crawler.state),
+                        mode = mode,
+                        duration = duration,
+                        threshold = threshold,
+                        action = crawler_action,
+                        autoIpBlock = normalize_state(crawler.autoIpBlock),
+                        ipBlockExpireInSeconds = block_expire,
+                        userAgentPattern = pattern,
+                        allowUserAgentPattern = allow_pattern,
+                        excludeUris = exclude_uris
+                    }
+                    reload = save_or_fail(response, update_bot_section(site_id, "crawler", normalized))
+                end
+            end
+        else
+            response.code = 500
+            response.msg = err
+        end
+    elseif uri == "/bot/config/robots/update" then
+        ngx.req.read_body()
+        local args, err = ngx.req.get_post_args()
+        if args then
+            local site_id = tostring(args.siteId or "")
+            local robots_raw = args.robots
+            local ok, robots = pcall(cjson_decode, robots_raw or "")
+            if site_id == "" or not ok or type(robots) ~= "table" then
+                response.code = 500
+                response.msg = "param error"
+            else
+                local robots_content = tostring(robots.content or DEFAULT_ROBOTS_CONTENT)
+                if robots_content == "" or #robots_content > 32768 then
+                    response.code = 500
+                    response.msg = "robots.txt content must be between 1 and 32768 bytes"
+                else
+                    local normalized = {
+                        state = normalize_state(robots.state),
+                        content = robots_content
+                    }
+                    reload = save_or_fail(response, update_bot_section(site_id, "robots", normalized))
+                end
             end
         else
             response.code = 500
