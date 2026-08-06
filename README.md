@@ -2,12 +2,15 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
+当前版本：`Version 1.4.2`
+
 ### 功能总览
 
 基础防护能力：
 - 三种运行模式：关闭、保护（拦截+记录）、监控（仅记录）
 - 规则防护：URL/参数/Header/Cookie/Body、上传扩展名、HTTP Method
-- 攻击检测：SQL 注入、XSS、SSRF、CC、Bot、人机验证、ACL、自定义规则
+- 攻击检测：SQL 注入、XSS、SSRF、CC、Bot、反爬虫、人机验证、ACL、自定义规则
+- 爬虫治理：访问频率限制、UA 强制规则、Bot 陷阱、动态 `robots.txt`
 - IP 管控：黑白名单（支持 IPv6 与网段）
 - 敏感数据过滤：身份证、手机号、银行卡、密码等脱敏与关键词过滤
 
@@ -28,11 +31,45 @@
 
 ### 安装与部署
 
-安装前：
+推荐直接使用安装命令：
 
 ```bash
+tar -xzf zhongkui-waf-1.4.2.tar.gz
+cd zhongkui-waf-1.4.2
 chmod +x install.sh
+sudo ./install.sh --role node
 ```
+
+master 节点：
+
+```bash
+sudo ./install.sh --role master
+```
+
+本机 Redis：
+
+```bash
+sudo ./install.sh --role node --init-local-redis --redis-port 16381 --redis-password '<your-redis-password>'
+```
+
+本机 MySQL 和 Redis：
+
+```bash
+sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui --mysql-password '<your-mysql-password>' --init-local-redis --redis-port 16381 --redis-password '<your-redis-password>'
+```
+
+密码直接通过命令参数传入，方便复制部署。外部 MySQL/Redis 的地址和账号仍需提前填写对应的 `conf/system-master.json` 或 `conf/system-node.json`。
+
+高级安装和无人值守参数见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+
+生成版本安装包：
+
+```bash
+chmod +x scripts/build_release.sh
+./scripts/build_release.sh
+```
+
+安装包会生成到 `dist/`，包含离线依赖，并排除 Git、SSH、运行时配置和构建产物。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 
 常用参数：
 
@@ -41,10 +78,11 @@ chmod +x install.sh
 | `--role master\|node` | `master` | 指定当前机器部署为 master 或 node |
 | `--fresh` | 关闭 | 清理重装模式：安装前将`/opt/openresty`整体备份后移走，再进行全新安装 |
 | `--init-local-mysql` | 关闭 | master 机器上同时安装并初始化本机 MySQL |
-| `--mysql-user USER` | `zhongkui_mac` | 配合`--init-local-mysql`使用，指定要创建并写入配置的 MySQL 账号 |
+| `--mysql-user USER` | 空 | 配合`--init-local-mysql`使用，指定要创建并写入配置的 MySQL 账号 |
+| `--mysql-password PASSWORD` | 空 | 配合`--init-local-mysql`使用，指定新建 MySQL 账号密码 |
 | `--init-local-redis` | 关闭 | 使用`waf/redis16381.zip`安装并启动本机 Redis |
 | `--redis-port PORT` | `16381` | 配合`--init-local-redis`使用，指定本机 Redis 端口 |
-| `--redis-password PASSWORD` | `Push@789` | 配合`--init-local-redis`使用，指定本机 Redis 密码 |
+| `--redis-password PASSWORD` | 空 | 配合`--init-local-redis`使用，指定本机 Redis 密码 |
 | `--redis-db DB` | `0` | 配合`--init-local-redis`使用，指定本机 Redis 库号 |
 
 常见部署场景：
@@ -53,14 +91,14 @@ chmod +x install.sh
 |---|---|---|
 | master 使用外部 MySQL 和外部 Redis | `sudo ./install.sh --role master` | 先修改`conf/system-master.json`中的`mysql`和`redis`连接信息 |
 | master 清理重装（保留一份整目录备份） | `sudo ./install.sh --role master --fresh` | 适用于重建环境；会把`/opt/openresty`移动到`/opt/openresty.fresh.bak.<时间>` |
-| master 使用外部 MySQL，本机 Redis | `sudo ./install.sh --role master --init-local-redis --redis-password Push@789` | MySQL 连接仍从`conf/system-master.json`读取；Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
-| master 同时初始化本机 MySQL 和本机 Redis | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui_mac --init-local-redis --redis-password Push@789` | MySQL 会自动切到`127.0.0.1:3306`，Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
+| master 使用外部 MySQL，本机 Redis | `sudo ./install.sh --role master --init-local-redis --redis-password '<strong-random-password>'` | MySQL 连接仍从`conf/system-master.json`读取；Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
+| master 同时初始化本机 MySQL 和本机 Redis | `sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui --mysql-password '<strong-random-password>' --init-local-redis --redis-password '<strong-random-password>'` | MySQL 会自动切到`127.0.0.1:3306`，Redis 会自动切到`127.0.0.1:16381`，默认 `db=0` |
 | node 节点 | `sudo ./install.sh --role node` | 先修改`conf/system-node.json`中的 Redis 连接信息；node 不需要 MySQL |
 | 单机模式 | `sudo ./install.sh --role master` | 先将`conf/system-master.json`中的`centralized.state`改为`off`，并按需配置 MySQL/Redis |
 
 ### 安装脚本行为说明
 
-- `install.sh` 会安装 OpenResty 与依赖，并按角色生成 `conf/system.json`。
+- `install.sh` 会安装 OpenResty 与依赖，并按角色生成 `conf/system.json`；部署前按实际环境检查对应角色模板中的连接信息。
 - 默认不是全新清理安装，会尽量保留现网配置与数据；若需彻底重装请加`--fresh`。
 - `--fresh` 会在安装前将`/opt/openresty`整体备份并移走，再执行全新安装（备份目录：`/opt/openresty.fresh.bak.<时间>`）。
 - 脚本优先使用项目 `waf/` 下离线包，缺失时才尝试联网下载。
@@ -248,18 +286,31 @@ curl http://localhost/?t=../../etc/passwd
 
 #### Bot 管理
 
-##### bot 陷阱
+Bot 管理包含四类能力，它们互相补充，不建议混为同一种规则：
+
+- **反爬虫**：按站点和客户端 IP 统计访问频率，超过阈值后返回 `429`、拦截页、人机验证或自动封禁。
+- **User-Agent 管理**：命中特定 UA 后立即执行动作，适合明确的恶意工具特征，不负责频率判断。
+- **Bot 陷阱**：在 HTML 中加入普通用户不可见的陷阱 URI，访问该 URI 的客户端会被视为 Bot。
+- **爬虫公约**：由 WAF 直接响应 `/robots.txt`，用于向遵守协议的正规爬虫声明允许或禁止抓取的路径。
+
+反爬虫默认关闭，建议先使用“仅爬虫特征 UA”模式和较高阈值，再根据日志逐步调整。`robots.txt` 只是自愿协议，不能代替反爬虫限制。
+
+不要仅凭 `Googlebot`、`Baiduspider` 等 User-Agent 配置“允许访问”。UA 可以伪造，这类规则可能绕过后续 WAF 检测。正规搜索引擎放行应结合来源 IP 或正反向 DNS 验证。
+
+##### Bot 陷阱与 robots.txt
 
 开启 bot 陷阱后，将会在上游服务器返回的 HTML 页面中添加配置的陷阱 URL，这个 URL 隐藏在页面中，对普通正常用户不可见，访问此 URL 的请求被视为 bot。
 
-建议 bot 陷阱结合`robots协议`使用，将陷阱 URI 配置为禁止所有 bot 访问，不听话的 bot 将访问陷阱 URL，从而被识别，而那些遵循`robots协议`的友好 bot 将不会被陷阱捕获。
+可以在“爬虫公约”中禁止正规爬虫访问陷阱 URI。这样遵守协议的爬虫不会触发陷阱，不遵守协议且扫描隐藏链接的爬虫仍可能被识别。注意：把陷阱地址写进 `robots.txt` 也会公开该路径，应结合实际风险决定是否使用。
 
-你可以在 robots.txt 中这样配置：
+示例：
 
-```
+```text
 User-agent: *
 Disallow: /zhongkuiwaf/honey/trap
 ```
+
+完整配置、原理、测试方法和上线建议见：[反爬虫与爬虫公约](./docs/CRAWLER_PROTECTION.md)。
 
 #### 敏感数据过滤
 

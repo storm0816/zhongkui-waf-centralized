@@ -10,3 +10,7 @@
   - 项目结构、主链路、治理建议
 - [ATTACK_LOG_RETENTION.md](./ATTACK_LOG_RETENTION.md)
   - 攻击日志归档与保留策略说明
+- [CRAWLER_PROTECTION.md](./CRAWLER_PROTECTION.md)
+  - 反爬虫、User-Agent 强制规则、Bot 陷阱与 robots.txt 使用说明
+- [INSTALL_PACKAGING.md](./INSTALL_PACKAGING.md)
+  - 项目目录约定、离线依赖、安装包生成与发布检查

@@ -220,6 +220,14 @@ cd /opt/openresty/zhongkui-waf
 - `last_sync_status`
 - `last_sync_at`
 
+### 反爬虫与爬虫公约
+
+- 新增 `bot.crawler` 和 `bot.robots` 配置段，字段说明见 [反爬虫与爬虫公约](CRAWLER_PROTECTION.md)。
+- 升级时应把新增字段合并到生产 `conf/global.json`，不要直接覆盖生产环境已有配置。
+- 推荐首次上线保持反爬虫关闭，先观察访问基线，再按站点逐步启用并调整阈值。
+- `robots.txt` 默认可开启，但发布内容必须符合站点实际抓取策略。
+- 若经过 CDN、SLB 或反向代理，应先确认真实客户端 IP 只来源于可信代理，避免伪造请求头绕过限流。
+
 ## 8. 上线后验证重点
 
 ### Master 必查
@@ -230,6 +238,10 @@ cd /opt/openresty/zhongkui-waf
 4. 后台可登录
 5. 在线节点页正常
 6. 全球/中国大屏可打开
+7. 请求 `/robots.txt` 返回 `HTTP 200`、`text/plain`，内容与后台配置一致
+8. 反爬虫开关、模式、统计窗口和阈值符合发布方案，首次上线默认保持关闭
+9. 测试环境启用反爬虫后，超过阈值的请求返回预期动作，`429` 响应包含 `Retry-After`
+10. OpenResty 错误日志中没有反爬虫配置解析或计数异常
 
 ### Node 必查
 
@@ -237,6 +249,8 @@ cd /opt/openresty/zhongkui-waf
 2. 在线节点页能看到该节点
 3. 规则版本与 master 一致
 4. 白名单/黑名单同步状态正常
+5. `robots.txt` 与 master 预期配置一致
+6. 反爬虫配置已随规则快照同步，测试请求行为与 master 一致
 
 ## 9. 回滚策略
 

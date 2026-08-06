@@ -5,6 +5,7 @@
 - [ ] `openresty` 进程正常，`nginx -t` 通过
 - [ ] `system.json` 角色正确（master: `master=on`，node: `master=off`）
 - [ ] Redis/MySQL 连通正常（账号、端口、密码已确认）
+- [ ] CDN、SLB 或反向代理场景只信任指定代理提供的真实客户端 IP 请求头
 
 ## 2. 集群与规则同步
 - [ ] Master 可写入规则快照 key：`waf:cluster:rules:snapshot`
@@ -17,6 +18,11 @@
 - [ ] 触发封禁后 Redis 出现 `black_ip:*`
 - [ ] 封禁日志可从 Redis 队列落到 MySQL `ip_block_log`
 - [ ] 管理后台“解除封禁”可正常执行，无 500 报错
+- [ ] `/robots.txt` 返回 `HTTP 200`、`text/plain`，内容符合站点爬虫策略
+- [ ] 反爬虫关闭或已使用生产访问基线校准统计窗口与阈值
+- [ ] 测试环境超过阈值后返回预期动作；使用 `429` 时包含 `Retry-After`
+- [ ] 白名单 IP 不受反爬虫限制，非白名单测试 IP 能正常触发限制
+- [ ] 未仅凭 `Googlebot`、`Baiduspider` 等可伪造 User-Agent 配置“允许访问”规则
 
 ## 4. 数据链路验证
 - [ ] `attack_log` 持续入库（字段含 `node_ip`、`attack_type`、`action`）

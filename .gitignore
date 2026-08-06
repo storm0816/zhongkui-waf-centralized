@@ -1,0 +1,22 @@
+# Local credentials and runtime configuration
+/ssh
+/conf/system.json
+/conf/*.local.json
+
+# Release output and temporary build files
+/dist/
+/release/
+/.release-work/
+*.sha256
+
+# Local deployment backups
+*.bak.*
+.codex-backup-*/
+
+# Editor and OS files
+.idea/
+.vscode/
+.vs/
+*.swp
+Thumbs.db
+Desktop.ini

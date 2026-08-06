@@ -36,7 +36,7 @@ master 节点部署时：
 如果 master 需要使用包内 Redis，可以额外添加`--init-local-redis`：
 
 ```bash
-./install.sh --role master --init-local-redis --redis-password Push@789
+./install.sh --role master --init-local-redis --redis-password '<strong-random-password>'
 ```
 
 node 节点部署时：
@@ -47,7 +47,7 @@ node 节点部署时：
 
 安装脚本会优先安装当前目录中的代码，自动复制对应模板为`conf/system.json`，并生成 OpenResty 的`nginx.conf`。master 会 include `admin/conf/admin.conf`开放控制台，node 不会 include 控制台配置。
 
-默认不会在本机安装和初始化 MySQL。master 使用`conf/system-master.json`中的 MySQL 配置连接数据库；如果需要在 master 机器上同时初始化本机 MySQL，可以执行：
+默认不会在本机安装和初始化 MySQL。master 使用`conf/system-master.json`中的 MySQL 配置连接数据库；部署前请按实际环境检查该模板。如果需要在 master 机器上同时初始化本机 MySQL，可以执行：
 
 ```bash
 ./install.sh --role master --init-local-mysql
