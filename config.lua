@@ -41,6 +41,8 @@ local _M = {}
 local config = { system = {}, global = {} }
 local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
 local CLUSTER_RULES_HASH_PLACEHOLDER = "__SNAPSHOT_HASH__"
+-- Lua module state is private to each Nginx worker, unlike ngx.shared dictionaries.
+local worker_rules_snapshot_version
 local storage_security_modules
 
 _M.ipgroups = {}
@@ -1017,11 +1019,10 @@ function _M.pull_cluster_rules_snapshot()
     end
 
     local dict_config = ngx.shared.dict_config
-    local local_version = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
     local redis_version, version_err = redis_cli.get(constants.KEY_REDIS_CLUSTER_RULES_SNAPSHOT_VERSION)
     if redis_version and redis_version ~= ngx.null and redis_version ~= "" then
         redis_version = tostring(redis_version)
-        if local_version and tostring(local_version) == redis_version then
+        if worker_rules_snapshot_version == redis_version then
             return true
         end
     end
@@ -1048,7 +1049,7 @@ function _M.pull_cluster_rules_snapshot()
         return nil, hash_err
     end
 
-    if local_version and tostring(local_version) == version then
+    if worker_rules_snapshot_version == version then
         return true
     end
 
@@ -1057,6 +1058,7 @@ function _M.pull_cluster_rules_snapshot()
         return nil, apply_err
     end
 
+    worker_rules_snapshot_version = version
     dict_config:set(CLUSTER_RULES_VERSION_DICT_KEY, version)
     return true
 end
