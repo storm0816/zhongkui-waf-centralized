@@ -137,6 +137,7 @@
     <div class="layui-btn-group" style="float: right;">
       <button class="layui-btn layui-btn-primary layui-btn-sm" id="btn-show-all">显示全部</button>
       <button class="layui-btn layui-btn-danger layui-btn-sm" id="btn-show-offline">仅离线</button>
+      <button class="layui-btn layui-btn-warm layui-btn-sm" id="btn-show-low-version">低版本</button>
     </div>
     在线节点列表
   </div>
@@ -163,37 +164,6 @@
       var masterWhitelistVersion = 'unknown';
       var masterBlacklistVersion = 'unknown';
       var masterAppVersion = 'unknown';
-
-      function pad2(n) {
-        return n < 10 ? '0' + n : '' + n;
-      }
-
-      function formatDateTime(ts) {
-        var d = new Date(ts);
-        if (isNaN(d.getTime())) {
-          return '-';
-        }
-        return d.getFullYear() + '-' +
-          pad2(d.getMonth() + 1) + '-' +
-          pad2(d.getDate()) + ' ' +
-          pad2(d.getHours()) + ':' +
-          pad2(d.getMinutes()) + ':' +
-          pad2(d.getSeconds());
-      }
-
-      function formatRulePublishTime(version) {
-        if (!version || version === 'unknown') {
-          return '-';
-        }
-        var n = Number(version);
-        if (!isFinite(n) || n <= 0) {
-          return '-';
-        }
-        if (n < 1000000000000) {
-          n = n * 1000;
-        }
-        return formatDateTime(n);
-      }
 
       function timeAgo(ts) {
         if (!ts) return '-';
@@ -222,13 +192,33 @@
         if (row.node_role === 'master') {
           return '<span class="node-pill master">主节点</span>';
         }
-        if (row.sync_state === 'ok') {
-          return '<span class="node-pill ok">已同步</span>';
-        }
         if (row.rules_sync_status === 'failed' || row.whitelist_sync_status === 'failed' || row.blacklist_sync_status === 'failed') {
           return '<span class="node-pill err">同步失败</span>';
         }
-        return '<span class="node-pill warn">版本落后</span>';
+        if (row.sync_state === 'ok') {
+          return '<span class="node-pill ok">已同步</span>';
+        }
+        if (row.rules_sync_status !== 'ok' || row.whitelist_sync_status !== 'ok' || row.blacklist_sync_status !== 'ok') {
+          return '<span class="node-pill warn">等待同步</span>';
+        }
+        return '<span class="node-pill warn">待对齐</span>';
+      }
+
+      function versionDiffItems(row) {
+        var bad = [];
+        if (!row.rules_version || row.rules_version === 'unknown'
+            || masterRulesVersion === 'unknown' || row.rules_version !== masterRulesVersion) {
+          bad.push('规则');
+        }
+        if (!row.whitelist_version || row.whitelist_version === 'unknown'
+            || masterWhitelistVersion === 'unknown' || row.whitelist_version !== masterWhitelistVersion) {
+          bad.push('白名单');
+        }
+        if (!row.blacklist_version || row.blacklist_version === 'unknown'
+            || masterBlacklistVersion === 'unknown' || row.blacklist_version !== masterBlacklistVersion) {
+          bad.push('黑名单');
+        }
+        return bad;
       }
 
       function versionSummaryHtml(row) {
@@ -243,17 +233,7 @@
         if (row.node_role === 'master') {
           return '<div class="state-stack"><div class="main">基准版本</div><div class="sub">主节点当前版本</div></div>';
         }
-        var rulesOk = row.rules_version && row.rules_version !== 'unknown'
-          && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion;
-        var whiteOk = row.whitelist_version && row.whitelist_version !== 'unknown'
-          && masterWhitelistVersion !== 'unknown' && row.whitelist_version === masterWhitelistVersion;
-        var blackOk = row.blacklist_version && row.blacklist_version !== 'unknown'
-          && masterBlacklistVersion !== 'unknown' && row.blacklist_version === masterBlacklistVersion;
-
-        var bad = [];
-        if (!rulesOk) bad.push('规则');
-        if (!whiteOk) bad.push('白名单');
-        if (!blackOk) bad.push('黑名单');
+        var bad = versionDiffItems(row);
 
         if (bad.length === 0) {
           return '<div class="state-stack"><div class="main">版本一致</div><div class="sub">已对齐主节点</div></div>';
@@ -292,6 +272,7 @@
               '<div class="detail-item"><span>主机名</span><strong>' + (row.hostname || '-') + '</strong></div>' +
             '<div class="detail-item"><span>角色</span><strong>' + (row.node_role || '-') + '</strong></div>' +
               '<div class="detail-item"><span>程序版本</span><strong>' + (row.app_version || 'unknown') + '</strong></div>' +
+              '<div class="detail-item"><span>主控程序版本</span><strong>' + masterAppVersion + '</strong></div>' +
               '<div class="detail-item"><span>最后上报</span><strong>' + (row.last_seen || '-') + '</strong></div>' +
             '</div>' +
             '<div class="detail-card">' +
@@ -299,7 +280,9 @@
               '<div class="detail-item"><span>规则版本</span><strong>' + (row.rules_version || 'unknown') + '</strong></div>' +
               '<div class="detail-item"><span>白名单版本</span><strong>' + (row.whitelist_version || 'unknown') + '</strong></div>' +
               '<div class="detail-item"><span>黑名单版本</span><strong>' + (row.blacklist_version || 'unknown') + '</strong></div>' +
-              '<div class="detail-item"><span>规则发布时间</span><strong>' + formatRulePublishTime(row.rules_version) + '</strong></div>' +
+              '<div class="detail-item"><span>主控规则版本</span><strong>' + masterRulesVersion + '</strong></div>' +
+              '<div class="detail-item"><span>主控白名单版本</span><strong>' + masterWhitelistVersion + '</strong></div>' +
+              '<div class="detail-item"><span>主控黑名单版本</span><strong>' + masterBlacklistVersion + '</strong></div>' +
             '</div>' +
             '<div class="detail-card">' +
               '<h4>同步状态</h4>' +
@@ -332,16 +315,11 @@
             if (row.node_role === 'master') {
               row.sync_state = 'master';
             } else {
-              var rulesOk = row.rules_version && row.rules_version !== 'unknown'
-                && masterRulesVersion !== 'unknown' && row.rules_version === masterRulesVersion;
-              var whiteOk = row.whitelist_version && row.whitelist_version !== 'unknown'
-                && masterWhitelistVersion !== 'unknown' && row.whitelist_version === masterWhitelistVersion;
-              var blackOk = row.blacklist_version && row.blacklist_version !== 'unknown'
-                && masterBlacklistVersion !== 'unknown' && row.blacklist_version === masterBlacklistVersion;
+              var versionDiffs = versionDiffItems(row);
               var rulesSyncOk = row.rules_sync_status === 'ok';
               var whiteSyncOk = row.whitelist_sync_status === 'ok';
               var blackSyncOk = row.blacklist_sync_status === 'ok';
-              row.sync_state = (rulesOk && whiteOk && blackOk && rulesSyncOk && whiteSyncOk && blackSyncOk) ? 'ok' : 'lagging';
+              row.sync_state = (versionDiffs.length === 0 && rulesSyncOk && whiteSyncOk && blackSyncOk) ? 'ok' : 'lagging';
             }
           }
           return res;
@@ -459,6 +437,10 @@
 
       $('#btn-show-offline').on('click', function () {
         tableIns.reload({ where: { offline: 1 }, page: { curr: 1 } });
+      });
+
+      $('#btn-show-low-version').on('click', function () {
+        tableIns.reload({ where: { low_version: 1 }, page: { curr: 1 } });
       });
 
       $(document).on('click', '.btn-detail', function () {

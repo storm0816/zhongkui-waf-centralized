@@ -74,10 +74,16 @@ local function listNodes()
     local offset = pager.get_begin(page, limit)
     local online_window, expire, grace = get_online_window()
 
-    local filter = ""
+    local master_ip = get_local_ip()
+    local conditions = {}
     if tostring(args.offline) == "1" then
-        filter = string.format("WHERE last_seen < NOW() - INTERVAL %d SECOND", online_window)
+        conditions[#conditions + 1] = string.format("last_seen < NOW() - INTERVAL %d SECOND", online_window)
     end
+    if tostring(args.low_version) == "1" then
+        conditions[#conditions + 1] = "ip <> " .. quote_sql_str(master_ip)
+        conditions[#conditions + 1] = "COALESCE(NULLIF(app_version, ''), 'unknown') <> " .. quote_sql_str(APP_VERSION)
+    end
+    local filter = #conditions > 0 and ("WHERE " .. table.concat(conditions, " AND ")) or ""
 
     local sql_count = "SELECT COUNT(*) AS total FROM waf_cluster_node " .. filter
     local res, err = mysql.query(sql_count)
@@ -92,7 +98,6 @@ local function listNodes()
     local master_rules_version = "unknown"
     local master_whitelist_version = "unknown"
     local master_blacklist_version = "unknown"
-    local master_ip = get_local_ip()
     local dict_config = ngx.shared.dict_config
     if dict_config then
         local v = dict_config:get(CLUSTER_RULES_VERSION_DICT_KEY)
