@@ -1,36 +1,38 @@
-# 反爬虫功能一键升级包
+# Zhongkui-WAF 1.4.3 傻瓜式累积更新包
 
-适用于已经安装 Zhongkui-WAF、只需要增加反爬虫和 `robots.txt` 功能的服务器。
+适用于已安装的 Zhongkui-WAF。更新包包含 1.4.2 的运行时更新和 1.4.3 多 Worker 规则同步修复。
 
-## 升级命令
+## 一键升级
 
-将升级包上传到服务器后执行：
+将压缩包上传到服务器，在压缩包所在目录执行：
 
 ```bash
-tar -xzf zhongkui-waf-crawler-upgrade-1.4.2.tar.gz
-cd zhongkui-waf-crawler-upgrade-1.4.2
-sudo ./upgrade.sh
+tar -xzf zhongkui-waf-upgrade-1.4.3.tar.gz
+sudo ./zhongkui-waf-upgrade-1.4.3/upgrade.sh
 ```
 
-默认项目目录为：
+默认项目目录：
 
 ```text
 /opt/openresty/zhongkui-waf
 ```
 
-如果项目安装在其他目录：
+安装在其他目录时：
 
 ```bash
-sudo ./upgrade.sh --project-root /实际/项目目录
+sudo ./zhongkui-waf-upgrade-1.4.3/upgrade.sh --project-root /实际/项目目录
 ```
 
-## 脚本会自动完成
+`upgrade.sh` 根据自身所在位置读取更新文件，因此从任何当前工作目录调用都可以。
 
-1. 备份即将更新的代码文件和 `conf/global.json`。
-2. 更新反爬虫后台、前端和运行时代码。
-3. 在现有 `conf/global.json` 中补充 `crawler` 和 `robots`，保留其他生产配置。
-4. 执行 `nginx -t`。
-5. 校验成功后 reload，失败则自动恢复备份。
+## 自动完成的操作
+
+1. 校验升级包内全部文件的 SHA-256。
+2. 备份即将更新的代码和 `conf/global.json`。
+3. 安装 1.4.2 累积更新和 1.4.3 修复。
+4. 仅向现有 `global.json` 补充缺失的 crawler/robots 配置。
+5. 执行 `nginx -t`，通过后自动 reload。
+6. 任一步骤失败时自动恢复备份。
 
 升级不会修改：
 
@@ -38,14 +40,20 @@ sudo ./upgrade.sh --project-root /实际/项目目录
 - `conf/system.json`
 - `conf/system-master.json`
 - `conf/system-node.json`
-- 网站、证书、黑白名单和其他规则文件
+- 站点、证书、IP 黑白名单和安全规则文件
 
-升级完成后，反爬虫默认关闭；请进入 `防护策略 -> Bot管理` 检查阈值后再开启。`robots.txt` 默认开启并允许全部抓取。
+升级后，节点的每个 Nginx Worker 都会独立加载集群规则快照，最长等待约 40 秒即可完成同步。
 
-验证：
+## 生成发布包
+
+执行以下命令会同时生成同版本的累积更新包和完整安装包：
 
 ```bash
-curl -i -H 'Host: 你的业务域名' http://127.0.0.1/robots.txt
+./scripts/build_crawler_upgrade.sh
 ```
 
-预期返回 `HTTP 200` 和 `Content-Type: text/plain`。
+输出文件包括：
+
+- `dist/zhongkui-waf-upgrade-版本号.tar.gz`
+- `dist/zhongkui-waf-版本号.tar.gz`
+- 两个压缩包各自的 `.sha256` 校验文件

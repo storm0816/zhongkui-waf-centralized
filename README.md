@@ -2,7 +2,7 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 1.4.2`
+当前版本：`Version 1.4.3`
 
 ### 功能总览
 

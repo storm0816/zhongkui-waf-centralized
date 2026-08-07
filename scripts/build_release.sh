@@ -91,8 +91,12 @@ if grep -R -n -E '10\.33\.1\.' \
     echo "Release contains credential-like configuration; review templates before publishing." >&2
 fi
 
+rm -f "$ARCHIVE_PATH" "$ARCHIVE_PATH.sha256"
 tar -C "$WORK_DIR" -czf "$ARCHIVE_PATH" "$PACKAGE_NAME"
-sha256sum "$ARCHIVE_PATH" > "$ARCHIVE_PATH.sha256"
+(
+    cd "$OUTPUT_DIR"
+    sha256sum "$(basename "$ARCHIVE_PATH")" > "$(basename "$ARCHIVE_PATH").sha256"
+)
 
 echo "Release created: $ARCHIVE_PATH"
 echo "Checksum created: $ARCHIVE_PATH.sha256"

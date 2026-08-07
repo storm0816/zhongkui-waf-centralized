@@ -7,13 +7,13 @@ PROJECT_ROOT="/opt/openresty/zhongkui-waf"
 NGINX_BIN="${OPENRESTY_NGINX:-/opt/openresty/nginx/sbin/nginx}"
 
 usage() {
-    echo "Usage: sudo ./upgrade.sh [--project-root PATH] [--nginx-bin PATH]"
+    echo "用法: sudo ./upgrade.sh [--project-root PATH] [--nginx-bin PATH]"
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --project-root)
-            PROJECT_ROOT="${2:?--project-root requires a path}"
+            PROJECT_ROOT="${2:?--project-root 需要填写路径}"
             shift 2
             ;;
         --project-root=*)
@@ -21,7 +21,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --nginx-bin)
-            NGINX_BIN="${2:?--nginx-bin requires a path}"
+            NGINX_BIN="${2:?--nginx-bin 需要填写路径}"
             shift 2
             ;;
         --nginx-bin=*)
@@ -46,9 +46,14 @@ GLOBAL_CONFIG="$PROJECT_ROOT/conf/global.json"
 FILES=(
     "admin/lua/bot.lua"
     "admin/view/defense/bot.html"
+    "admin/view/defense/ip-filter.html"
+    "admin/view/system/system.html"
     "config.lua"
-    "lib/lib.lua"
+    "lib/constants.lua"
     "lib/crawler.lua"
+    "lib/lib.lua"
+    "lib/sql.lua"
+    "log_and_traffic.lua"
 )
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -57,7 +62,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ ! -d "$PROJECT_ROOT" ] || [ ! -f "$GLOBAL_CONFIG" ]; then
-    echo "未找到 Zhongkui-WAF 目录或 conf/global.json: $PROJECT_ROOT" >&2
+    echo "未找到 Zhongkui-WAF 或 conf/global.json: $PROJECT_ROOT" >&2
     exit 1
 fi
 
@@ -73,17 +78,12 @@ for relative_path in "${FILES[@]}"; do
     fi
 done
 
-if [ ! -f "$MERGE_SCRIPT" ]; then
-    echo "升级包缺少配置合并脚本。" >&2
+if [ ! -f "$MERGE_SCRIPT" ] || [ ! -f "$PACKAGE_DIR/SHA256SUMS" ]; then
+    echo "升级包不完整，缺少配置合并脚本或 SHA256SUMS。" >&2
     exit 1
 fi
 
-if [ ! -f "$PACKAGE_DIR/SHA256SUMS" ]; then
-    echo "升级包缺少 SHA256SUMS。" >&2
-    exit 1
-fi
-
-echo "[0/4] 校验升级包完整性"
+echo "[0/5] 校验升级包完整性"
 (
     cd "$PACKAGE_DIR"
     sha256sum -c SHA256SUMS
@@ -96,7 +96,7 @@ if [ ! -x "$RESTY_BIN" ] && [ ! -x "$LUAJIT_BIN" ]; then
     exit 1
 fi
 
-BACKUP_DIR="$PROJECT_ROOT/.upgrade-backup/crawler-$(date +%Y%m%d%H%M%S)"
+BACKUP_DIR="$PROJECT_ROOT/.upgrade-backup/1.4.3-$(date +%Y%m%d%H%M%S)"
 mkdir -p "$BACKUP_DIR/conf"
 cp -a "$GLOBAL_CONFIG" "$BACKUP_DIR/conf/global.json"
 
@@ -111,7 +111,7 @@ rollback() {
     local exit_code=$?
     trap - ERR
     set +e
-    echo "升级失败，正在恢复备份: $BACKUP_DIR" >&2
+    echo "升级失败，正在从 $BACKUP_DIR 自动恢复。" >&2
     cp -a "$BACKUP_DIR/conf/global.json" "$GLOBAL_CONFIG"
     for relative_path in "${FILES[@]}"; do
         if [ -f "$BACKUP_DIR/$relative_path" ]; then
@@ -126,13 +126,13 @@ rollback() {
 }
 trap rollback ERR
 
-echo "[1/4] 备份完成: $BACKUP_DIR"
+echo "[1/5] 备份完成: $BACKUP_DIR"
 
 for relative_path in "${FILES[@]}"; do
     mkdir -p "$PROJECT_ROOT/$(dirname "$relative_path")"
     cp -a "$PAYLOAD_DIR/$relative_path" "$PROJECT_ROOT/$relative_path"
 done
-echo "[2/4] 反爬虫代码更新完成"
+echo "[2/5] 1.4.2 累积更新和 1.4.3 修复文件复制完成"
 
 if [ -x "$RESTY_BIN" ]; then
     "$RESTY_BIN" "$MERGE_SCRIPT" "$GLOBAL_CONFIG"
@@ -143,15 +143,15 @@ else
 fi
 chown --reference="$BACKUP_DIR/conf/global.json" "$GLOBAL_CONFIG"
 chmod --reference="$BACKUP_DIR/conf/global.json" "$GLOBAL_CONFIG"
-echo "[3/4] crawler/robots 配置合并完成"
+echo "[3/5] crawler/robots 配置合并完成，原配置已保留"
 
 "$NGINX_BIN" -t
+echo "[4/5] Nginx 配置校验通过"
+
 "$NGINX_BIN" -s reload
 trap - ERR
-
-echo "[4/4] Nginx 校验和重载完成"
+echo "[5/5] Nginx 重载完成"
 echo
-echo "升级成功。"
-echo "反爬虫默认关闭，请在后台确认阈值后再开启。"
-echo "robots.txt 默认开启，默认内容为允许全部抓取。"
+echo "升级成功，当前版本: 1.4.3"
+echo "所有 Worker 将在约 40 秒内完成集群规则同步。"
 echo "备份目录: $BACKUP_DIR"

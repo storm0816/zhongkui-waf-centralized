@@ -19,7 +19,7 @@
     "secret": "2215D605B798A5CCEB6D5C900EE3585B",
     "mysql": {
         "state": "on",
-        "host": "10.33.1.140",
+        "host": "10.10.10.10",
         "port": "33061",
         "user": "zhongkui",
         "password": "#rwcTjKk&6xR",
@@ -29,7 +29,7 @@
     },
     "redis": {
         "state": "on",
-        "host": "10.33.1.213",
+        "host": "10.10.10.10",
         "password": "Dzh@20219988",
         "timeouts": "1000,1000,1000",
         "poolSize": 10,

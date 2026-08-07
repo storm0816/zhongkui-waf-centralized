@@ -37,16 +37,21 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-PACKAGE_NAME="zhongkui-waf-crawler-upgrade-$VERSION"
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhongkui-crawler-upgrade.XXXXXX")"
+PACKAGE_NAME="zhongkui-waf-upgrade-$VERSION"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zhongkui-upgrade.XXXXXX")"
 STAGE_DIR="$WORK_DIR/$PACKAGE_NAME"
 ARCHIVE_PATH="$OUTPUT_DIR/$PACKAGE_NAME.tar.gz"
 FILES=(
     "admin/lua/bot.lua"
     "admin/view/defense/bot.html"
+    "admin/view/defense/ip-filter.html"
+    "admin/view/system/system.html"
     "config.lua"
-    "lib/lib.lua"
+    "lib/constants.lua"
     "lib/crawler.lua"
+    "lib/lib.lua"
+    "lib/sql.lua"
+    "log_and_traffic.lua"
 )
 
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -73,8 +78,15 @@ chmod +x "$STAGE_DIR/upgrade.sh"
     done > SHA256SUMS
 )
 
+rm -f "$ARCHIVE_PATH" "$ARCHIVE_PATH.sha256"
 tar -C "$WORK_DIR" -czf "$ARCHIVE_PATH" "$PACKAGE_NAME"
-sha256sum "$ARCHIVE_PATH" > "$ARCHIVE_PATH.sha256"
+(
+    cd "$OUTPUT_DIR"
+    sha256sum "$(basename "$ARCHIVE_PATH")" > "$(basename "$ARCHIVE_PATH").sha256"
+)
 
-echo "Crawler upgrade package created: $ARCHIVE_PATH"
+echo "Upgrade package created: $ARCHIVE_PATH"
 echo "Checksum created: $ARCHIVE_PATH.sha256"
+
+echo "Building matching full release package..."
+"$SCRIPT_DIR/build_release.sh" --version "$VERSION" --output-dir "$OUTPUT_DIR"
