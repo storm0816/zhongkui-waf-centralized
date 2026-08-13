@@ -576,7 +576,7 @@ if [ "$ROLE" = "master" ] && [ "$INIT_LOCAL_MYSQL" = "on" ]; then
     sleep 5
 
     # 创建 MySQL 用户和数据库
-    MYSQL_PASSWORD="#rwcTjKk&6xR"
+    MYSQL_PASSWORD="CHANGE_ME"
     MYSQL_DATABASE="zhongkui_waf"
 
     # 执行 MySQL 命令

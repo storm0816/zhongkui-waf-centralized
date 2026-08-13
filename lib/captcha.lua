@@ -2,6 +2,7 @@
 -- Copyright (c) 2023 bukale bukale2022@163.com
 
 local config = require "config"
+local bot_uri = require "bot_uri"
 local redis_cli = require "redis_cli"
 local constants = require "constants"
 local request = require "request"
@@ -34,6 +35,13 @@ local CHALLENGE_HTML = get_system_config().challenge_html
 local SECRET = get_system_config("secret")
 
 local _M = {}
+
+local function is_uri_excluded()
+    local bot_config = get_site_config("bot")
+    local crawler_config = type(bot_config) == "table" and bot_config.crawler or nil
+    return type(crawler_config) == "table"
+        and bot_uri.is_excluded(ngx.var.uri or "/", crawler_config.excludeUris)
+end
 
 math.randomseed(os.time())
 
@@ -411,6 +419,10 @@ function _M.trigger_captcha()
         return
     end
 
+    if is_uri_excluded() then
+        return
+    end
+
     if _M.check_access_token() then
         return
     end
@@ -457,6 +469,10 @@ function _M.check_captcha()
 
     local captcha = get_site_config("bot").captcha
     if captcha.state ~= "on" then
+        return
+    end
+
+    if is_uri_excluded() then
         return
     end
 

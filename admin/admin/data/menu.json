@@ -132,12 +132,12 @@
 				"href": "view/system/system.html"
 			},
 			{
-				"id": 64,
-				"title": "密码修改",
-				"icon": "pear-icon pear-icon-keyboard-9",
+				"id": 65,
+				"title": "用户与权限",
+				"icon": "layui-icon layui-icon-group",
 				"type": 1,
 				"openType": "_iframe",
-				"href": "view/system/password.html"
+				"href": "view/system/access-control.html"
 			}
 		]
 	},

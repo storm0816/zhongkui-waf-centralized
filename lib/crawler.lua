@@ -5,6 +5,7 @@ local action = require "action"
 local config = require "config"
 local redis_cli = require "redis_cli"
 local stringutf8 = require "stringutf8"
+local bot_uri = require "bot_uri"
 
 local tonumber = tonumber
 local tostring = tostring
@@ -22,21 +23,7 @@ local _M = {}
 local DEFAULT_USER_AGENT_PATTERN = [[(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)]]
 local DEFAULT_ROBOTS_CONTENT = "User-agent: *\nAllow: /"
 
-local function is_uri_excluded(uri, value)
-    if type(value) ~= "string" or value == "" then
-        return false
-    end
-
-    local normalized = value:gsub("\r\n", "\n"):gsub("\r", "\n")
-    for line in normalized:gmatch("[^\n]+") do
-        local prefix = trim(line)
-        if prefix ~= "" and uri:sub(1, #prefix) == prefix then
-            return true
-        end
-    end
-
-    return false
-end
+_M.is_uri_excluded = bot_uri.is_excluded
 
 local function is_crawler_request(crawler_config, user_agent)
     local allow_pattern = trim(crawler_config.allowUserAgentPattern or "")
@@ -121,7 +108,7 @@ function _M.check()
     end
 
     local uri = ngx.var.uri or "/"
-    if is_uri_excluded(uri, crawler_config.excludeUris) then
+    if _M.is_uri_excluded(uri, crawler_config.excludeUris) then
         return false
     end
 

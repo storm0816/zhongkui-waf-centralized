@@ -50,6 +50,8 @@ FILES=(
     "admin/view/system/system.html"
     "config.lua"
     "lib/constants.lua"
+    "lib/bot_uri.lua"
+    "lib/captcha.lua"
     "lib/crawler.lua"
     "lib/lib.lua"
     "lib/sql.lua"
@@ -68,8 +70,8 @@ for relative_path in "${FILES[@]}"; do
     cp -a "$PROJECT_ROOT/$relative_path" "$STAGE_DIR/payload/$relative_path"
 done
 
-cp "$SCRIPT_DIR/crawler_upgrade.sh" "$STAGE_DIR/upgrade.sh"
-cp "$SCRIPT_DIR/merge_crawler_config.lua" "$STAGE_DIR/merge_crawler_config.lua"
+    cp "$SCRIPT_DIR/upgrade/crawler_upgrade.sh" "$STAGE_DIR/upgrade.sh"
+    cp "$SCRIPT_DIR/upgrade/merge_crawler_config.lua" "$STAGE_DIR/merge_crawler_config.lua"
 cp "$PROJECT_ROOT/docs/CRAWLER_UPGRADE.md" "$STAGE_DIR/README.md"
 chmod +x "$STAGE_DIR/upgrade.sh"
 

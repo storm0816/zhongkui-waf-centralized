@@ -16,14 +16,31 @@
         "language": "zh-CN"
     },
     "html": "",
-    "secret": "2215D605B798A5CCEB6D5C900EE3585B",
+    "secret": "CHANGE_ME",
+    "auth": {
+        "mfa_required": "off"
+    },
+    "ldap": {
+        "state": "off",
+        "servers": [
+            "ldap://10.10.10.10:389"
+        ],
+        "bind_user": "",
+        "bind_password": "",
+        "search_base": "",
+        "user_attribute": "sAMAccountName",
+        "bind_template": "%s",
+        "start_tls": "off",
+        "tls_verify": "on",
+        "timeout": 5000
+    },
     "mysql": {
         "state": "off"
     },
     "redis": {
         "state": "on",
         "host": "10.10.10.10",
-        "password": "Dzh@20219988",
+        "password": "",
         "timeouts": "1000,1000,1000",
         "poolSize": 10,
         "failure_threshold": 3,
@@ -55,5 +72,10 @@
         "attack_log_flush_interval_seconds": 10,
         "attack_log_flush_batch_size": 2000,
         "attack_log_flush_max_batches_per_round": 10
+    },
+    "dingtalk": {
+        "state": "off",
+        "webhook": "",
+        "at_mobiles": ""
     }
 }

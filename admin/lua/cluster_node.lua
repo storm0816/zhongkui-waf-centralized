@@ -8,6 +8,7 @@ local format = string.format
 local ipairs = ipairs
 local config = require "config"
 local constants = require "constants"
+local cluster_rules_store = require "cluster_rules_store"
 local get_system_config = config.get_system_config
 local ngx_log = ngx.log
 local ERR = ngx.ERR
@@ -195,6 +196,19 @@ local function get_node_stats()
     }
 end
 
+local function get_release_status()
+    local response = { code = 0, msg = "", data = {} }
+    local release, err = cluster_rules_store.get_latest_status()
+    if err then
+        response.code = 500
+        response.msg = "查询发布状态失败: " .. tostring(err)
+        return response
+    end
+    response.data = release or {}
+    response.data.restore = config.get_rule_restore_status()
+    return response
+end
+
 -- 近期受攻击节点概览
 local function get_attack_summary()
     local response = { code = 0, msg = "", data = {} }
@@ -252,6 +266,10 @@ end
 -- 删除节点（仅允许离线节点）
 local function delete_node(ip)
     local online_window = get_online_window()
+    local master_ip = get_local_ip()
+    if ip == master_ip then
+        return { code = 403, msg = "master node cannot be deleted" }
+    end
     local sql_check = format("SELECT last_seen FROM waf_cluster_node WHERE ip = %s", quote_sql_str(ip))
     local res = mysql.query(sql_check)
     if not res or not res[1] then
@@ -302,6 +320,8 @@ function _M.do_request()
         response = listNodes()
     elseif uri == "/clusternode/stat" then
         response = get_node_stats()
+    elseif uri == "/clusternode/release/status" then
+        response = get_release_status()
     elseif uri == "/clusternode/attack/summary" then
         response = get_attack_summary()
     elseif uri == "/clusternode/delete" and ngx.req.get_method() == "POST" then

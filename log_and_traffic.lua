@@ -262,7 +262,25 @@ local function write_ip_block_log()
             quote_sql_str(attack_type), quote_sql_str(start_time), ip_block_expire_in_seconds, endTime,
             quote_sql_str(action))
 
-        write_sql_to_queue(constants.KEY_IP_BLOCK_LOG, sql_str)
+        -- Keep the notification data with the SQL item so the master can notify
+        -- only after the matching ip_block_log record is committed to MySQL.
+        local queue_value = cjson_encode({
+            sql = sql_str,
+            notify = {
+                ip = ip,
+                attack_type = attack_type,
+                duration = ip_block_expire_in_seconds,
+                action = action,
+                server = ngx.var.host or "",
+                uri = ngx.var.uri or ""
+            }
+        })
+        if queue_value then
+            write_sql_to_queue(constants.KEY_IP_BLOCK_LOG, queue_value)
+        else
+            ngx.log(ngx.ERR, "failed to encode ip block log queue payload")
+            write_sql_to_queue(constants.KEY_IP_BLOCK_LOG, sql_str)
+        end
     else
         local host_logger = logger_factory.get_logger(LOG_PATH .. "ipBlock.log", 'ipBlock', true)
         host_logger:log(concat({ ngx.localtime(), ip, attack_type, ip_block_expire_in_seconds .. 's' }, ' ') .. "\n")

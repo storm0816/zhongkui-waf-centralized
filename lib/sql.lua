@@ -3,6 +3,7 @@
 
 local mysql = require "mysql_cli"
 local config = require "config"
+local dingtalk = require "dingtalk"
 local utils = require "utils"
 local constants = require "constants"
 local cjson = require "cjson.safe"
@@ -1484,10 +1485,40 @@ function _M.write_sql_queue_to_mysql(premature, key)
         value = dict_sql_queue:lpop(key)
 
         if index == BATCH_SIZE or value == nil then
+            local notifications = nil
+            if key == constants.KEY_IP_BLOCK_LOG then
+                local normalized_values = newtab(BATCH_SIZE, 0)
+                notifications = newtab(BATCH_SIZE, 0)
+                local normalized_index = 1
+                local notification_index = 1
+                for _, item in ipairs(buffer) do
+                    local payload = cjson.decode(item)
+                    if type(payload) == "table" and type(payload.sql) == "string" then
+                        normalized_values[normalized_index] = payload.sql
+                        normalized_index = normalized_index + 1
+                        if type(payload.notify) == "table" then
+                            notifications[notification_index] = payload.notify
+                            notification_index = notification_index + 1
+                        end
+                    else
+                        normalized_values[normalized_index] = item
+                        normalized_index = normalized_index + 1
+                    end
+                end
+                buffer = normalized_values
+            end
+
             local sql_values = concat(buffer, ',')
 
             if sql_values then
-                mysql.query(sql_str .. sql_values)
+                local res, err = mysql.query(sql_str .. sql_values)
+                if not res then
+                    ngx.log(ngx.ERR, "failed to write ", key, " queue to mysql: ", err)
+                elseif notifications then
+                    for _, notification in ipairs(notifications) do
+                        dingtalk.notify_ip_block(notification)
+                    end
+                end
                 insert_time = insert_time + 1
             end
 
@@ -1555,12 +1586,38 @@ function _M.write_ip_block_log_redis_to_mysql()
     local queue_values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG, BATCH_SIZE)
 
     if queue_values and queue_values[1] then
-        local sql_str = SQL_INSERT_IP_BLOCK_LOG .. concat(queue_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
+        local sql_values = newtab(BATCH_SIZE, 0)
+        local notifications = newtab(BATCH_SIZE, 0)
+        local index = 1
+        local notification_index = 1
+        for _, value in ipairs(queue_values) do
+            local payload = cjson.decode(value)
+            if type(payload) == "table" and type(payload.sql) == "string" then
+                sql_values[index] = payload.sql
+                index = index + 1
+                if type(payload.notify) == "table" then
+                    notifications[notification_index] = payload.notify
+                    notification_index = notification_index + 1
+                end
+            else
+                -- Compatibility with queues written before notification payloads.
+                sql_values[index] = value
+                index = index + 1
+            end
+        end
+
+        local sql_str = SQL_INSERT_IP_BLOCK_LOG .. concat(sql_values, ',') .. " ON DUPLICATE KEY UPDATE update_time = NOW()"
         local res, err = mysql.query(sql_str)
-        if not res and not is_duplicate_entry_error(err) then
-            ngx.log(4, "failed to write ip block log queue to mysql: ", err)
-            redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG, queue_values, get_system_config('redis').expire_time)
+        if not res then
+            if not is_duplicate_entry_error(err) then
+                ngx.log(4, "failed to write ip block log queue to mysql: ", err)
+                redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG, queue_values, get_system_config('redis').expire_time)
+            end
             return
+        end
+
+        for _, notification in ipairs(notifications) do
+            dingtalk.notify_ip_block(notification)
         end
     end
 
@@ -1907,6 +1964,7 @@ function _M.write_attack_log_redis_to_mysql()
                 redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_ATTACK_LOG, raw_values, get_system_config('redis').expire_time)
                 return
             end
+
         end
     end
 end

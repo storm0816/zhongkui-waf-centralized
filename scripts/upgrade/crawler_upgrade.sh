@@ -52,6 +52,8 @@ FILES=(
     "admin/view/system/system.html"
     "config.lua"
     "lib/constants.lua"
+    "lib/bot_uri.lua"
+    "lib/captcha.lua"
     "lib/crawler.lua"
     "lib/lib.lua"
     "lib/sql.lua"

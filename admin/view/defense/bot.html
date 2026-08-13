@@ -6,6 +6,14 @@
 		<title>Bot管理</title>
 		<link href="../../component/pear/css/pear.css" rel="stylesheet">
 		<style>
+			.crawler-section { margin-bottom: 18px; padding: 18px 18px 4px; border: 1px solid #e5e7eb; background: #fff; }
+			.crawler-section-title { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; font-weight: 600; color: #243047; }
+			.crawler-section-title small { font-weight: 400; color: #7b8493; }
+			.crawler-section-disabled { background: #fafafa; }
+			.crawler-exception { border-left: 4px solid #2f8cf0; background: #f5f9ff; }
+			.crawler-badge { padding: 2px 8px; border-radius: 10px; background: #e7f2ff; color: #1677d2; font-size: 12px; font-weight: 400; }
+		</style>
+		<style>
 			.layui-form-select .layui-input {padding-right: 15px; cursor: pointer;}
 			.layui-tab-content {padding-bottom: 0px;}
 		</style>
@@ -153,14 +161,18 @@
 												</div>
 											</form>
 										</div>
-										<div class="layui-tab-item">
-											<form class="layui-form" lay-filter="filter-form-crawler">
-												<div class="layui-form-item">
-													<label class="layui-form-label">状态</label>
-													<div class="layui-input-block">
-														<input type="checkbox" id="id-crawler-state" name="state" lay-skin="switch" lay-filter="filter-bot-crawler-state" title="ON|OFF" />
-													</div>
+									<div class="layui-tab-item">
+										<form class="layui-form" lay-filter="filter-form-crawler">
+											<div class="crawler-section" id="id-crawler-rate-section">
+												<div class="crawler-section-title">访问频率限制 <small>按来源 IP 统计访问频率，关闭后不计数、不执行超限动作</small></div>
+											<div class="layui-form-item">
+												<label class="layui-form-label">启用限制</label>
+												<div class="layui-input-block">
+													<input type="checkbox" id="id-crawler-state" name="state" lay-skin="switch" lay-filter="filter-bot-crawler-state" title="ON|OFF" />
+													<span class="layui-form-mid layui-word-aux" id="id-crawler-state-hint">当前仅关闭频率限制，不影响下方 Bot/captcha 例外路径</span>
 												</div>
+											</div>
+											<div id="id-crawler-rate-settings">
 												<div class="layui-form-item">
 													<label class="layui-form-label">检测模式</label>
 													<div class="layui-input-group">
@@ -215,18 +227,24 @@
 														<textarea id="id-crawler-userAgentPattern" name="userAgentPattern" placeholder="用于识别爬虫 User-Agent 的正则表达式" class="layui-textarea"></textarea>
 													</div>
 												</div>
-												<div class="layui-form-item layui-form-text">
-													<label class="layui-form-label">UA例外正则</label>
+											<div class="layui-form-item layui-form-text">
+												<label class="layui-form-label">UA例外正则</label>
 													<div class="layui-input-block">
 														<textarea id="id-crawler-allowUserAgentPattern" name="allowUserAgentPattern" placeholder="可选；命中的 User-Agent 不参与反爬虫计数" class="layui-textarea"></textarea>
-													</div>
 												</div>
-												<div class="layui-form-item layui-form-text">
-													<label class="layui-form-label">例外URI</label>
-													<div class="layui-input-block">
-														<textarea id="id-crawler-excludeUris" name="excludeUris" placeholder="每行一个URI前缀，例如 /static/" class="layui-textarea"></textarea>
-													</div>
+											</div>
+											</div>
+											</div>
+											<div class="crawler-section crawler-exception" id="id-crawler-exception-section">
+												<div class="crawler-section-title">Bot/captcha 公共例外路径 <span class="crawler-badge">独立生效</span><small>不受上方“访问频率限制”开关影响</small></div>
+											<div class="layui-form-item layui-form-text">
+												<label class="layui-form-label">例外路径</label>
+												<div class="layui-input-block">
+													<textarea id="id-crawler-excludeUris" name="excludeUris" placeholder="每行一个；=/token 为精确路径，/static/ 为前缀" class="layui-textarea"></textarea>
+													<div class="layui-form-mid layui-word-aux">命中后不参与反爬虫计数，也不触发或继续执行 captcha；接口建议使用 <code>=/token</code> 精确排除。</div>
 												</div>
+											</div>
+											</div>
 												<div class="layui-input-block">
 													<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-crawler-save">保存</button>
 													<button type="reset" class="pear-btn">重置</button>
@@ -355,6 +373,19 @@
 
 					let botChecked = $("#id-bot-state").prop('checked');
 					let stateChecked = fm.find("input[name='state']").prop('checked');
+					if (id === 'id-crawler-state') {
+						let rateEnabled = botChecked && stateChecked;
+						$('#id-crawler-rate-settings').find('input, select, textarea').prop('disabled', !rateEnabled);
+						$('#id-crawler-rate-section').toggleClass('crawler-section-disabled', !rateEnabled);
+						$('#id-crawler-state-hint').text(stateChecked
+							? '频率限制已启用，超过阈值后执行下方配置的动作'
+							: '当前仅关闭频率限制，不影响下方 Bot/captcha 例外路径');
+						$('#id-crawler-exception-section').find('textarea').prop('disabled', !botChecked);
+						fm.find("input[name='state']").prop('disabled', !botChecked);
+						fm.find('button').prop('disabled', !botChecked);
+						form.render(null, fm.attr('lay-filter'));
+						return;
+					}
 
 					fm.find('input, select, textarea').each(function() {
 						if (botChecked == false || stateChecked == false) {
@@ -380,7 +411,7 @@
 								action: 'deny', autoIpBlock: 'off', ipBlockExpireInSeconds: 600,
 								userAgentPattern: '(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)',
 								allowUserAgentPattern: '',
-								excludeUris: '/favicon.ico\n/static/\n/assets/'
+									excludeUris: '/favicon.ico\n/static/\n/assets/\n=/token'
 							};
 							var robots = bot.robots || {state: 'on', content: 'User-agent: *\nAllow: /'};
 

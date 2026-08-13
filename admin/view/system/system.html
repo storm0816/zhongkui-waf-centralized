@@ -5,10 +5,27 @@
 		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
 		<title>系统设置</title>
 		<link href="../../component/pear/css/pear.css" rel="stylesheet">
+		<style>
+			.settings-pair { display:flex; align-items:stretch; }
+			.settings-pair > div { display:flex; }
+			.settings-pair form { display:flex; width:100%; }
+			.settings-pair .layui-card { flex:1; width:100%; }
+			.ldap-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); column-gap:24px; }
+			.ldap-wide { grid-column:1 / -1; }
+			.ldap-actions { display:flex; align-items:center; gap:10px; margin:8px 0 0 110px; }
+			.readonly-notice { display:none; margin:0 0 10px; padding:10px 14px; color:#7a5a00; background:#fff9e8; border:1px solid #f1dd9b; border-radius:2px; }
+			.readonly-mode .layui-form-switch { cursor:not-allowed; opacity:.62; }
+			@media (max-width: 992px) {
+				.settings-pair { display:block; }
+				.ldap-grid { grid-template-columns:1fr; }
+				.ldap-wide { grid-column:auto; }
+			}
+		</style>
 	</head>
 	<body class="pear-container">
-		<div class="layui-row layui-col-space10">
-			<div class="layui-col-md12">
+		<div class="readonly-notice" id="readonly-notice">当前账号为只读权限：可以查看系统配置，但不能修改开关或保存配置。</div>
+		<div class="layui-row layui-col-space10 settings-pair">
+			<div class="layui-col-md8">
 				<form class="layui-form" lay-filter="filter-form-log">
 					<div class="layui-card" lay-filter="component-form-element">
 						<div class="layui-card-header">攻击日志设置</div>
@@ -45,6 +62,18 @@
 									</div>
 								</div>
 							</div>
+						</div>
+					</div>
+				</form>
+			</div>
+			<div class="layui-col-md4">
+				<form class="layui-form" lay-filter="filter-form-auth">
+					<div class="layui-card">
+						<div class="layui-card-header">登录安全</div>
+						<div class="layui-card-body">
+							<div class="layui-form-item"><label class="layui-form-label" style="width:auto;">所有用户强制 MFA</label><div class="layui-input-block"><input type="checkbox" name="mfa_required" lay-skin="switch" title="ON|OFF"></div></div>
+							<div class="layui-form-mid layui-word-aux">开启后，未绑定用户会在下次登录时完成 MFA 绑定。</div>
+							<div class="layui-input-block"><button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-auth-save" style="display:none;">保存</button></div>
 						</div>
 					</div>
 				</form>
@@ -160,20 +189,89 @@
 		</div>
 
 		<div class="layui-row layui-col-space10">
-			<div class="layui-col-md12">
-				<form class="layui-form" lay-filter="filter-form-secret">
-					<div class="layui-card" lay-filter="component-form-element">
-						<div class="layui-card-header">密钥设置</div>
-						<div class="layui-card-body">
-							<div class="layui-row layui-col-space10">
-								<div class="layui-col-md6" style="padding-left: 20px;">密钥用于请求签名等，建议长度长一点</div>
+		<div class="layui-col-md12">
+			<form class="layui-form" lay-filter="filter-form-secret">
+				<div class="layui-card" lay-filter="component-form-element">
+					<div class="layui-card-header">密钥设置</div>
+					<div class="layui-card-body">
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md6" style="padding-left: 20px;">密钥用于请求签名等，建议长度长一点</div>
+						</div>
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md6" style="padding-left: 20px;">
+								<input type="text" name="secret" lay-verify="required|secretRule" autocomplete="off" class="layui-input" />
 							</div>
-							<div class="layui-row layui-col-space10">
-								<div class="layui-col-md6" style="padding-left: 20px;">
-									<input type="text" name="secret" lay-verify="required|secretRule" autocomplete="off" class="layui-input" />
+							<div class="layui-col-md6">
+								<button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-secret-save" style="display: none;">保存</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<div class="layui-row layui-col-space10">
+		<div class="layui-col-md12">
+			<form class="layui-form" lay-filter="filter-form-dingtalk">
+				<div class="layui-card" lay-filter="component-form-element">
+					<div class="layui-card-header">钉钉通知</div>
+					<div class="layui-card-body layui-row layui-col-space10">
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md8" style="padding-left: 20px;">开启后，每当有新 IP 被封禁时，通过钉钉机器人 Webhook 推送告警信息，可 @ 指定手机号。</div>
+						</div>
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md3">
+								<label class="layui-form-label" style="width: auto;">启用通知</label>
+								<div class="layui-input-block">
+									<input type="checkbox" name="state" lay-skin="switch" title="ON|OFF" />
 								</div>
-								<div class="layui-col-md6">
-									<button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-secret-save" style="display: none;">保存</button>
+							</div>
+						</div>
+						<div class="layui-form-item">
+							<label class="layui-form-label" style="width: auto;">Webhook URL</label>
+							<div class="layui-input-block" style="margin-left: 120px;">
+								<input type="text" name="webhook" lay-verify="url" autocomplete="off" placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" class="layui-input" />
+							</div>
+						</div>
+						<div class="layui-form-item">
+							<label class="layui-form-label" style="width: auto;">@ 手机号</label>
+							<div class="layui-input-block" style="margin-left: 120px;">
+								<input type="text" name="at_mobiles" autocomplete="off" placeholder="多个手机号用逗号分隔，如 13800138000,13900139000" class="layui-input" />
+							</div>
+						</div>
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md8">
+								<div class="layui-input-block" style="margin-left: 120px;">
+									<button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-dingtalk-save" style="display: none;">保存</button>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</form>
+		</div>
+	</div>
+
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
+				<form class="layui-form" lay-filter="filter-form-ldap">
+					<div class="layui-card">
+						<div class="layui-card-header">LDAP 设置</div>
+						<div class="layui-card-body layui-row layui-col-space10">
+							<div class="layui-col-md12">
+								<div class="ldap-grid">
+									<div class="layui-form-item ldap-wide"><label class="layui-form-label">启用 LDAP</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" title="ON|OFF"></div></div>
+									<div class="layui-form-item"><label class="layui-form-label">LDAP 主地址</label><div class="layui-input-block"><input type="text" name="primary_server" lay-verify="required" placeholder="ldap://10.10.10.10:389" class="layui-input"></div></div>
+									<div class="layui-form-item"><label class="layui-form-label">LDAP 备用地址</label><div class="layui-input-block"><input type="text" name="backup_server" placeholder="ldap://10.10.10.11:389" class="layui-input"></div></div>
+									<div class="layui-form-item"><label class="layui-form-label">连接账号</label><div class="layui-input-block"><input type="text" name="bind_user" placeholder="用于查询域用户的 LDAP 账号" class="layui-input"></div></div>
+									<div class="layui-form-item"><label class="layui-form-label">连接密码</label><div class="layui-input-block"><input type="password" name="bind_password" placeholder="留空表示保留现有密码" autocomplete="new-password" class="layui-input" lay-affix="eye"></div></div>
+									<div class="layui-form-item"><label class="layui-form-label">查询基准</label><div class="layui-input-block"><input type="text" name="search_base" placeholder="DC=example,DC=com" class="layui-input"></div></div>
+									<div class="layui-form-item"><label class="layui-form-label">用户属性</label><div class="layui-input-block"><input type="text" name="user_attribute" placeholder="sAMAccountName" class="layui-input"><div class="layui-form-mid layui-word-aux">AD 通常填写 <code>sAMAccountName</code>。系统先用连接账号查询用户 DN，再验证用户自己的密码。</div></div></div>
+									<div class="layui-form-item ldap-wide"><label class="layui-form-label">直接绑定格式</label><div class="layui-input-block"><input type="text" name="bind_template" lay-verify="required" placeholder="%s" class="layui-input"><div class="layui-form-mid layui-word-aux">仅在未配置连接账号时作为兼容模式使用。</div></div></div>
+									<div class="layui-form-item ldap-wide"><label class="layui-form-label">连接安全</label><div class="layui-input-inline"><input type="checkbox" name="start_tls" lay-skin="switch" title="StartTLS|关闭"></div><div class="layui-input-inline"><input type="checkbox" name="tls_verify" lay-skin="switch" title="验证证书|忽略证书"></div></div>
+									<div class="layui-form-mid layui-word-aux ldap-wide" style="margin-left:110px;">LDAP 与 MySQL、Redis 配置统一保存在 <code>conf/system.json</code>，不会生成独立配置文件。</div>
+									<div class="ldap-actions ldap-wide"><button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-form-ldap-save">保存</button><button type="button" class="pear-btn" id="ldap-test-connection">测试连接</button><span class="layui-word-aux" id="ldap-test-result"></span></div>
 								</div>
 							</div>
 						</div>
@@ -182,7 +280,7 @@
 			</div>
 		</div>
 
-		<div class="layui-row layui-col-space10">
+		<div class="layui-row layui-col-space10 settings-pair">
 			<div class="layui-col-md6">
 				<form class="layui-form" lay-filter="filter-form-redis">
 					<div class="layui-card" lay-filter="component-form-element">
@@ -352,6 +450,47 @@
 					});
 				}
 
+				function applyReadOnlyMode() {
+					$('body').addClass('readonly-mode');
+					$('#readonly-notice').show();
+					$('form').each(function() {
+						$(this).find('input, select, textarea, button').prop('disabled', true);
+					});
+				}
+
+				function clearReadOnlyMode() {
+					$('body').removeClass('readonly-mode');
+					$('#readonly-notice').hide();
+					$('form').each(function() {
+						$(this).find('input, select, textarea, button').prop('disabled', false);
+					});
+				}
+
+				function loadCurrentPermission() {
+					$.get('/user/me', function(data) {
+						var permissions = data && data.data && data.data.permissions || [];
+						if (permissions.indexOf('manage') < 0) {
+							applyReadOnlyMode();
+						} else {
+							clearReadOnlyMode();
+						}
+						// 权限和配置都加载完成后，统一渲染一次
+						form.render();
+					}, 'json');
+				}
+
+				window.addEventListener('storage', function(e) {
+					if (e.key === 'waf-permission-refresh') {
+						loadCurrentPermission();
+					}
+				});
+				window.addEventListener('focus', loadCurrentPermission);
+				document.addEventListener('visibilitychange', function() {
+					if (!document.hidden) {
+						loadCurrentPermission();
+					}
+				});
+
 				$(function() {
 					$.get('/system/get', {}, function(data) {
 						if (data && data.data) {
@@ -379,10 +518,21 @@
 								} else if (key == "secret") {
 									var $form = $('form[lay-filter="filter-form-secret"]');
 									$form.find("[name='" + key + "']").val(value);
+								} else if (key == "dingtalk") {
+									var $form = $('form[lay-filter="filter-form-dingtalk"]');
+									setFormValue($form, value);
+								} else if (key == "ldap") {
+									var $form = $('form[lay-filter="filter-form-ldap"]');
+									setFormValue($form, value);
+									$form.find("[name='primary_server']").val((value.servers || [])[0] || value.server || '');
+									$form.find("[name='backup_server']").val((value.servers || [])[1] || '');
+								} else if (key == "auth") {
+									setFormValue($('form[lay-filter="filter-form-auth"]'), value);
 								}
 							});
 
-							form.render();
+							// 配置加载完后再加载权限，确保 form.render 只执行一次
+							loadCurrentPermission();
 						}
 					}, "json");
 					// 阻止回车触发表单提交
@@ -442,6 +592,60 @@
 					return false;
 				});
 
+				function getLdapField() {
+					var $form = $('form[lay-filter="filter-form-ldap"]');
+					var field = {};
+					$form.find('[name]').each(function() {
+						var $item = $(this);
+						field[$item.attr('name')] = $item.is(':checkbox') ? ($item.prop('checked') ? 'on' : 'off') : String($item.val() || '').trim();
+					});
+					if (field.bind_template.indexOf('%s') < 0) {
+						popup.failure('绑定格式必须包含 %s');
+						return null;
+					}
+					field.servers = [field.primary_server];
+					if (field.backup_server) field.servers.push(field.backup_server);
+					delete field.primary_server;
+					delete field.backup_server;
+					if (!field.bind_password) delete field.bind_password;
+					return field;
+				}
+
+				form.on('submit(filter-form-ldap-save)', function() {
+					var field = getLdapField();
+					if (!field) return false;
+					update({ldap: JSON.stringify(field)});
+					return false;
+				});
+
+				$('#ldap-test-connection').on('click', function() {
+					var field = getLdapField();
+					if (!field) return;
+					var $button = $(this), oldText = $button.text();
+					$button.prop('disabled', true).text('测试中...');
+					$('#ldap-test-result').text('');
+					$.post('/system/ldap/test', {ldap: JSON.stringify(field)}, function(data) {
+						if (data && data.code === 200) {
+							$('#ldap-test-result').css('color', '#168447').text(data.msg);
+							popup.success('LDAP 测试成功');
+						} else {
+							$('#ldap-test-result').css('color', '#d93026').text((data && data.msg) || 'LDAP 测试失败');
+							popup.failure((data && data.msg) || 'LDAP 测试失败');
+						}
+					}, 'json').fail(function() {
+						$('#ldap-test-result').css('color', '#d93026').text('请求失败');
+						popup.failure('LDAP 测试请求失败');
+					}).always(function() {
+						$button.prop('disabled', false).text(oldText);
+					});
+				});
+
+				form.on('submit(filter-form-auth-save)', function(data) {
+					var field = getFormfiled($(data.elem).parents('form'), data.field);
+					update({auth: JSON.stringify(field)}, function() { $(data.elem).hide(); });
+					return false;
+				});
+
 				form.on('submit(filter-form-log-save)', function(data) {
 					var field = data.field;
 					var elem = data.elem;
@@ -495,17 +699,30 @@
 				});
 
 				form.on('submit(filter-form-secret-save)', function(data) {
-					var field = data.field;
-					var elem = data.elem;
-					var $form = $(elem).parents('form');
+				var field = data.field;
+				var elem = data.elem;
+				var $form = $(elem).parents('form');
 
-					getFormfiled($form, field);
-					update({secret: field.secret}, function() {
-						$form.find('.btn-save').hide();
-					});
-
-					return false;
+				getFormfiled($form, field);
+				update({secret: field.secret}, function() {
+					$form.find('.btn-save').hide();
 				});
+
+				return false;
+			});
+
+			form.on('submit(filter-form-dingtalk-save)', function(data) {
+				var field = data.field;
+				var elem = data.elem;
+				var $form = $(elem).parents('form');
+
+				getFormfiled($form, field);
+				update({dingtalk: JSON.stringify(field)}, function() {
+					$form.find('.btn-save').hide();
+				});
+
+				return false;
+			});
 
 				form.on('switch', function(data) {
 					var $form = $(this).closest('form');

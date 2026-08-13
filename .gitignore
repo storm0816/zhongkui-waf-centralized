@@ -1,5 +1,6 @@
 # Local credentials and runtime configuration
-/ssh
+/.zhongkui.private.env
+/.zhongkui.release.env
 /conf/system.json
 /conf/*.local.json
 

@@ -63,7 +63,7 @@
       "ipBlockExpireInSeconds": 600,
       "userAgentPattern": "(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)",
       "allowUserAgentPattern": "",
-      "excludeUris": "/favicon.ico\n/static/\n/assets/"
+      "excludeUris": "/favicon.ico\n/static/\n/assets/\n=/token"
     },
     "robots": {
       "state": "on",

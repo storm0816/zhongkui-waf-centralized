@@ -2,7 +2,14 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 1.4.3`
+当前版本：`Version 2.0.0`
+
+### 2.0.0 发布说明
+
+- 集群规则以 MySQL 为权威来源：首次初始化后，master 启动和定时校验都会将 MySQL 已发布版本恢复到本地与 Redis。
+- 提供独立的 master、node 安装包，按节点角色直接部署。
+- 新增 LDAP、MFA、角色权限、反爬虫、爬虫公约和规则例外白名单能力。
+- 钉钉仅推送 IP 封禁事件；普通攻击日志仍会正常写入日志与 MySQL，不再产生通知噪声。
 
 ### 功能总览
 
@@ -17,6 +24,7 @@
 平台与数据能力：
 - 站点独立配置 + 全局配置
 - 管理后台可视化（攻击日志、流量统计、节点状态）
+- 管理台账号支持角色权限、LDAP 主备认证、TOTP MFA 与操作审计
 - 支持 Redis + MySQL 的集群化架构
 - 攻击日志归档清理（系统页面懒人模式，支持自动与手动执行）
 - 规则情报候选池（每日自动生成候选，人工审核，默认不自动生效）
@@ -34,8 +42,8 @@
 推荐直接使用安装命令：
 
 ```bash
-tar -xzf zhongkui-waf-1.4.2.tar.gz
-cd zhongkui-waf-1.4.2
+tar -xzf zhongkui-waf-node-2.0.0.tar.gz
+cd zhongkui-waf-node-2.0.0
 chmod +x install.sh
 sudo ./install.sh --role node
 ```
@@ -43,6 +51,9 @@ sudo ./install.sh --role node
 master 节点：
 
 ```bash
+tar -xzf zhongkui-waf-master-2.0.0.tar.gz
+cd zhongkui-waf-master-2.0.0
+chmod +x install.sh
 sudo ./install.sh --role master
 ```
 
@@ -62,6 +73,8 @@ sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui --mysql
 
 高级安装和无人值守参数见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 
+账号、角色、LDAP 与 MFA 配置见：[管理台账号、LDAP 与 MFA](./docs/ACCESS_CONTROL.md)。
+
 生成版本安装包：
 
 ```bash
@@ -69,7 +82,7 @@ chmod +x scripts/build_release.sh
 ./scripts/build_release.sh
 ```
 
-安装包会生成到 `dist/`，包含离线依赖，并排除 Git、SSH、运行时配置和构建产物。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+安装包会生成到 `dist/`：`zhongkui-waf-master-2.0.0.tar.gz` 与 `zhongkui-waf-node-2.0.0.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis；Git 模板始终使用 `10.10.10.10` 占位，不包含钉钉 Webhook、LDAP 或数据库密码。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 
 常用参数：
 

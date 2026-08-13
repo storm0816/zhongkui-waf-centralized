@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>用户与权限</title>
+    <link href="../../component/pear/css/pear.css" rel="stylesheet">
+    <style>
+        .access-shell { padding: 14px; }
+        .toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+        .hint { color:#6b7280; font-size:13px; }
+        .tag { display:inline-block; margin:2px 5px 2px 0; padding:2px 9px; border-radius:12px; background:#eef6ff; color:#1677ff; }
+        .tag.green { background:#eaf9f0; color:#168447; }
+        .tag.gray { background:#f1f3f5; color:#59636e; }
+        .empty { padding:34px; text-align:center; color:#9aa1a9; }
+        .layui-table td { vertical-align:middle; }
+        .dialog-form { padding:22px 28px 8px 8px; }
+        .checks label { display:inline-block; margin:7px 18px 7px 0; }
+        .password-panel { max-width:560px; padding:18px 6px 8px; }
+        .password-panel .layui-form-label { width:100px; }
+        .password-panel .layui-input-block { margin-left:130px; }
+        .password-note { margin-bottom:20px; padding:12px 16px; border-left:4px solid #2f8cf0; background:#f5f9ff; color:#526174; line-height:1.7; }
+        @media (max-width: 720px) { .access-shell { padding:8px; } .toolbar { align-items:flex-start; flex-direction:column; } }
+    </style>
+</head>
+<body class="pear-container">
+<div class="access-shell">
+    <div class="layui-card">
+        <div class="layui-card-body">
+            <div class="layui-tab layui-tab-brief" lay-filter="access-tabs">
+                <ul class="layui-tab-title">
+                    <li class="layui-this">用户</li>
+                    <li>角色与权限</li>
+                    <li>审计日志</li>
+                    <li>管理员密码</li>
+                </ul>
+                <div class="layui-tab-content">
+                    <div class="layui-tab-item layui-show">
+                        <div class="toolbar"><span class="hint">LDAP 用户首次登录也会自动创建，并默认获得只读角色。</span><button type="button" class="pear-btn pear-btn-primary pear-btn-sm" id="add-user">新增 LDAP 用户</button></div>
+                        <div class="layui-table-box"><table class="layui-table"><thead><tr><th>用户</th><th>认证来源</th><th>角色</th><th>MFA</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="user-body"></tbody></table></div>
+                    </div>
+                    <div class="layui-tab-item">
+                        <div class="toolbar"><span class="hint">管理权限包含只读；用户管理权限用于维护账号、角色和审计。</span><button type="button" class="pear-btn pear-btn-primary pear-btn-sm" id="add-role">新增角色</button></div>
+                        <div class="layui-table-box"><table class="layui-table"><thead><tr><th>角色</th><th>说明</th><th>权限</th><th>类型</th><th>操作</th></tr></thead><tbody id="role-body"></tbody></table></div>
+                    </div>
+                    <div class="layui-tab-item">
+                        <div class="toolbar"><span class="hint">保留最近 200 条账号与权限操作。</span><button type="button" class="pear-btn pear-btn-sm" id="refresh-audit">刷新</button></div>
+                        <div class="layui-table-box"><table class="layui-table"><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>对象</th><th>来源 IP</th><th>结果</th><th>详情</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+                    </div>
+                    <div class="layui-tab-item">
+                        <div class="password-panel">
+                            <div class="password-note">此处仅修改 WAF 本地 <strong>admin</strong> 管理员密码。LDAP 用户密码由 LDAP 服务器统一维护，不能在本系统修改。</div>
+                            <form class="layui-form" id="password-form" lay-filter="password-form">
+                                <div class="layui-form-item"><label class="layui-form-label">当前密码</label><div class="layui-input-block"><input type="password" name="oldPassword" required lay-verify="required" autocomplete="current-password" placeholder="请输入当前管理员密码" class="layui-input" lay-affix="eye"></div></div>
+                                <div class="layui-form-item"><label class="layui-form-label">新密码</label><div class="layui-input-block"><input type="password" id="new-password" name="newPassword" required lay-verify="required|strongPassword" autocomplete="new-password" placeholder="至少 12 位" class="layui-input" lay-affix="eye"></div></div>
+                                <div class="layui-form-item"><label class="layui-form-label">确认密码</label><div class="layui-input-block"><input type="password" name="confirmPassword" required lay-verify="required|confirmPassword" autocomplete="new-password" placeholder="再次输入新密码" class="layui-input" lay-affix="eye"></div></div>
+                                <div class="layui-form-item"><div class="layui-input-block"><button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="password-save">保存新密码</button><button type="reset" class="pear-btn">重置</button></div></div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="text/html" id="user-dialog">
+    <form class="layui-form dialog-form" lay-filter="user-form">
+        <div class="layui-form-item"><label class="layui-form-label">用户名</label><div class="layui-input-block"><input name="username" required lay-verify="required" maxlength="128" placeholder="LDAP 登录名" class="layui-input"></div></div>
+        <div class="layui-form-item"><label class="layui-form-label">显示名称</label><div class="layui-input-block"><input name="display_name" maxlength="128" placeholder="可选" class="layui-input"></div></div>
+        <div class="layui-form-item"><label class="layui-form-label">初始角色</label><div class="layui-input-block"><select name="role_id" id="new-user-role" lay-verify="required"></select></div></div>
+        <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="create-user">保存</button></div></div>
+    </form>
+</script>
+<script type="text/html" id="role-dialog">
+    <form class="layui-form dialog-form" lay-filter="role-form">
+        <input type="hidden" name="role_id">
+        <div class="layui-form-item role-name-row"><label class="layui-form-label">角色名称</label><div class="layui-input-block"><input name="name" maxlength="64" class="layui-input"></div></div>
+        <div class="layui-form-item role-name-row"><label class="layui-form-label">说明</label><div class="layui-input-block"><input name="description" maxlength="255" class="layui-input"></div></div>
+        <div class="layui-form-item"><label class="layui-form-label">权限</label><div class="layui-input-block checks" id="permission-checks"></div></div>
+        <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="save-role">保存</button></div></div>
+    </form>
+</script>
+<script type="text/html" id="roles-dialog">
+    <form class="layui-form dialog-form" lay-filter="roles-form">
+        <input type="hidden" name="user_id">
+        <div class="layui-form-item"><label class="layui-form-label">分配角色</label><div class="layui-input-block"><select name="role_id" id="role-select" lay-verify="required"></select></div></div>
+        <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="save-user-roles">保存</button></div></div>
+    </form>
+</script>
+<script type="text/html" id="reset-password-dialog">
+    <form class="layui-form dialog-form" lay-filter="reset-password-form">
+        <input type="hidden" name="user_id">
+        <div class="layui-form-item"><label class="layui-form-label">新密码</label><div class="layui-input-block"><input type="password" name="new_password" required lay-verify="required" autocomplete="new-password" placeholder="至少 12 位" class="layui-input" lay-affix="eye"></div></div>
+        <div class="layui-form-item"><label class="layui-form-label">确认密码</label><div class="layui-input-block"><input type="password" name="confirm_password" required lay-verify="required" autocomplete="new-password" placeholder="再次输入新密码" class="layui-input" lay-affix="eye"></div></div>
+        <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="reset-user-password">确认重置</button></div></div>
+    </form>
+</script>
+
+<script src="../../component/layui/layui.js"></script>
+<script src="../../component/pear/pear.js"></script>
+<script>
+layui.use(['jquery', 'form', 'element', 'layer'], function () {
+    var $ = layui.$, form = layui.form, layer = layui.layer;
+    var users = [], roles = [], permissions = [];
+
+    function esc(value) { return $('<div>').text(value == null ? '' : value).html(); }
+    function tags(value, style) {
+        if (!value) return '<span class="hint">未分配</span>';
+        return String(value).split(',').map(function (item) { return '<span class="tag ' + (style || '') + '">' + esc(item) + '</span>'; }).join('');
+    }
+    function api(method, url, data, done) {
+        $.ajax({ type:method, url:url, data:data || {}, dataType:'json', cache:false }).done(function (res) {
+            if (res && res.code === 200) return done(res.data || {});
+            layer.msg((res && res.msg) || '操作失败', {icon:2});
+        }).fail(function (xhr) {
+            if (xhr.status === 401) return top.location.href = '/login.html';
+            layer.msg(xhr.status === 403 ? '没有用户管理权限' : '请求失败', {icon:2});
+        });
+    }
+    form.verify({
+        strongPassword: function (value) {
+            if (String(value || '').length < 12) return '新密码不能少于 12 位';
+        },
+        confirmPassword: function (value) {
+            if (value !== $('#new-password').val()) return '两次密码输入不一致';
+        }
+    });
+    function renderUsers() {
+        var html = users.map(function (u) {
+            var enabled = u.status === 'enabled';
+            var isLocal = u.auth_source === 'local_legacy';
+            var passwordButton = isLocal ? '<button class="pear-btn pear-btn-warming pear-btn-xs reset-local-password" data-id="' + u.id + '" data-name="' + esc(u.username) + '">重置密码</button> ' : '';
+            var deleteButton = isLocal ? '' : '<button class="pear-btn pear-btn-danger pear-btn-xs delete-user" data-id="' + u.id + '" data-name="' + esc(u.username) + '">删除</button>';
+            return '<tr><td><strong>' + esc(u.display_name || u.username) + '</strong><br><span class="hint">' + esc(u.username) + '</span></td>' +
+                '<td>' + tags(u.auth_source, 'gray') + '</td><td>' + tags(u.roles) + '</td><td>' + (Number(u.mfa_enabled) === 1 ? '<span class="tag green">已启用</span>' : '<span class="hint">未启用</span>') + '</td>' +
+                '<td><span class="tag ' + (enabled ? 'green' : 'gray') + '">' + (enabled ? '启用' : '禁用') + '</span></td><td>' + esc(u.last_login_at || '-') + '</td>' +
+                '<td><button class="pear-btn pear-btn-primary pear-btn-xs edit-roles" data-id="' + u.id + '">角色</button> ' + passwordButton + (Number(u.mfa_enabled) === 1 ? '<button class="pear-btn pear-btn-warming pear-btn-xs reset-mfa" data-id="' + u.id + '">重置 MFA</button> ' : '') + '<button class="pear-btn pear-btn-xs toggle-user" data-id="' + u.id + '" data-status="' + (enabled ? 'disabled' : 'enabled') + '">' + (enabled ? '禁用' : '启用') + '</button> ' + deleteButton + '</td></tr>';
+        }).join('');
+        $('#user-body').html(html || '<tr><td colspan="7" class="empty">暂无用户</td></tr>');
+    }
+    function renderRoles() {
+        var html = roles.map(function (r) {
+            var locked = r.name === 'super_admin';
+            return '<tr><td><strong>' + esc(r.name) + '</strong></td><td>' + esc(r.description) + '</td><td>' + tags(r.permissions, 'green') + '</td><td>' + (Number(r.builtin) === 1 ? '<span class="tag gray">内置</span>' : '自定义') + '</td><td>' +
+                (locked ? '<span class="hint">固定权限</span>' : '<button class="pear-btn pear-btn-primary pear-btn-xs edit-role" data-id="' + r.id + '">编辑权限</button>') + '</td></tr>';
+        }).join('');
+        $('#role-body').html(html || '<tr><td colspan="5" class="empty">暂无角色</td></tr>');
+    }
+    function loadBase() {
+        api('GET', '/access/roles', {}, function (data) { roles = data; renderRoles(); });
+        api('GET', '/access/permissions', {}, function (data) { permissions = data; });
+        api('GET', '/access/users', {}, function (data) { users = data; renderUsers(); });
+    }
+    function loadAudit() {
+        api('GET', '/access/audit', {limit:200}, function (rows) {
+            var html = rows.map(function (r) { return '<tr><td>' + esc(r.created_at) + '</td><td>' + esc(r.username || '-') + '</td><td>' + esc(r.action) + '</td><td>' + esc(r.target) + '</td><td>' + esc(r.client_ip) + '</td><td>' + esc(r.result) + '</td><td>' + esc(r.detail) + '</td></tr>'; }).join('');
+            $('#audit-body').html(html || '<tr><td colspan="7" class="empty">暂无审计记录</td></tr>');
+        });
+    }
+    function permissionHtml(selected) {
+        selected = ',' + (selected || '') + ',';
+        return permissions.map(function (p) { return '<label><input type="checkbox" name="permission" value="' + p.id + '" ' + (selected.indexOf(',' + p.code + ',') >= 0 ? 'checked' : '') + '> ' + esc(p.description) + ' <span class="hint">(' + esc(p.code) + ')</span></label>'; }).join('');
+    }
+    function broadcastPermissionRefresh() {
+        try {
+            localStorage.setItem('waf-permission-refresh', String(Date.now()));
+        } catch (err) {}
+    }
+    $('#add-user').on('click', function () {
+        layer.open({type:1, title:'新增 LDAP 用户', area:['520px','360px'], content:$('#user-dialog').html(), success:function () {
+            $('#new-user-role').html(roles.map(function (r) { return '<option value="' + r.id + '" ' + (r.name === 'readonly' ? 'selected' : '') + '>' + esc(r.name) + '</option>'; }).join('')); form.render();
+        }});
+    });
+    $('#add-role').on('click', function () {
+        layer.open({type:1, title:'新增角色', area:['560px','400px'], content:$('#role-dialog').html(), success:function () { $('#permission-checks').html(permissionHtml('')); form.render(); }});
+    });
+    $(document).on('click', '.edit-role', function (event) {
+        var role = roles.filter(function (r) { return String(r.id) === String($(event.currentTarget).data('id')); })[0];
+        layer.open({type:1, title:'编辑角色权限', area:['560px','350px'], content:$('#role-dialog').html(), success:function () {
+            $('.role-name-row').hide(); $('input[name=role_id]').val(role.id); $('#permission-checks').html(permissionHtml(role.permissions)); form.render();
+        }});
+    });
+    $(document).on('click', '.edit-roles', function (event) {
+        var item = users.filter(function (u) { return String(u.id) === String($(event.currentTarget).data('id')); })[0];
+        var selected = ',' + (item.roles || '') + ',';
+        var currentIds = roles.filter(function (r) {
+            return selected.indexOf(',' + r.name + ',') >= 0;
+        }).map(function (r) {
+            return String(r.id);
+        });
+        var currentRoleId = currentIds.length > 0 ? currentIds[0] : '';
+        console.log('[access-control] edit user roles', {
+            user_id: item.id,
+            username: item.username,
+            current_roles: item.roles,
+            current_role_ids: currentIds,
+            default_select: currentRoleId
+        });
+        layer.open({type:1, title:'分配角色 - ' + esc(item.username), area:['540px','300px'], content:$('#roles-dialog').html(), success:function (layero) {
+            var $dialog = $(layero);
+            $dialog.find('input[name=user_id]').val(item.id);
+            $dialog.find('#role-select').html(roles.map(function (r) {
+                var selected = String(r.id) === currentRoleId ? ' selected' : '';
+                return '<option value="' + r.id + '"' + selected + '>' + esc(r.name) + '</option>';
+            }).join(''));
+            $dialog.find('#role-select').on('change', function () {
+                var val = $(this).val();
+                var role = roles.filter(function (r) { return String(r.id) === String(val); })[0];
+                console.log('[access-control] role select changed', {
+                    selected_role_id: val,
+                    selected_role_name: role ? role.name : '-',
+                    selected_role_description: role ? role.description : '-'
+                });
+            });
+            form.render();
+        }});
+    });
+    $(document).on('click', '.toggle-user', function () {
+        var button = $(this); layer.confirm('确认' + (button.data('status') === 'disabled' ? '禁用' : '启用') + '该用户？', function (index) {
+            api('POST', '/access/user/status', {user_id:button.data('id'), status:button.data('status')}, function () { layer.close(index); loadBase(); });
+        });
+    });
+    $(document).on('click', '.reset-mfa', function () {
+        var userId = $(this).data('id');
+        layer.confirm('确认重置该用户的 MFA？用户下次登录时需要重新绑定。', function (index) {
+            api('POST', '/access/user/mfa/reset', {user_id:userId}, function () { layer.close(index); loadBase(); });
+        });
+    });
+    $(document).on('click', '.delete-user', function () {
+        var button = $(this), username = button.data('name');
+        layer.confirm('确认删除用户“' + username + '”？LDAP 用户再次成功登录时会重新创建本地映射。', {icon:3, title:'删除用户'}, function (index) {
+            api('POST', '/access/user/delete', {user_id:button.data('id')}, function () { layer.close(index); loadBase(); });
+        });
+    });
+    $(document).on('click', '.reset-local-password', function () {
+        var button = $(this);
+        layer.open({type:1, title:'管理员重置密码 - ' + button.data('name'), area:['520px','300px'], content:$('#reset-password-dialog').html(), success:function () {
+            $('form[lay-filter="reset-password-form"] input[name=user_id]').val(button.data('id'));
+            form.render();
+        }});
+    });
+    form.on('submit(create-user)', function (data) { api('POST', '/access/user/create', data.field, function () { layer.closeAll(); loadBase(); }); return false; });
+    form.on('submit(save-user-roles)', function (data) {
+        var roleId = data.field.role_id;
+        var payload = {user_id:data.field.user_id, role_ids:roleId};
+        console.log('[access-control] submit user roles', {
+            user_id: payload.user_id,
+            role_id: roleId,
+            role_ids: payload.role_ids
+        });
+        api('POST', '/access/user/roles', payload, function () {
+            layer.closeAll();
+            loadBase();
+            broadcastPermissionRefresh();
+        }); return false;
+    });
+    form.on('submit(save-role)', function (data) {
+        var ids = $('input[name=permission]:checked').map(function () { return this.value; }).get();
+        var url = data.field.role_id ? '/access/role/permissions' : '/access/role/create';
+        data.field.permission_ids = ids.join(',');
+        api('POST', url, data.field, function () {
+            layer.closeAll();
+            loadBase();
+            broadcastPermissionRefresh();
+        }); return false;
+    });
+    form.on('submit(reset-user-password)', function (data) {
+        if (String(data.field.new_password || '').length < 12) { layer.msg('新密码不能少于 12 位', {icon:2}); return false; }
+        if (data.field.new_password !== data.field.confirm_password) { layer.msg('两次密码输入不一致', {icon:2}); return false; }
+        api('POST', '/access/user/password/reset', {user_id:data.field.user_id, new_password:data.field.new_password}, function () {
+            layer.closeAll();
+            layer.msg('本地用户密码已重置', {icon:1});
+        });
+        return false;
+    });
+    form.on('submit(password-save)', function (data) {
+        $.ajax({type:'POST', url:'/user/password/update', data:data.field, dataType:'json'}).done(function (res) {
+            if (res && res.code === 200) {
+                layer.msg('管理员密码已修改', {icon:1});
+                $('#password-form')[0].reset();
+                return;
+            }
+            layer.msg((res && res.msg) || '密码修改失败', {icon:2});
+        }).fail(function (xhr) {
+            if (xhr.status === 401) return top.location.href = '/login.html';
+            layer.msg(xhr.status === 403 ? '仅本地 admin 管理员可以修改密码' : '密码修改失败', {icon:2});
+        });
+        return false;
+    });
+    $('#refresh-audit').on('click', loadAudit);
+    layui.element.on('tab(access-tabs)', function (data) { if (data.index === 2) loadAudit(); });
+    loadBase();
+});
+</script>
+</body>
+</html>

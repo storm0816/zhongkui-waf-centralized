@@ -198,11 +198,17 @@ function _M.is_bot()
     if is_site_option_on("bot") then
         crawler.check()
 
-        captcha.check_captcha()
+        local bot_config = get_site_config("bot")
+        local crawler_config = type(bot_config) == "table" and bot_config.crawler or nil
+        local captcha_excluded = type(crawler_config) == "table"
+            and crawler.is_uri_excluded(ngx.var.uri or "/", crawler_config.excludeUris)
+        if not captcha_excluded then
+            captcha.check_captcha()
+        end
 
         local ip = ngx.ctx.ip
-        local trap = get_site_config("bot").trap
-        if trap.state == "on" then
+        local trap = type(bot_config) == "table" and bot_config.trap or nil
+        if type(trap) == "table" and trap.state == "on" then
             local ruri = ngx.var.request_uri
             local uri = ngx.var.uri
 

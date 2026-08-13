@@ -162,11 +162,11 @@ function _M.do_request()
         response.msg = "not found"
     end
 
-    ngx.say(cjson_encode(response))
-
     if reload and (response.code == 0 or response.code == 200) then
-        config.reload_config_file()
+        local ok, reload_err = config.reload_config_file()
+        if not ok then response.code = 500; response.msg = "集群发布失败: " .. tostring(reload_err) end
     end
+    ngx.say(cjson_encode(response))
 end
 
 _M.do_request()

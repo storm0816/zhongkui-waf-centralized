@@ -34,7 +34,7 @@ local crawler_defaults = {
     ipBlockExpireInSeconds = 600,
     userAgentPattern = "(?:bot|spider|crawler|slurp|bingpreview|facebookexternalhit|headless|python-requests|scrapy|curl|wget|go-http-client|java/)",
     allowUserAgentPattern = "",
-    excludeUris = "/favicon.ico\n/static/\n/assets/"
+    excludeUris = "/favicon.ico\n/static/\n/assets/\n=/token"
 }
 
 local robots_defaults = {
@@ -59,6 +59,22 @@ if type(config.bot) ~= "table" then
 end
 config.bot.crawler = fill_missing(config.bot.crawler, crawler_defaults)
 config.bot.robots = fill_missing(config.bot.robots, robots_defaults)
+
+local function append_exact_exclusion(value, uri)
+    value = tostring(value or ""):gsub("\r\n", "\n"):gsub("\r", "\n")
+    local expected = "=" .. uri
+    for line in value:gmatch("[^\n]+") do
+        if line:match("^%s*(.-)%s*$") == expected then
+            return value
+        end
+    end
+    if value == "" then
+        return expected
+    end
+    return value:gsub("\n+$", "") .. "\n" .. expected
+end
+
+config.bot.crawler.excludeUris = append_exact_exclusion(config.bot.crawler.excludeUris, "/token")
 
 local encoded, encode_err = cjson.encode(config)
 if not encoded then

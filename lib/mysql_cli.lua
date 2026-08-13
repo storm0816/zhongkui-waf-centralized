@@ -15,7 +15,7 @@ local database = mysql_config.database
 local poolSize = mysql_config.poolSize
 local timeout = mysql_config.timeout or 1000
 
-function _M.get_connection()
+function _M.get_connection(max_packet_size)
     local db, err = mysql:new()
     if not db then
         ngx.log(ngx.ERR, "failed to instantiate mysql: ", err)
@@ -26,12 +26,12 @@ function _M.get_connection()
 
     local ok, err, errcode, sql_state = db:connect {
         host = host,
-        port = port or 3306,
+        port = tonumber(port) or 3306,
         database = database,
         user = user,
         password = password,
         charset = "utf8mb4",
-        max_packet_size = 1024 * 1024,
+        max_packet_size = max_packet_size or 1024 * 1024,
         pool_size = poolSize or 10
     }
 

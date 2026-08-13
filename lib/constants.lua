@@ -3,7 +3,7 @@
 
 local _M = {}
 
-_M.APP_VERSION = '1.4.3'
+_M.APP_VERSION = '2.0.0'
 
 _M.KEY_HTTP_4XX = 'http4x'
 _M.KEY_HTTP_5XX = 'http5x'
@@ -26,6 +26,7 @@ _M.KEY_REDIS_RETRY_TRAFFIC_STATS = 'waf:retry:traffic_stats'
 _M.KEY_REDIS_RETRY_ATTACK_TYPE_DATES = 'waf:retry:attack_type_dates'
 _M.KEY_REDIS_CLUSTER_RULES_SNAPSHOT = 'waf:cluster:rules:snapshot'
 _M.KEY_REDIS_CLUSTER_RULES_SNAPSHOT_VERSION = 'waf:cluster:rules:snapshot:version'
+_M.KEY_REDIS_CLUSTER_RULES_PUBLISH_LOCK = 'waf:cluster:rules:publish:lock'
 _M.KEY_REDIS_IP_WHITELIST = 'waf:rules:ip_whitelist'
 _M.KEY_REDIS_IP_BLACKLIST = 'waf:rules:ip_blacklist'
 _M.KEY_BLACKIP_PREFIX = 'black_ip:'

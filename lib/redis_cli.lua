@@ -274,6 +274,33 @@ function _M.set(key, value, expire_time)
     return ok, err
 end
 
+function _M.publish_cluster_rules(snapshot_key, snapshot, version_key, version,
+                                  whitelist_key, whitelist, blacklist_key, blacklist,
+                                  expire_time)
+    local red, err = _M.get_connection()
+    if not red then
+        return nil, err or "redis connection failed"
+    end
+
+    red:multi()
+    red:set(snapshot_key, snapshot)
+    red:set(version_key, version)
+    red:set(whitelist_key, whitelist)
+    red:set(blacklist_key, blacklist)
+    if expire_time and expire_time > 0 then
+        red:expire(snapshot_key, expire_time)
+        red:expire(version_key, expire_time)
+    end
+
+    local results, commit_err = red:exec()
+    _M.close_connection(red)
+    if not results or results == ngx.null then
+        ngx.log(ngx.ERR, "failed to atomically publish cluster rules: ", commit_err)
+        return nil, commit_err or "redis transaction failed"
+    end
+    return true
+end
+
 function _M.bath_set(key_table, value, key_prefix)
     local red, _ = _M.get_connection()
     local results, err = nil, nil

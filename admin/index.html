@@ -159,7 +159,7 @@
 					<li class="layui-nav-item layui-hide-xs message"></li>
 					<li class="layui-nav-item user">
 						<!-- 头 像 -->
-						<a class="layui-icon layui-icon-username" href="javascript:;"></a>
+						<a href="javascript:;"><i class="layui-icon layui-icon-username"></i> <span id="currentUserName"></span></a>
 						<!-- 功 能 菜 单 -->
 						<dl class="layui-nav-child">
 							<dd><a href="javascript:void(0);" class="logout">退出登录</a></dd>
@@ -225,6 +225,17 @@
 				admin.setConfigPath("config/pear.config.yml");
 				
 				admin.render();
+				$.get('/user/me', function(res) {
+					if (res && res.code === 200 && res.data) {
+						$('#currentUserName').text(res.data.display_name || res.data.username || '');
+						var permissions = res.data.permissions || [];
+						if (permissions.indexOf('user.manage') < 0) {
+							setTimeout(function() {
+								$("#sideMenu a[menu-id='65']").closest('dd,li').remove();
+							}, 800);
+						}
+					}
+				}, 'json');
 				$.get('/system/get', function(res) {
 					if (res && (res.code === 200 || res.code === 0) && res.app_version) {
 						$('#appVersionText').text('Version ' + res.app_version);

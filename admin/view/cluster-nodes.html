@@ -100,9 +100,65 @@
       color: #101828;
       font-weight: 600;
     }
+    .release-card {
+      border-left: 4px solid #2f88ff;
+    }
+    .release-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(130px, 1fr));
+      gap: 18px;
+      align-items: center;
+    }
+    .release-item .label {
+      color: #667085;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+    .release-item .value {
+      color: #101828;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .release-error {
+      display: none;
+      margin-top: 10px;
+      padding: 8px 12px;
+      color: #b42318;
+      background: #fef3f2;
+      border-radius: 4px;
+    }
+    @media (max-width: 900px) {
+      .release-grid { grid-template-columns: 1fr 1fr; }
+    }
   </style>
 </head>
 <body class="pear-container">
+
+  <div class="layui-card release-card">
+    <div class="layui-card-header">集群规则发布状态</div>
+    <div class="layui-card-body">
+      <div class="release-grid">
+        <div class="release-item">
+          <div class="label">当前发布版本</div>
+          <div class="value" id="release-version">尚未发布</div>
+        </div>
+        <div class="release-item">
+          <div class="label">发布状态</div>
+          <div class="value" id="release-status"><span class="node-pill warn">加载中</span></div>
+        </div>
+        <div class="release-item">
+          <div class="label">发布时间</div>
+          <div class="value" id="release-time">-</div>
+        </div>
+        <div class="release-item">
+          <div class="label">发布来源</div>
+          <div class="value" id="release-source">-</div>
+        </div>
+      </div>
+      <div class="release-error" id="release-error"></div>
+      <div class="release-error" id="restore-status" style="color:#175cd3;background:#eff8ff;"></div>
+    </div>
+  </div>
 
   <!-- 统计模块 -->
   <div class="layui-row layui-col-space10">
@@ -186,6 +242,53 @@
         if (status === 'ok') return '成功';
         if (status === 'failed') return '失败';
         return status || 'unknown';
+      }
+
+      function loadReleaseStatus() {
+        $.getJSON('/clusternode/release/status', function (res) {
+          if (!res || res.code !== 0) {
+            $('#release-status').html('<span class="node-pill err">查询失败</span>');
+            $('#release-error').text((res && res.msg) || '无法查询集群发布状态').show();
+            return;
+          }
+
+          var release = res.data || {};
+          if (!release.version) {
+            $('#release-version').text('尚未发布');
+            $('#release-status').html('<span class="node-pill warn">等待首次发布</span>');
+            $('#release-time, #release-source').text('-');
+            $('#release-error').hide();
+            return;
+          }
+
+          $('#release-version').text(release.version);
+          $('#release-source').text(release.source || '-');
+          $('#release-time').text(release.published_at || release.last_attempt_at || release.created_at || '-');
+          if (release.status === 'published') {
+            $('#release-status').html('<span class="node-pill ok">已发布</span>');
+          } else {
+            $('#release-status').html('<span class="node-pill warn">等待发布 / 自动重试</span>');
+          }
+          if (release.last_error) {
+            $('#release-error').text('最近发布错误：' + release.last_error).show();
+          } else {
+            $('#release-error').hide();
+          }
+          var restore = release.restore || {};
+          if (restore.status === 'conflict_restored') {
+            $('#restore-status').text('检测到本地规则版本冲突，已按 MySQL 发布版本恢复。原文件备份：' + (restore.backup_dir || '-')).show();
+          } else if (restore.status === 'failed') {
+            $('#restore-status').css({color:'#b42318', background:'#fef3f2'})
+              .text('本地规则恢复失败：' + (restore.error || '未知错误')).show();
+          } else if (restore.status === 'legacy_restored') {
+            $('#restore-status').text('已从旧版发布快照恢复白名单/黑名单。').show();
+          } else {
+            $('#restore-status').hide();
+          }
+        }).fail(function () {
+          $('#release-status').html('<span class="node-pill err">查询失败</span>');
+          $('#release-error').text('发布状态接口请求失败').show();
+        });
       }
 
       function syncStateHtml(row) {
@@ -402,7 +505,7 @@
             width: 132,
             templet: function (d) {
               var html = '<button class="layui-btn layui-btn-primary layui-btn-xs btn-detail" data-ip="' + d.ip + '">详情</button>';
-              if (Number(d.is_online) === 0) {
+              if (Number(d.is_online) === 0 && d.node_role !== 'master') {
                 html += ' <button class="layui-btn layui-btn-danger layui-btn-xs btn-del" data-ip="' + d.ip + '">删除</button>';
               }
               return html;
@@ -430,6 +533,9 @@
           console.error("获取统计失败：", res.msg || "未知错误");
         }
       });
+
+      loadReleaseStatus();
+      window.setInterval(loadReleaseStatus, 30000);
 
       $('#btn-show-all').on('click', function () {
         tableIns.reload({ where: {}, page: { curr: 1 } });
@@ -479,6 +585,13 @@
               if (res.code === 0) {
                 layer.msg('删除成功');
                 table.reload('id-table-nodes');
+                $.getJSON('/clusternode/stat', function (stat) {
+                  if (stat.code === 0) {
+                    $('#stat-total').text(stat.data.total);
+                    $('#stat-online').text(stat.data.online);
+                    $('#stat-offline').text(stat.data.offline);
+                  }
+                });
               } else {
                 layer.alert('删除失败：' + (res.msg || '未知错误'), { icon: 2 });
               }

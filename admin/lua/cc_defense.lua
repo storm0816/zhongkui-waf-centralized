@@ -166,12 +166,12 @@ function _M.do_request()
         reload = true
     end
 
-    ngx.say(cjson_encode(response))
-
     -- 如果没有错误且需要重载配置文件则重载配置文件
     if (response.code == 200 or response.code == 0) and reload == true then
-        config.reload_config_file()
+        local ok, reload_err = config.reload_config_file()
+        if not ok then response.code = 500; response.msg = "集群发布失败: " .. tostring(reload_err) end
     end
+    ngx.say(cjson_encode(response))
 end
 
 _M.do_request()

@@ -20,24 +20,26 @@ chmod +x install.sh scripts/build_release.sh
 ./scripts/build_release.sh
 ```
 
-脚本会从 `lib/constants.lua` 读取版本号，生成：
+脚本会从 `lib/constants.lua` 读取版本号，生成两个角色专用包：
 
 ```text
-dist/zhongkui-waf-1.4.2.tar.gz
-dist/zhongkui-waf-1.4.2.tar.gz.sha256
+dist/zhongkui-waf-master-2.0.0.tar.gz
+dist/zhongkui-waf-master-2.0.0.tar.gz.sha256
+dist/zhongkui-waf-node-2.0.0.tar.gz
+dist/zhongkui-waf-node-2.0.0.tar.gz.sha256
 ```
 
 也可以显式指定版本和输出目录：
 
 ```bash
-./scripts/build_release.sh --version 1.4.2 --output-dir /tmp/zhongkui-release
+./scripts/build_release.sh --version 2.0.0 --output-dir /tmp/zhongkui-release
 ```
 
-发布包会排除 `.git`、`ssh`、`conf/system.json`、构建输出、历史备份和内部计划文档。生成后应先校验：
+构建机需要保存一个未提交的 `.zhongkui.release.env`，其中保存生产 MySQL/Redis 参数。Git 内的模板始终是 `10.10.10.10` 与空口令占位值；构建脚本仅在生成压缩包时注入发布参数。发布包会排除 `.git`、`.zhongkui.private.env`、`.zhongkui.release.env`、`conf/system.json`、构建输出、历史备份和内部计划文档。生成后应先校验：
 
 ```bash
-sha256sum -c dist/zhongkui-waf-1.4.2.tar.gz.sha256
-tar -tzf dist/zhongkui-waf-1.4.2.tar.gz | grep -E '(^|/)ssh$|conf/system.json'
+sha256sum -c dist/zhongkui-waf-master-2.0.0.tar.gz.sha256
+tar -tzf dist/zhongkui-waf-master-2.0.0.tar.gz | grep -E '(^|/)(ssh|\.zhongkui\.private\.env|\.zhongkui\.release\.env)$|conf/system.json'
 ```
 
 第二条命令应没有输出。
@@ -47,9 +49,8 @@ tar -tzf dist/zhongkui-waf-1.4.2.tar.gz | grep -E '(^|/)ssh$|conf/system.json'
 解压发布包后，先检查对应角色模板中的连接信息：
 
 ```bash
-tar -xzf zhongkui-waf-1.4.2.tar.gz
-cd zhongkui-waf-1.4.2
-vi conf/system-master.json
+tar -xzf zhongkui-waf-master-2.0.0.tar.gz
+cd zhongkui-waf-master-2.0.0
 ```
 
 安装时脚本会复制角色模板为 `conf/system.json`，并根据参数覆盖本机 Redis/MySQL 的连接信息。
@@ -59,7 +60,7 @@ vi conf/system-master.json
 解压后直接执行以下命令即可：
 
 ```bash
-cd zhongkui-waf-1.4.2
+cd zhongkui-waf-node-2.0.0
 chmod +x install.sh
 sudo ./install.sh --role node
 ```

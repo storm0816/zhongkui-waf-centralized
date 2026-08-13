@@ -34,6 +34,9 @@ local is_standalone_mode = config.is_standalone_mode
 local get_system_config = config.get_system_config
 local publish_cluster_rules_snapshot = config.publish_cluster_rules_snapshot
 local pull_cluster_rules_snapshot = config.pull_cluster_rules_snapshot
+local load_cluster_rules_lkg = config.load_cluster_rules_lkg
+local load_master_published_rules = config.load_master_published_rules
+local restore_master_rule_sources = config.restore_master_rule_sources
 local read_file_to_table = file_utils.read_file_to_table
 
 local prefix = "waf_rules_hits:"
@@ -49,6 +52,9 @@ local blacklist_sync_at_dict_key = "cluster:sync:blacklist:at"
 local last_sync_status_dict_key = "cluster:sync:last:status"
 local last_sync_at_dict_key = "cluster:sync:last:at"
 local cluster_rules_publish_interval = 10
+-- MySQL published release is the cluster source of truth.  Periodically repair
+-- master rule source files before Redis republishes the authoritative snapshot.
+local cluster_rules_integrity_check_interval = 60
 local cluster_rules_pull_interval_base = 30
 local cluster_rules_pull_jitter_max = 10
 local node_report_interval_base = 30
@@ -115,11 +121,22 @@ local function safe_publish_cluster_rules_snapshot(premature)
         return
     end
     -- 定时发布时强制从文件重载，避免手工改配置文件后快照内容不更新。
-    local ok, err = publish_cluster_rules_snapshot(true)
+    -- Retry a candidate that is already durable in MySQL.  If the release
+    -- table is empty this is also the one allowed first-start bootstrap path.
+    local ok, err = publish_cluster_rules_snapshot(false, false, true)
     if not ok and err and err ~= "not master node" then
         mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "failed")
         ngx.log(ngx.ERR, "failed to publish cluster rules snapshot: ", err)
     else
+        -- A prepared MySQL candidate may have been promoted by this retry.
+        -- Materialize the resulting published release locally without waiting
+        -- for the 60-second integrity pass.
+        local restored, restore_err = restore_master_rule_sources()
+        if not restored and restore_err and restore_err ~= "published release not found" then
+            mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "failed")
+            ngx.log(ngx.ERR, "failed to materialize retried rule release: ", restore_err)
+            return
+        end
         mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "ok")
     end
 end
@@ -134,6 +151,61 @@ local function safe_pull_cluster_rules_snapshot(premature)
         ngx.log(ngx.ERR, "failed to pull cluster rules snapshot: ", err)
     else
         mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "ok")
+    end
+end
+
+local function safe_load_cluster_rules_lkg(premature)
+    if premature then
+        return
+    end
+    local ok, err = load_cluster_rules_lkg()
+    if not ok and err and err ~= "not node" and err ~= "last-known-good snapshot not found" then
+        ngx.log(ngx.WARN, "failed to load cluster last-known-good snapshot: ", err)
+    end
+end
+
+local function safe_load_master_published_rules(premature)
+    if premature then
+        return
+    end
+    local ok, err = load_master_published_rules()
+    if not ok and err and err ~= "not master node" and err ~= "published release not found" then
+        ngx.log(ngx.WARN, "failed to restore master published rules: ", err)
+    end
+end
+
+local function safe_restore_master_rule_sources(premature)
+    if premature then
+        return
+    end
+    local ok, restored_or_err = restore_master_rule_sources()
+    if not ok and restored_or_err and restored_or_err ~= "not master node"
+        and restored_or_err ~= "published release not found" then
+        ngx.log(ngx.ERR, "failed to restore master rule source files: ", restored_or_err)
+    end
+end
+
+local function safe_reconcile_master_rule_sources(premature)
+    if premature then
+        return
+    end
+
+    -- A local file may be deleted, truncated, or manually changed while nginx
+    -- keeps serving from memory.  Always repair it from MySQL's published release.
+    local restored, restore_err = restore_master_rule_sources()
+    if not restored then
+        if restore_err and restore_err ~= "not master node" and restore_err ~= "published release not found" then
+            mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "failed")
+            ngx.log(ngx.ERR, "failed to reconcile master rule source files: ", restore_err)
+        end
+        return
+    end
+
+    -- Republish after verification so Redis cannot retain a stale/manual value.
+    local ok, err = publish_cluster_rules_snapshot(false, false, false)
+    if not ok and err and err ~= "not master node" and err ~= "published release not found" then
+        mark_sync(rules_sync_status_dict_key, rules_sync_at_dict_key, "failed")
+        ngx.log(ngx.ERR, "failed to republish authoritative MySQL rules: ", err)
     end
 end
 
@@ -248,11 +320,14 @@ local function add_ip_group(group, ips)
         return false
     end
 
-    -- 过滤无效或空的 IP 地址
+    -- Blacklist entries support "IP comment" lines; only the first token is matched.
     local valid_ips = {}
-    for _, ip in ipairs(ips) do
-        if type(ip) == "string" and #ip > 0 then
-            table.insert(valid_ips, ip)
+    for _, item in ipairs(ips) do
+        if type(item) == "string" then
+            local ip = item:match("^%s*(%S+)")
+            if ip and ip ~= "" and ip ~= "#" and ip ~= ";" then
+                table.insert(valid_ips, ip)
+            end
         end
     end
 
@@ -421,20 +496,22 @@ if is_global_option_on("waf") then
     end
 
     -- 异步加载 落地文件ipblacklist 导入到 Redis，启动时的初始化
-    if is_timer_owner and master_node then
-        ngx.timer.at(0.5, init_redis_blacklist)
-        ngx.timer.at(0.5, init_redis_whitelist)
-    end
-
     -- 将 Redis blacklist 导入到 ipmatcher
     if centralized_mode then
         if master_node and is_timer_owner then
+            ngx.timer.at(0.1, safe_restore_master_rule_sources)
             -- master 定时发布规则快照，node 按版本增量拉取。
             ngx.timer.at(0.5, safe_publish_cluster_rules_snapshot)
             utils.start_timer_every(cluster_rules_publish_interval, safe_publish_cluster_rules_snapshot)
+            utils.start_timer_every(cluster_rules_integrity_check_interval, safe_reconcile_master_rule_sources)
+        end
+
+        if master_node then
+            ngx.timer.at(0, safe_load_master_published_rules)
         end
 
         if not master_node then
+            ngx.timer.at(0, safe_load_cluster_rules_lkg)
             -- 规则缓存在 worker 内存中，node 的每个 worker 都要拉取最新快照。
             -- 使用 30s + 0-10s 随机偏移，避免集群节点同一时刻集中拉取。
             start_timer_every_with_jitter(
