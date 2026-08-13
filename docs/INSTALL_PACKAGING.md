@@ -35,7 +35,7 @@ dist/zhongkui-waf-node-2.0.0.tar.gz.sha256
 ./scripts/build_release.sh --version 2.0.0 --output-dir /tmp/zhongkui-release
 ```
 
-构建机需要保存一个未提交的 `.zhongkui.release.env`，其中保存生产 MySQL/Redis 参数。Git 内的模板始终是 `10.10.10.10` 与空口令占位值；构建脚本仅在生成压缩包时注入发布参数。发布包会排除 `.git`、`.zhongkui.private.env`、`.zhongkui.release.env`、`conf/system.json`、构建输出、历史备份和内部计划文档。生成后应先校验：
+构建机需要保存一个未提交的 `.zhongkui.release.env`，其中保存生产 MySQL/Redis、LDAP 与钉钉参数。Git 内的模板始终是 `10.10.10.10` 与空口令占位值；构建脚本仅在生成压缩包时注入发布参数。发布包会排除 `.git`、`.zhongkui.private.env`、`.zhongkui.release.env`、`conf/system.json`、构建输出、历史备份和内部计划文档。生成后应先校验：
 
 ```bash
 sha256sum -c dist/zhongkui-waf-master-2.0.0.tar.gz.sha256

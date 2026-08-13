@@ -53,7 +53,10 @@ require_value() {
     [ -n "${!name:-}" ] || { echo "Missing $name in $RELEASE_PROFILE" >&2; exit 1; }
 }
 
-for name in RELEASE_MYSQL_HOST RELEASE_MYSQL_PORT RELEASE_MYSQL_USER RELEASE_MYSQL_PASSWORD RELEASE_REDIS_HOST RELEASE_REDIS_PORT RELEASE_REDIS_PASSWORD; do
+for name in RELEASE_MYSQL_HOST RELEASE_MYSQL_PORT RELEASE_MYSQL_USER RELEASE_MYSQL_PASSWORD RELEASE_REDIS_HOST RELEASE_REDIS_PORT RELEASE_REDIS_PASSWORD \
+    RELEASE_LDAP_STATE RELEASE_LDAP_PRIMARY_SERVER RELEASE_LDAP_BIND_USER RELEASE_LDAP_BIND_PASSWORD \
+    RELEASE_LDAP_SEARCH_BASE RELEASE_LDAP_USER_ATTRIBUTE RELEASE_LDAP_BIND_TEMPLATE RELEASE_LDAP_START_TLS RELEASE_LDAP_TLS_VERIFY RELEASE_LDAP_TIMEOUT \
+    RELEASE_DINGTALK_STATE RELEASE_DINGTALK_WEBHOOK; do
     require_value "$name"
 done
 
@@ -90,6 +93,25 @@ if (role === "master") {
         password: process.env.RELEASE_MYSQL_PASSWORD,
     };
 }
+config.ldap = {
+    ...(config.ldap || {}),
+    state: process.env.RELEASE_LDAP_STATE,
+    servers: [process.env.RELEASE_LDAP_PRIMARY_SERVER, process.env.RELEASE_LDAP_BACKUP_SERVER].filter(Boolean),
+    bind_user: process.env.RELEASE_LDAP_BIND_USER,
+    bind_password: process.env.RELEASE_LDAP_BIND_PASSWORD,
+    search_base: process.env.RELEASE_LDAP_SEARCH_BASE,
+    user_attribute: process.env.RELEASE_LDAP_USER_ATTRIBUTE,
+    bind_template: process.env.RELEASE_LDAP_BIND_TEMPLATE,
+    start_tls: process.env.RELEASE_LDAP_START_TLS,
+    tls_verify: process.env.RELEASE_LDAP_TLS_VERIFY,
+    timeout: Number(process.env.RELEASE_LDAP_TIMEOUT),
+};
+config.dingtalk = {
+    ...(config.dingtalk || {}),
+    state: process.env.RELEASE_DINGTALK_STATE,
+    webhook: process.env.RELEASE_DINGTALK_WEBHOOK,
+    at_mobiles: process.env.RELEASE_DINGTALK_AT_MOBILES,
+};
 fs.writeFileSync(path, `${JSON.stringify(config, null, 4)}\n`, "utf8");
 NODE
 }
@@ -110,12 +132,6 @@ build_role_package() {
     rm -f "$stage_dir/ssh" "$stage_dir/.zhongkui.private.env" "$stage_dir/.zhongkui.release.env" \
         "$stage_dir/conf/system.json" "$stage_dir"/*.sha256
 
-    # DingTalk credentials must always be configured after deployment, never in an archive.
-    if grep -q '"webhook"[[:space:]]*:[[:space:]]*"[^" ]' "$stage_dir/conf/system-${role}.json"; then
-        echo "Refusing to package a DingTalk webhook" >&2
-        exit 1
-    fi
-
     rm -f "$archive_path" "$archive_path.sha256"
     tar -C "$WORK_DIR" -czf "$archive_path" "$package_name"
     (
@@ -127,5 +143,8 @@ build_role_package() {
 
 export RELEASE_MYSQL_HOST RELEASE_MYSQL_PORT RELEASE_MYSQL_USER RELEASE_MYSQL_PASSWORD
 export RELEASE_REDIS_HOST RELEASE_REDIS_PORT RELEASE_REDIS_PASSWORD
+export RELEASE_LDAP_STATE RELEASE_LDAP_PRIMARY_SERVER RELEASE_LDAP_BACKUP_SERVER RELEASE_LDAP_BIND_USER RELEASE_LDAP_BIND_PASSWORD
+export RELEASE_LDAP_SEARCH_BASE RELEASE_LDAP_USER_ATTRIBUTE RELEASE_LDAP_BIND_TEMPLATE RELEASE_LDAP_START_TLS RELEASE_LDAP_TLS_VERIFY RELEASE_LDAP_TIMEOUT
+export RELEASE_DINGTALK_STATE RELEASE_DINGTALK_WEBHOOK RELEASE_DINGTALK_AT_MOBILES
 build_role_package master
 build_role_package node

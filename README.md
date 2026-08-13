@@ -82,7 +82,7 @@ chmod +x scripts/build_release.sh
 ./scripts/build_release.sh
 ```
 
-安装包会生成到 `dist/`：`zhongkui-waf-master-2.0.0.tar.gz` 与 `zhongkui-waf-node-2.0.0.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis；Git 模板始终使用 `10.10.10.10` 占位，不包含钉钉 Webhook、LDAP 或数据库密码。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+安装包会生成到 `dist/`：`zhongkui-waf-master-2.0.0.tar.gz` 与 `zhongkui-waf-node-2.0.0.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 
 常用参数：
 
