@@ -1,0 +1,1 @@
+layui.define(["jquery","element","util"],function(e){"use strict";layui.jquery;var i=layui.util;layui.element;e("topBar",new function(){i.fixbar({})})});

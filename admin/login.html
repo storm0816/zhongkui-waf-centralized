@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>DZH WAF 登录</title>
+  <link rel="stylesheet" href="component/pear/css/pear.css">
+  <script src="component/qrcode/qrcode.min.js"></script>
+  <style>
+    :root { --ink:#11231c; --green:#087f5b; --paper:#f4f1e8; --line:#d6d2c5; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; color:var(--ink); background:
+      radial-gradient(circle at 12% 18%, rgba(8,127,91,.17), transparent 28%),
+      linear-gradient(135deg, #edf2ea 0%, var(--paper) 56%, #e2dccb 100%); font-family:"Microsoft YaHei","Noto Sans SC",sans-serif; }
+    .shell { width:min(920px, calc(100vw - 32px)); min-height:540px; display:grid; grid-template-columns:1.05fr .95fr;
+      border:1px solid rgba(17,35,28,.16); box-shadow:0 28px 80px rgba(30,45,37,.18); background:rgba(255,255,255,.82); }
+    .brand { padding:56px; display:flex; flex-direction:column; justify-content:space-between; color:#fff;
+      background:linear-gradient(155deg, #0b3328, #087f5b 68%, #52b788); position:relative; overflow:hidden; }
+    .brand:after { content:""; position:absolute; width:260px; height:260px; border:1px solid rgba(255,255,255,.2); border-radius:50%; right:-90px; bottom:-100px; }
+    .brand h1 { margin:0; font:700 44px/1 Georgia,serif; letter-spacing:.04em; }
+    .brand p { max-width:330px; color:rgba(255,255,255,.76); line-height:1.9; }
+    .login-panel { padding:50px 54px; display:flex; flex-direction:column; justify-content:center; }
+    .login-panel h2 { margin:0 0 8px; font-size:25px; }
+    .hint { margin:0 0 28px; color:#66736d; }
+    .auth-type { display:flex; gap:8px; margin-bottom:18px; }
+    .auth-type button { flex:1; height:38px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+    .auth-type button.active { border-color:var(--green); color:var(--green); background:#eaf7f1; font-weight:700; }
+    .field { margin-bottom:16px; }
+    .field label { display:block; margin-bottom:7px; font-size:13px; color:#53615b; }
+    .field input { width:100%; height:44px; border:1px solid var(--line); padding:0 13px; background:rgba(255,255,255,.9); outline:none; }
+    .field input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(8,127,91,.1); }
+    .submit { width:100%; height:44px; border:0; color:#fff; background:var(--green); font-weight:700; cursor:pointer; }
+    .submit:disabled { opacity:.6; cursor:wait; }
+    .message { min-height:22px; margin-top:14px; font-size:13px; color:#b42318; }
+    .setup { padding:12px; margin-bottom:16px; border:1px dashed #82b8a5; background:#effaf5; font-size:12px; line-height:1.7; word-break:break-all; }
+    .setup .qr-box { text-align:center; margin-bottom:12px; }
+    .setup .qr-box svg, .setup .qr-box canvas, .setup .qr-box img { width:200px; height:200px; display:block; margin:0 auto; }
+    .hidden { display:none; }
+    @media (max-width:760px) { .shell{grid-template-columns:1fr}.brand{display:none}.login-panel{padding:38px 28px;min-height:520px} }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="brand">
+      <div><h1>DZH WAF</h1><p>集中式安全防护控制台<br>身份认证、角色授权与操作审计</p></div>
+      <small>AUTHORIZED ACCESS ONLY</small>
+    </section>
+    <section class="login-panel">
+      <div id="primary-step">
+        <h2>登录控制台</h2>
+        <p class="hint">请选择本地应急账号或企业 LDAP。</p>
+        <div class="auth-type">
+          <button type="button" class="active" data-auth="local">本地账号</button>
+          <button type="button" data-auth="ldap">LDAP 登录</button>
+        </div>
+        <form id="login-form">
+          <div class="field"><label for="username">用户名</label><input id="username" autocomplete="username" required></div>
+          <div class="field"><label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required></div>
+          <button class="submit" id="login-button" type="submit">继续</button>
+        </form>
+      </div>
+      <div id="mfa-step" class="hidden">
+        <h2>安全验证</h2>
+        <p class="hint" id="mfa-hint">请输入身份验证器中的 6 位验证码。</p>
+        <div id="mfa-setup" class="setup hidden"></div>
+        <form id="mfa-form">
+          <div class="field"><label for="mfa-code">动态验证码</label><input id="mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></div>
+          <button class="submit" id="mfa-button" type="submit">验证并登录</button>
+        </form>
+      </div>
+      <div class="message" id="message"></div>
+    </section>
+  </main>
+  <script>
+    (function () {
+      var authType = 'local';
+      var pendingToken = '';
+      var message = document.getElementById('message');
+      document.querySelectorAll('[data-auth]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          authType = button.dataset.auth;
+          document.querySelectorAll('[data-auth]').forEach(function (item) { item.classList.toggle('active', item === button); });
+        });
+      });
+
+      function post(url, values) {
+        return fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams(values), credentials:'same-origin' })
+          .then(function (response) { return response.json(); });
+      }
+      function busy(button, state) { button.disabled = state; }
+      function finish() { location.href = 'index.html'; }
+
+      document.getElementById('login-form').addEventListener('submit', function (event) {
+        event.preventDefault(); message.textContent = '';
+        var button = document.getElementById('login-button'); busy(button, true);
+        post('/user/login', { username:document.getElementById('username').value, password:document.getElementById('password').value, auth_type:authType })
+          .then(function (result) {
+            if (result.code === 200) return finish();
+            if (result.code === 202) {
+              pendingToken = result.data.pending_token;
+              document.getElementById('primary-step').classList.add('hidden');
+              document.getElementById('mfa-step').classList.remove('hidden');
+              if (result.data.mfa_setup_required) {
+                document.getElementById('mfa-hint').textContent = '请用身份验证器扫描下方二维码，或手动输入密钥，再输入动态验证码完成绑定。';
+                var setup = document.getElementById('mfa-setup');
+                setup.classList.remove('hidden');
+                var html = '';
+                if (typeof QRCode !== 'undefined' && result.data.otpauth_uri) {
+                    html += '<div class="qr-box" id="qr-box"></div>';
+                }
+                html += '密钥：<strong>' + result.data.secret + '</strong><br>URI：' + result.data.otpauth_uri;
+                setup.innerHTML = html;
+                if (typeof QRCode !== 'undefined' && result.data.otpauth_uri) {
+                    try {
+                        new QRCode(document.getElementById('qr-box'), {
+                            text: result.data.otpauth_uri,
+                            width: 200,
+                            height: 200,
+                            correctLevel: QRCode.CorrectLevel.M
+                        });
+                        console.log('QR code generated via qrcodejs');
+                    } catch (e) {
+                        console.error('QR code generation failed:', e);
+                    }
+                }
+              }
+              document.getElementById('mfa-code').focus();
+              return;
+            }
+            message.textContent = result.msg || '登录失败';
+          }).catch(function () { message.textContent = '认证服务暂时不可用'; }).finally(function () { busy(button, false); });
+      });
+
+      document.getElementById('mfa-form').addEventListener('submit', function (event) {
+        event.preventDefault(); message.textContent = '';
+        var button = document.getElementById('mfa-button'); busy(button, true);
+        post('/user/mfa/verify', { pending_token:pendingToken, code:document.getElementById('mfa-code').value })
+          .then(function (result) { if (result.code === 200) return finish(); message.textContent = result.msg || '验证失败'; })
+          .catch(function () { message.textContent = '认证服务暂时不可用'; }).finally(function () { busy(button, false); });
+      });
+    }());
+  </script>
+</body>
+</html>

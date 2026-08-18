@@ -1,0 +1,195 @@
+[
+	{
+		"id": 1,
+		"title": "数据统计",
+		"icon": "layui-icon layui-icon-chart",
+		"type": 1,
+		"href": "view/dashboard.html"
+	},
+	{
+		"id": 2,
+		"title": "安全运营",
+		"icon": "layui-icon layui-icon-list",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 21,
+				"title": "攻击事件",
+				"icon": "pear-icon pear-icon-notification",
+				"type": 1,
+				"href": "view/events.html"
+			},
+			{
+				"id": 22,
+				"title": "IP封禁日志",
+				"icon": "pear-icon pear-icon-lock",
+				"type": 1,
+				"href": "view/ip-blocking.html"
+			},
+			{
+				"id": 23,
+				"title": "规则情报候选",
+				"icon": "pear-icon pear-icon-survey",
+				"type": 1,
+				"href": "view/rule-candidate.html"
+			}
+		]
+	},
+	{
+		"id": 4,
+		"title": "防护策略",
+		"icon": "layui-icon layui-icon-auz",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 41,
+				"title": "防护站点",
+				"icon": "layui-icon layui-icon-website",
+				"type": 1,
+				"href": "view/website.html"
+			},
+			{
+				"id": 42,
+				"title": "网站防护",
+				"icon": "pear-icon pear-icon-security",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/web.html"
+			},
+			{
+				"id": 43,
+				"title": "IP黑白名单",
+				"icon": "pear-icon pear-icon-filter",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/ip-filter.html"
+			},
+			{
+				"id": 44,
+				"title": "Bot管理",
+				"icon": "pear-icon pear-icon-user",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/bot.html"
+			},
+			{
+				"id": 45,
+				"title": "CC防护",
+				"icon": "pear-icon pear-icon-warning",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/cc.html"
+			},
+			{
+				"id": 46,
+				"title": "访问控制(ACL)",
+				"icon": "pear-icon pear-icon-select",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/acl.html"
+			},
+			{
+				"id": 47,
+				"title": "敏感数据过滤",
+				"icon": "pear-icon pear-icon-hide",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/sensitive.html"
+			}
+		]
+	},
+	{
+		"id": 6,
+		"title": "基础配置",
+		"icon": "layui-icon layui-icon-set-fill",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 61,
+				"title": "证书管理",
+				"icon": "layui-icon layui-icon-file",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/common/certificate.html"
+			},
+			{
+				"id": 62,
+				"title": "IP组",
+				"icon": "pear-icon pear-icon-layers",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/common/ip-group.html"
+			},
+			{
+				"id": 63,
+				"title": "系统设置",
+				"icon": "layui-icon layui-icon-template-1",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/system/system.html"
+			},
+			{
+				"id": 65,
+				"title": "用户与权限",
+				"icon": "layui-icon layui-icon-group",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/system/access-control.html"
+			}
+		]
+	},
+	{
+		"id": 8,
+		"title": "集群与大屏",
+		"icon": "layui-icon layui-icon-engine",
+		"type": 0,
+		"href": "",
+		"children": [
+			{
+				"id": 81,
+				"title": "在线节点",
+				"icon": "layui-icon layui-icon-radio",
+				"type": 1,
+				"href": "view/cluster-nodes.html"
+			},
+			{
+				"id": 87,
+				"title": "节点攻击概览",
+				"icon": "layui-icon layui-icon-chart-screen",
+				"type": 1,
+				"href": "view/node-attack-overview.html"
+			},
+			{
+				"id": 83,
+				"title": "深全球攻击态势",
+				"icon": "pear-icon pear-icon-map",
+				"type": 1,
+				"href": "view/node-attack-global.html"
+			},
+			{
+				"id": 84,
+				"title": "浅全球攻击态势",
+				"icon": "layui-icon layui-icon-theme",
+				"type": 1,
+				"href": "view/node-attack-global-light.html"
+			},
+			{
+				"id": 85,
+				"title": "深中国攻击态势",
+				"icon": "pear-icon pear-icon-map",
+				"type": 1,
+				"href": "view/node-attack-china.html"
+			},
+			{
+				"id": 86,
+				"title": "浅中国攻击态势",
+				"icon": "layui-icon layui-icon-theme",
+				"type": 1,
+				"href": "view/node-attack-china-light.html"
+			}
+		]
+	}
+]

@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+		<title>CC防护</title>
+		<link href="../../component/pear/css/pear.css" rel="stylesheet">
+	</head>
+	<body class="pear-container">
+		<div id="id-standalone-cc-section">
+		<form class="layui-form" lay-filter="filter-form-sites">
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div class="layui-card">
+						<div class="layui-card-body layui-row">
+							<div class="layui-col-md6">
+								<div class="layui-input-inline">
+									<select name="site" id="site" lay-filter="filter-site">
+										<option value="0">全局设置</option>
+									</select>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</form>
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-body" id="id-cc-mode-notice"></div>
+				</div>
+			</div>
+		</div>
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header" id="id-cc-title">CC防护设置</div>
+					<div class="layui-card-body">
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md12">
+								<form class="layui-form" lay-filter="filter-form-cc">
+									<div class="layui-input-group">
+										<div class="layui-input-prefix" style="padding: 9px 10px 9px 0;">状态</div>
+										<input type="checkbox" id="id-cc-state" name="state" lay-skin="switch" lay-filter="filter-cc-module-state" title="ON|OFF" />
+										<div class="layui-input-suffix" style="padding: 9px 0px 9px 10px;">开启后可对请求进行频率限制。</div>
+									</div>
+								</form>
+							</div>
+						</div>
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md12">
+								<table id="id-table-rules" lay-filter="filter-table-rules"></table>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		</div>
+		<div class="layui-row layui-col-space10" id="id-cluster-domain-section" style="display:none;">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">集群 CC 规则</div>
+					<div class="layui-card-body">
+						<div class="layui-text" style="margin-bottom:12px;color:#666;">以下规则由 Master 按常规规则发布链路同步到 Node，决定哪些请求参与集群 CC 计数及超限后的处置动作。集群计数维度为“域名 + 客户端IP + CC规则”；统计周期和阈值以本页下方的域名策略为准。站点规则会覆盖全局规则，请按需选择规则来源查看。</div>
+						<div class="layui-form" style="margin-bottom:12px;">
+							<div class="layui-inline">
+								<label class="layui-form-label" style="width:auto;">规则来源</label>
+								<div class="layui-input-inline" style="width:300px;">
+									<select id="id-cluster-rule-site" lay-filter="filter-cluster-rule-site"><option value="0">全局基础规则</option></select>
+								</div>
+							</div>
+						</div>
+						<table id="id-table-cluster-cc-rules" lay-filter="filter-table-cluster-cc-rules"></table>
+					</div>
+				</div>
+			</div>
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">集群域名阈值</div>
+					<div class="layui-card-body">
+						<div class="layui-text" style="margin-bottom:12px;color:#666;">Node 自动上报防护域名。来源节点为历史归属信息，会持续保留；仅删除域名时才一并清理。这里设置集群累计阈值，按“域名 + 客户端IP + 集群 CC 规则”计数；未设置特例的域名使用“*”默认策略。实时统计保留 5 分钟，近 24 小时访问按小时汇总。域名连续 24 小时未上报后标记为已停用，才可删除。</div>
+						<table id="id-table-cluster-domains" lay-filter="filter-table-cluster-domains"></table>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<form class="layui-form" style="background-color:#fff;padding:20px 28px 8px;display:none;" lay-filter="filter-form-domain-policy" id="id-form-domain-policy">
+			<input type="hidden" name="domain" />
+			<div class="layui-form-item"><label class="layui-form-label">域名</label><div class="layui-input-block"><input name="domainView" class="layui-input" disabled></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">访问阈值</label><div class="layui-input-block"><input name="threshold" lay-verify="required|number" class="layui-input"></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">统计周期</label><div class="layui-input-block"><input name="duration" lay-verify="required|number" class="layui-input"></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">启用特例</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" title="ON|OFF" checked></div></div>
+			<div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-domain-policy-save">保存</button></div></div>
+		</form>
+
+		<form class="layui-form" style="background-color:#fff;padding: 10px 15px;display: none;" lay-filter="filter-form-rule" id="id-form-rule">
+			<input type="hidden" name="id" />
+			<input type="hidden" name="state" />
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">规则名称</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<input type="text" name="rule" lay-verify="required" autocomplete="off" class="layui-input" />
+				</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md6 layui-col-sm6">统计对象</div>
+				<div class="layui-col-md3 layui-col-sm3">统计时长（秒）</div>
+				<div class="layui-col-md3 layui-col-sm3">阈值（次）</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md6 layui-col-sm6">
+					<select name="countType">
+						<option value="ip">IP</option>
+						<option value="url">URL</option>
+					</select>
+				</div>
+				<div class="layui-col-md3 layui-col-sm3">
+					<input type="text" name="duration" lay-verify="required|number" autocomplete="off" class="layui-input" />
+				</div>
+				<div class="layui-col-md3 layui-col-sm3">
+					<input type="text" name="threshold" lay-verify="required|number" autocomplete="off" class="layui-input" />
+				</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12 layui-col-sm12">匹配正则表达式</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12 layui-col-sm12">
+					<input type="text" name="pattern" lay-verify="" autocomplete="off" class="layui-input" />
+				</div>
+			</div>
+		
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md6 layui-col-sm6">处置动作</div>
+				<div class="layui-col-md2 layui-col-sm2">自动屏蔽IP</div>
+				<div class="layui-col-md4 layui-col-sm4">IP屏蔽时长（秒，0 为永久）</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md6 layui-col-sm6">
+					<select id="id-action" name="action" lay-filter="filter-action"></select>
+				</div>
+				<div class="layui-col-md2 layui-col-sm2">
+					<input type="checkbox" name="autoIpBlock" lay-skin="switch" title="ON|OFF" />
+				</div>
+				<div class="layui-col-md4 layui-col-sm4">
+					<input type="text" name="ipBlockExpireInSeconds" lay-verify="required|number" autocomplete="off" class="layui-input" />
+				</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">备注</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div class="layui-form-text">
+						<textarea name="description" placeholder="请输入备注" class="layui-textarea"></textarea>
+					</div>
+				</div>
+			</div>
+
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div style="float: right;">
+						<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-rule-save">保存</button>
+						<button type="button" class="pear-btn" lay-on="ruleCancel">取消</button>
+					</div>
+				</div>
+			</div>
+		</form>
+
+		<script type="text/html" id="id-template-toolbar">
+			<button class="pear-btn pear-btn-primary pear-btn-md" lay-event="add">
+				<i class="layui-icon layui-icon-add-1"></i>
+				新增
+			</button>
+		</script>
+		<script type="text/html" id="id-template-bar">
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit"><i class="layui-icon layui-icon-edit"></i></button>
+			<button class="pear-btn pear-btn-danger pear-btn-xs" lay-event="remove"><i class="layui-icon layui-icon-delete"></i></button>
+		</script>
+		<script type="text/html" id="id-template-rule-state">
+			<input type="checkbox" name="state" value="{{= d.id }}" lay-skin="switch" lay-filter="filter-rule-state" title="ON|OFF" {{= d.state == "on" ? "checked" : "" }} />
+		</script>
+		<script type="text/html" id="id-template-domain-bar">
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="policy">阈值</button>
+			{{# if (d.domain !== '*' && d.status !== 'active') { }}
+			<button class="pear-btn pear-btn-danger pear-btn-xs" lay-event="delete">删除</button>
+			{{# } }}
+		</script>
+
+		<script src="../../component/layui/layui.js"></script>
+		<script src="../../component/pear/pear.js"></script>
+		<script src="../../js/action.js"></script>
+		<script>
+			layui.use(['form','table','util','jquery','popup'], function() {
+				var table = layui.table;
+				var form = layui.form;
+				var util = layui.util;
+				var popup = layui.popup;
+				var layer = layui.layer;
+				var $ = layui.$;
+				function switchCcMode(cluster) {
+					$('#id-standalone-cc-section').toggle(!cluster);
+					$('#id-cluster-domain-section').toggle(cluster);
+					if (cluster) {
+						table.reloadData('id-table-cluster-cc-rules');
+						table.reloadData('id-table-cluster-domains');
+					}
+				}
+
+				function applySystemCcMode(cluster) {
+					if (!cluster) {
+						$('#id-cc-mode-notice').html('<div style="color:#24733b;">当前为单机模式：CC 使用本机统计周期和阈值进行限流。</div>');
+					}
+					switchCcMode(cluster);
+				}
+
+				// Keep the visible CC page consistent with the backend cluster-mode condition.
+				$.get('/system/get', {}, function(res) {
+					if (!res || !res.data) {
+						applySystemCcMode(false);
+						return;
+					}
+					var system;
+					try {
+						system = JSON.parse(res.data);
+					} catch (e) {
+						applySystemCcMode(false);
+						return;
+					}
+					var cluster = system.centralized && system.centralized.state === 'on'
+						&& system.redis && system.redis.state === 'on';
+					applySystemCcMode(cluster);
+				}, 'json').fail(function() {
+					applySystemCcMode(false);
+				});
+
+				// 切换域名
+				form.on('select(filter-site)', function(data) {
+					getSiteConfig();
+					reloadTableData();
+				});
+
+				form.on('select(filter-cluster-rule-site)', function(data) {
+					table.reloadData('id-table-cluster-cc-rules', {
+						where: {siteId: data.value},
+						page: {curr: 1}
+					});
+				});
+
+				function getSiteConfig() {
+					$.get('/cc/config/get', {siteId : $('#site').val()}, function(res) {
+						if (res && res.data) {
+							var cc = JSON.parse(res.data);
+							$('#id-cc-state').prop('checked', cc.state == 'on' ? true : false);
+							form.render(null, 'filter-form-cc');
+						}
+					}, "json");
+				}
+
+				$(function() {
+					$.get('/sites/list', {}, function(data) {
+						if (data && data.data) {
+							$.each(data.data, function(key, site) {
+								var serverName = site.serverNames.join(',');
+								$('#site').append('<option value="' + site.id + '">' + serverName + '</option>');
+								$('#id-cluster-rule-site').append('<option value="' + site.id + '">' + serverName + '</option>');
+							});
+
+							form.render(null, 'filter-form-sites');
+							form.render('select');
+							getSiteConfig();
+							reloadTableData();
+						}
+					}, "json");
+
+					// 阻止回车触发表单提交
+					$('input').on('keydown', function (e) {
+						if (e.keyCode === 13) {
+							e.preventDefault();
+							return false;
+						}
+					});
+				});
+
+				table.render({
+					elem: '#id-table-rules',
+					cols: [[
+						{field: 'rule', title: '规则名称'},
+						{field: 'state', title: '状态', templet: '#id-template-rule-state', width: 100},
+						{field: 'countType', title: '统计对象', width: 100},
+						{field: 'pattern', title: '匹配正则', minWidth: 60},
+						{field: 'duration', title: '统计时长', templet: '<div>{{= d.duration }} 秒</div>'},
+						{field: 'threshold', title: '阈值', templet: '<div>{{= d.threshold }} 次</div>'},
+						{field: 'action', title: '响应动作', templet: function(d) {
+							return '<div>' + getActionText(d.action) + '</div>';
+						}},
+						{field: 'autoIpBlock', title: '自动屏蔽IP', width: 100, templet: function(d) {
+							return d.autoIpBlock == 'on' ? '是' : '否';
+						}},
+						{field: 'ipBlockExpireInSeconds', title: 'IP屏蔽时长', width: 100, templet: function(d) {
+							if (d.ipBlockExpireInSeconds == 0) {
+								return '永久';
+							} else {
+								return d.ipBlockExpireInSeconds + ' 秒';
+							}
+						}},
+						{field: 'description', title: '备注', minWidth: 200},
+						{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#id-template-bar'}
+					]],
+					toolbar: '#id-template-toolbar',
+					css:'.layui-form{margin-top:0px;}',
+					page: true,
+					limits: [5, 10, 15, 20, 25, 30],
+					limit: 10, // 每页默认显示的数量
+				});
+
+				function reloadTableData() {
+					table.reloadData('id-table-rules', {
+						url: '/cc/rule/list',
+						page: {
+							curr: 1
+						},
+						where: {
+							siteId: $('#site').val()
+						}
+					});
+				}
+
+				function openLayer(title) {
+					layer.open({
+						type: 1,
+						title: title,
+						shade: 0.6,
+						shadeClose: true,
+						content: $('#id-form-rule'),
+						end: function() {
+							$("#id-form-rule").trigger("reset");
+							$("#id-form-rule").find("input[type='hidden']").val("");
+						}
+					});
+				}
+
+				// 触发单元格工具事件
+				table.on('tool(filter-table-rules)', function(obj) {
+					var data = obj.data; // 获得当前行数据
+
+					if(obj.event === 'edit') {
+						openLayer('编辑规则');
+						var autoIpBlock = data.autoIpBlock == 'on' ? true : false;
+						data.autoIpBlock = autoIpBlock;
+						form.val('filter-form-rule', data);
+					} else if(obj.event === 'remove') {
+						layer.confirm('确定删除该规则吗？', {
+							icon: 3,
+							title: '提示'
+						},
+						function(index) {
+						var param = {siteId : $('#site').val()};
+							param.ruleId = data.id;
+							$.post('/cc/rule/remove',  param, function(res) {
+								if (res && res.code == 200) {
+									obj.del();
+									table.reloadData('id-table-rules');
+									layer.close(index);
+									return true;
+								} else {
+									popup.failure(res.msg);
+									return false;
+								}
+							}, "json");
+						});
+					}
+				});
+
+				table.on('toolbar(filter-table-rules)', function(obj) {
+					if (obj.event === 'add') {
+						openLayer('添加规则');
+					} else if (obj.event === 'refresh') {
+						table.reload('id-table-rules');
+					}
+				});
+
+				util.on('lay-on', {
+					ruleCancel: function() {
+						layer.closeLast('page');
+					}
+				});
+
+				// 规则提交保存事件
+				form.on('submit(filter-rule-save)', function(data) {
+					var field = data.field; // 获取表单字段值
+					if (!field.id) {
+						field.state = 'off';
+					}
+
+					if (field.autoIpBlock != 'on') {
+						field.autoIpBlock = 'off';
+					}
+
+					var param = {siteId : $('#site').val()};
+					param.rule = JSON.stringify(field);
+					
+					$.post('/cc/rule/save',  param, function(res) {
+						if (res && res.code == 200) {
+							table.reloadData('id-table-rules');
+							layer.closeLast('page');
+							popup.success("已保存");
+							return true;
+						} else {
+							popup.failure(res.msg);
+							return false;
+						}
+					}, "json");
+
+					return false; // 阻止默认 form 跳转
+				});
+
+				form.on('switch(filter-rule-state)', function(obj) {
+					var param = {siteId : $('#site').val()};
+					param.ruleId = this.value;
+					param.state = this.checked ? 'on' : 'off';
+
+					$.post('/cc/rule/state/update',  param, function(res) {
+						if (res && res.code == 200) {
+							table.reloadData('id-table-rules');
+							return true;
+						} else {
+							popup.failure(res.msg);
+							return false;
+						}
+					}, "json");
+				});
+
+				form.on('switch(filter-cc-module-state)', function(obj) {
+					var state = this.checked ? 'on' : 'off';
+					var param = {siteId: $('#site').val(), state : state}
+					$.post('/cc/config/state/update', param, function(data) {
+						if (data && data.code == 200) {
+							return true;
+						} else {
+							popup.failure(data.msg);
+							return false;
+						}
+					}, "json");
+				});
+
+				$(function() {
+					initActionSelect('id-action', 'coding', function() {
+						form.render($('#id-action'));
+					});
+				});
+
+				if (document.getElementById('id-cluster-domain-section')) {
+					table.render({
+						id: 'id-table-cluster-cc-rules', elem: '#id-table-cluster-cc-rules', url: '/cc/rule/list',
+						where: {siteId: '0'}, page: true, limit: 100, limits: [50, 100],
+						cols: [[
+							{field:'rule', title:'规则名称', minWidth:150},
+							{field:'state', title:'状态', width:90, templet:function(d){ return d.state === 'on' ? '启用' : '关闭'; }},
+							{field:'countType', title:'统计对象', width:105},
+							{field:'pattern', title:'匹配条件', minWidth:180, templet:function(d){ return d.pattern || '全部请求'; }},
+							{field:'action', title:'超限动作', width:120, templet:function(d){ return getActionText(d.action); }},
+							{field:'autoIpBlock', title:'自动封禁IP', width:115, templet:function(d){ return d.autoIpBlock === 'on' ? '是' : '否'; }},
+							{field:'ipBlockExpireInSeconds', title:'封禁时长', width:110, templet:function(d){ return Number(d.ipBlockExpireInSeconds) === 0 ? '永久' : (d.ipBlockExpireInSeconds + ' 秒'); }},
+							{field:'description', title:'备注', minWidth:200}
+						]]
+					});
+
+					table.render({
+						id: 'id-table-cluster-domains', elem: '#id-table-cluster-domains', url: '/clusternode/domains', page: false,
+						cols: [[
+							{field:'domain', title:'域名', minWidth:220},
+							{field:'node_ips', title:'来源节点', minWidth:180, templet:function(d){ return d.node_ips || '-'; }},
+							{field:'node_count', title:'节点数', width:85},
+							{field:'requests_1m', title:'1分钟请求', width:110},
+							{field:'peak_5m', title:'5分钟峰值', width:110},
+							{field:'cc_hits_5m', title:'5分钟CC命中', width:125},
+							{field:'requests_24h', title:'24小时访问', width:115},
+							{title:'集群阈值', minWidth:165, templet:function(d){ return d.threshold_value + ' 次 / ' + d.duration_seconds + ' 秒（' + (d.policy_source === 'custom' ? '特例' : '默认') + '）'; }},
+							{field:'status', title:'状态', width:90, templet:function(d){ return d.domain === '*' ? '默认' : (d.status === 'active' ? '活跃' : '已停用'); }},
+							{field:'last_seen', title:'最后发现', width:170},
+							{title:'操作', toolbar:'#id-template-domain-bar', width:140}
+						]]
+					});
+
+					table.on('tool(filter-table-cluster-domains)', function(obj) {
+						var d = obj.data;
+						if (obj.event === 'delete') {
+							layer.confirm('确认删除已停用域名「' + d.domain + '」？其集群 CC 特例阈值也会一并删除。', {icon: 3, title: '删除域名'}, function(index) {
+								$.post('/clusternode/domain/delete', {domain: d.domain}, function(res) {
+									if (res && res.code === 0) {
+										layer.close(index);
+										table.reloadData('id-table-cluster-domains');
+										popup.success('已删除');
+									} else {
+										popup.failure((res && res.msg) || '删除失败');
+									}
+								}, 'json');
+							});
+							return;
+						}
+						if (obj.event !== 'policy') return;
+						form.val('filter-form-domain-policy', {
+							domain: d.domain, domainView: d.domain, threshold: d.threshold_value,
+							duration: d.duration_seconds, state: d.policy_source === 'custom'
+						});
+						layer.open({type: 1, title: '设置集群域名阈值', area: ['520px', '390px'], content: $('#id-form-domain-policy')});
+					});
+
+					form.on('submit(filter-domain-policy-save)', function(data) {
+						data.field.state = data.field.state ? 'on' : 'off';
+						$.post('/clusternode/domain/policy/save', data.field, function(res) {
+							if (res && res.code === 0) {
+								layer.closeLast('page');
+								table.reloadData('id-table-cluster-domains');
+								popup.success('已保存');
+							} else {
+								popup.failure((res && res.msg) || '保存失败');
+							}
+						}, 'json');
+						return false;
+					});
+				}
+			});
+
+		</script>
+	</body>
+</html>

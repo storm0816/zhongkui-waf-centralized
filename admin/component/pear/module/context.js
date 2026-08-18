@@ -1,0 +1,1 @@
+layui.define(["jquery","element"],function(e){"use strict";layui.jquery,layui.element;e("context",new function(){this.put=function(e,t){localStorage.setItem(e,t)},this.get=function(e){return localStorage.getItem(e)}})});

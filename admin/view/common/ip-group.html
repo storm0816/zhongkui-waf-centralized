@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+		<title>IP组</title>
+		<link href="../../component/pear/css/pear.css" rel="stylesheet">
+	</head>
+	<body class="pear-container">
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">IP组</div>
+					<div class="layui-card-body">
+						<div class="layui-row layui-col-space10">
+							<div class="layui-col-md12">
+								<table id="id-table-rules" lay-filter="filter-table-rules"></table>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<form class="layui-form" style="background-color:#fff;padding: 10px 15px;display: none;" lay-filter="filter-form-rule" id="id-form-rule">
+			<input type="hidden" name="id" />
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">规则名称</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<input type="text" name="groupName" lay-verify="required" autocomplete="off" class="layui-input" />
+				</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">IP列表</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div class="layui-form-text">
+						<textarea name="ips" lay-verify="required|ipsRule" placeholder="IP或网段，每行一个。" style="height: 210px;" class="layui-textarea"></textarea>
+					</div>
+				</div>
+			</div>
+			<div class="layui-row layui-col-space10">
+				<div class="layui-col-md12">
+					<div style="float: right;">
+						<button type="submit" class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-rule-save">保存</button>
+						<button type="button" class="pear-btn" lay-on="cancel">取消</button>
+					</div>
+				</div>
+			</div>
+		</form>
+		<script type="text/html" id="user_toolbar">
+			<button class="pear-btn pear-btn-primary pear-btn-md" lay-event="add">
+				<i class="layui-icon layui-icon-add-1"></i>添加IP组
+			</button>
+		</script>
+		<script type="text/html" id="iplist_bar">
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit"><i class="layui-icon layui-icon-edit"></i></button>
+			<button class="pear-btn pear-btn-danger pear-btn-xs" lay-event="remove"><i class="layui-icon layui-icon-delete"></i></button>
+		</script>
+		<script type="text/html" id="iplist_state">
+			<input type="checkbox" name="state" value="{{= d.id }}" lay-skin="switch" title="ON|OFF" {{= d.state == "on" ? "checked" : "" }} />
+		</script>
+
+		<script src="../../component/layui/layui.js"></script>
+		<script src="../../component/pear/pear.js"></script>
+		<script src="../../js/validator.js"></script>
+		<script>
+			layui.use(['form','table','util','jquery','popup'], function() {
+				var table = layui.table;
+				var form = layui.form;
+				var util = layui.util;
+				var element = layui.element
+				var $ = layui.$;
+				var popup = layui.popup;
+
+				var currentTabId;
+
+				table.render({
+					elem: '#id-table-rules',
+					url: '/common/ipgroups/list',
+					cols: [[ //标题栏
+						{field: 'groupName', title: '组名'},
+						{title: '内容', templet: function(d) {
+							let ips = d.ips;
+							let len = ips.length;
+							if (len > 1) {
+								return ips[0] + '...';
+							} else if (len > 0) {
+								return ips[0];
+							}
+						}},
+						{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#iplist_bar'}
+					]],
+					toolbar: '#user_toolbar',
+					skin: 'line',
+					page: true, // 是否显示分页
+					limits: [5, 10, 15, 20, 25, 30],
+					limit: 10, // 每页默认显示的数量
+				});
+
+				function openLayer(title) {
+					layer.open({
+						type: 1,
+						title: title,
+						shade: 0.6,
+						shadeClose: true,
+						area: ['430px', '440px'],
+						content: $('#id-form-rule'),
+						end: function() {
+							$("#id-form-rule").trigger("reset");
+							$("#id-form-rule").find("input[type='hidden']").val("");
+						}
+					});
+				}
+
+				// 触发单元格工具事件
+				table.on('tool(filter-table-rules)', function(obj) {
+					var data = obj.data; // 获得当前行数据
+
+					if(obj.event === 'edit') {
+						$.get('/common/ipgroups/get',  {id: data.id}, function(res) {
+							if (res && res.code == 200) {
+								openLayer('编辑IP组');
+
+								let data = res.data;
+								let ips = data.ips;
+
+								data.ips = ips.join('\n');
+								form.val('filter-form-rule', data);
+							} else {
+								popup.failure(res.msg);
+								return false;
+							}
+						}, "json");
+
+					} else if(obj.event === 'remove') {
+						layer.confirm('确定删除该IP组吗？', {
+							icon: 3,
+							title: '提示'
+						}, 
+						function(index) {
+							$.post('/common/ipgroups/remove',  {id: data.id}, function(resData) {
+								if (resData && resData.code == 200) {
+									obj.del();
+									table.reloadData('id-table-rules');
+									layer.close(index);
+									return true;
+								} else {
+									popup.failure(resData.msg);
+									return false;
+								}
+							}, "json");
+						});
+					}
+				});
+
+				table.on('toolbar(filter-table-rules)', function(obj) {
+					if (obj.event === 'add') {
+						openLayer('添加IP组');
+					} else if (obj.event === 'refresh') {
+						table.reload('id-table-rules');
+					}
+				});
+
+				util.on('lay-on', {
+					cancel: function() {
+						layer.closeLast('page');
+					}
+				});
+
+				form.verify({
+					ipsRule: function(value, elem) {
+						if (value.trim().length > 0) {
+							let arr = value.split('\n');
+							let flag = false;
+							$.each(arr, function(i, ip) {
+								if (validator.isIPWithCIDR(ip) == false) {
+									flag = true;
+									return false;
+								}
+							});
+							if (flag) {
+								return "ip格式不正确";
+							}
+						} else {
+							return "ip组内容不能为空";
+						}
+					}
+				});
+
+				// 提交事件
+				form.on('submit(filter-rule-save)', function(data) {
+					var field = data.field; // 获取表单字段值
+					field.groupName = field.groupName.trim();
+					let arr = field.ips.split('\n');
+					let newArr = arr.filter(item => item.trim().length > 0);
+					field.ips = newArr;
+
+					$.post('/common/ipgroups/update',  {rule: JSON.stringify(field)}, function(data) {
+						if (data && data.code == 200) {
+							table.reloadData('id-table-rules');
+							layer.closeLast('page');
+							popup.success("已保存");
+							return true;
+						} else {
+							popup.failure(data.msg);
+							return false;
+						}
+					}, "json");
+
+					return false;
+				});
+			});
+
+		</script>
+	</body>
+</html>
