@@ -449,11 +449,14 @@ chown -R webuser:users $OPENRESTY_PATH/zhongkui-waf
 chmod -R 755 $OPENRESTY_PATH/zhongkui-waf
 mkdir -p /opt/openresty/zhongkui-program-releases
 chown -R webuser:users /opt/openresty/zhongkui-program-releases
+mkdir -p /opt/openresty/zhongkui-geoip-releases
+chown -R webuser:users /opt/openresty/zhongkui-geoip-releases
 
 if [ "$ROLE" = "node" ]; then
     cp -f "$ZHONGKUI_PATH/deploy/systemd/zhongkui-node-updater.service" /etc/systemd/system/
     cp -f "$ZHONGKUI_PATH/deploy/systemd/zhongkui-node-updater.timer" /etc/systemd/system/
     chmod 755 "$ZHONGKUI_PATH/bin/node_updater.sh"
+    chmod 755 "$ZHONGKUI_PATH/bin/geoip_updater.sh"
     systemctl daemon-reload
     systemctl enable --now zhongkui-node-updater.timer
 fi

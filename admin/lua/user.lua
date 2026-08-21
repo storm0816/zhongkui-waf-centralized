@@ -81,7 +81,7 @@ end
 
 function _M.enforce_request_permission()
     local uri = ngx.var.uri or ""
-    if uri:find("^/node%-release/") then
+    if uri:find("^/node%-release/") or uri:find("^/node%-geoip/") then
         return true
     end
     _M.deny_console_on_node()
@@ -102,6 +102,9 @@ function _M.enforce_request_permission()
     end
     local required = ngx.req.get_method() == "GET" and "read" or "manage"
     if uri:find("^/programrelease/") and ngx.req.get_method() ~= "GET" then
+        required = "release.manage"
+    end
+    if uri:find("^/geoiprelease/") and ngx.req.get_method() ~= "GET" then
         required = "release.manage"
     end
     if uri:find("^/access/") then required = "user.manage" end

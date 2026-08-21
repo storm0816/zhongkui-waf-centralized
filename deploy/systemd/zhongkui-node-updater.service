@@ -5,3 +5,4 @@ After=network.target openresty.service
 [Service]
 Type=oneshot
 ExecStart=/opt/openresty/zhongkui-waf/bin/node_updater.sh
+ExecStart=/opt/openresty/zhongkui-waf/bin/geoip_updater.sh

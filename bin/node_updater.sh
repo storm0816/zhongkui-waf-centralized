@@ -101,7 +101,8 @@ if [[ -f "$WORK_DIR/preserve/admin/admin/data/user.json" ]]; then
     mkdir -p "$STAGE_DIR/admin/admin/data"
     cp -a "$WORK_DIR/preserve/admin/admin/data/user.json" "$STAGE_DIR/admin/admin/data/"
 fi
-chmod +x "$STAGE_DIR/bin/node_updater.sh" "$STAGE_DIR/bin/program_release.sh" "$STAGE_DIR/upgrade.sh" 2>/dev/null || true
+chmod +x "$STAGE_DIR/bin/node_updater.sh" "$STAGE_DIR/bin/program_release.sh" \
+    "$STAGE_DIR/bin/geoip_updater.sh" "$STAGE_DIR/bin/geoip_release.sh" "$STAGE_DIR/upgrade.sh" 2>/dev/null || true
 
 mv -- "$TARGET_DIR" "$BACKUP_DIR"
 mv -- "$STAGE_DIR" "$TARGET_DIR"

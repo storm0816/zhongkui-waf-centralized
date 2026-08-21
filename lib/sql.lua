@@ -12,6 +12,7 @@ local cjson = require "cjson.safe"
 local time = require "time"
 local file_utils = require "file_utils"
 local program_update = require "program_update"
+local geoip_update = require "geoip_update"
 
 local ipairs = ipairs
 local pairs = pairs
@@ -548,6 +549,10 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
         program_update_status VARCHAR(32) NULL COMMENT '程序升级状态',
         program_update_message VARCHAR(1024) NULL COMMENT '程序升级消息',
         program_update_at DATETIME NULL COMMENT '程序升级更新时间',
+        geoip_update_target VARCHAR(64) NULL COMMENT '目标GeoIP版本',
+        geoip_update_status VARCHAR(32) NULL COMMENT 'GeoIP更新状态',
+        geoip_update_message VARCHAR(1024) NULL COMMENT 'GeoIP更新消息',
+        geoip_update_at DATETIME NULL COMMENT 'GeoIP更新时间',
         hostname VARCHAR(128) COMMENT '节点主机名',
         last_seen DATETIME COMMENT '最近活跃时间',
         create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -630,9 +635,10 @@ local SQL_INSERT_CLUSTER_NODE = [[
         blacklist_sync_status, blacklist_sync_at,
         last_sync_status, last_sync_at,
         program_update_target, program_update_status, program_update_message, program_update_at,
+        geoip_update_target, geoip_update_status, geoip_update_message, geoip_update_at,
         hostname, last_seen
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
         app_version = VALUES(app_version),
         rules_version = VALUES(rules_version),
@@ -654,6 +660,10 @@ local SQL_INSERT_CLUSTER_NODE = [[
         program_update_status = VALUES(program_update_status),
         program_update_message = VALUES(program_update_message),
         program_update_at = VALUES(program_update_at),
+        geoip_update_target = VALUES(geoip_update_target),
+        geoip_update_status = VALUES(geoip_update_status),
+        geoip_update_message = VALUES(geoip_update_message),
+        geoip_update_at = VALUES(geoip_update_at),
         hostname = VALUES(hostname),
         last_seen = VALUES(last_seen)
 ]]
@@ -1128,6 +1138,14 @@ function _M.check_table(premature)
         "ALTER TABLE waf_cluster_node ADD COLUMN program_update_message VARCHAR(1024) NULL COMMENT '程序升级消息' AFTER program_update_status")
     ensure_column("waf_cluster_node", "program_update_at",
         "ALTER TABLE waf_cluster_node ADD COLUMN program_update_at DATETIME NULL COMMENT '程序升级更新时间' AFTER program_update_message")
+    ensure_column("waf_cluster_node", "geoip_update_target",
+        "ALTER TABLE waf_cluster_node ADD COLUMN geoip_update_target VARCHAR(64) NULL COMMENT '目标GeoIP版本' AFTER program_update_at")
+    ensure_column("waf_cluster_node", "geoip_update_status",
+        "ALTER TABLE waf_cluster_node ADD COLUMN geoip_update_status VARCHAR(32) NULL COMMENT 'GeoIP更新状态' AFTER geoip_update_target")
+    ensure_column("waf_cluster_node", "geoip_update_message",
+        "ALTER TABLE waf_cluster_node ADD COLUMN geoip_update_message VARCHAR(1024) NULL COMMENT 'GeoIP更新消息' AFTER geoip_update_status")
+    ensure_column("waf_cluster_node", "geoip_update_at",
+        "ALTER TABLE waf_cluster_node ADD COLUMN geoip_update_at DATETIME NULL COMMENT 'GeoIP更新时间' AFTER geoip_update_message")
     ensure_column("waf_rule_candidate", "publish_status",
         "ALTER TABLE waf_rule_candidate ADD COLUMN publish_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '发布状态' AFTER review_time")
     ensure_column("waf_rule_candidate", "publish_module",
@@ -2202,6 +2220,7 @@ function _M.report_node_info()
     end
 
     local program_status = program_update.read_status()
+    local geoip_status = geoip_update.read_status()
     local info = {
         ip = node_id,
         app_version = APP_VERSION,
@@ -2224,6 +2243,10 @@ function _M.report_node_info()
         program_update_status = program_status.status or "idle",
         program_update_message = program_status.message or "",
         program_update_at = program_status.updated_at or ngx.localtime(),
+        geoip_update_target = geoip_status.target_version or "",
+        geoip_update_status = geoip_status.status or "idle",
+        geoip_update_message = geoip_status.message or "",
+        geoip_update_at = geoip_status.updated_at or ngx.localtime(),
         hostname = get_hostname(),
         timestamp = tostring(os.time())
     }
@@ -2282,6 +2305,10 @@ function _M.write_cluster_nodes_to_mysql()
             quote_sql_str(node.program_update_status or "idle"),
             quote_sql_str(node.program_update_message or ""),
             quote_sql_str(node.program_update_at or node.last_seen),
+            quote_sql_str(node.geoip_update_target or ""),
+            quote_sql_str(node.geoip_update_status or "idle"),
+            quote_sql_str(node.geoip_update_message or ""),
+            quote_sql_str(node.geoip_update_at or node.last_seen),
             quote_sql_str(node.hostname),
             quote_sql_str(node.last_seen)
         )
