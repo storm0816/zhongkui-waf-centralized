@@ -8,6 +8,7 @@
 
 # Release output and temporary build files
 /dist/
+/scripts/
 /release/
 /.release-work/
 /.release-work-*/

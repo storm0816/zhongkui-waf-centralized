@@ -33,6 +33,20 @@
 				"icon": "pear-icon pear-icon-survey",
 				"type": 1,
 				"href": "view/rule-candidate.html"
+			},
+			{
+				"id": 24,
+				"title": "敏感数据发现",
+				"icon": "pear-icon pear-icon-hide",
+				"type": 1,
+				"href": "view/sensitive-discovery.html"
+			},
+			{
+				"id": 25,
+				"title": "集群域名",
+				"icon": "layui-icon layui-icon-website",
+				"type": 1,
+				"href": "view/cluster-domains.html"
 			}
 		]
 	},
@@ -92,7 +106,7 @@
 			},
 			{
 				"id": 47,
-				"title": "敏感数据过滤",
+				"title": "敏感发现设置",
 				"icon": "pear-icon pear-icon-hide",
 				"type": 1,
 				"openType": "_iframe",

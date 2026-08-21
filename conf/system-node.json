@@ -20,20 +20,6 @@
     "auth": {
         "mfa_required": "off"
     },
-    "ldap": {
-        "state": "off",
-        "servers": [
-            "ldap://10.10.10.10:389"
-        ],
-        "bind_user": "",
-        "bind_password": "",
-        "search_base": "",
-        "user_attribute": "sAMAccountName",
-        "bind_template": "%s",
-        "start_tls": "off",
-        "tls_verify": "on",
-        "timeout": 5000
-    },
     "mysql": {
         "state": "off"
     },

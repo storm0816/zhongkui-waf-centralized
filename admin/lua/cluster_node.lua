@@ -217,7 +217,12 @@ local function get_release_status()
 end
 
 local function list_cluster_domains()
-    local rows, err = require("sql").list_cc_cluster_domains()
+    local args = ngx.req.get_uri_args() or {}
+    local rows, err = require("sql").list_cc_cluster_domains({
+        domain = args.domain,
+        status = args.status,
+        sort_24h = args.sort24h
+    })
     if not rows then return { code = 500, msg = err or "query cluster domains failed", data = {} } end
     return { code = 0, msg = "", count = #rows, data = rows }
 end

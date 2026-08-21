@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>集群域名</title>
+    <link href="../component/pear/css/pear.css" rel="stylesheet">
+    <style>.query-bar .layui-inline{margin:0 10px 8px 0;}</style>
+</head>
+<body class="pear-container">
+    <div class="layui-card">
+        <div class="layui-card-header">集群域名</div>
+        <div class="layui-card-body">
+            <form class="layui-form query-bar" lay-filter="filter-domain-query">
+                <div class="layui-inline"><input name="domain" placeholder="查询域名" class="layui-input" style="width:240px;"></div>
+                <div class="layui-inline"><select name="status"><option value="">全部状态</option><option value="default">默认</option><option value="active">活跃</option><option value="inactive">已停用</option></select></div>
+                <div class="layui-inline"><select name="sort24h"><option value="">数据库默认顺序</option><option value="asc">24小时访问升序</option><option value="desc">24小时访问降序</option></select></div>
+                <div class="layui-inline"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-domain-search">查询</button><button type="button" class="pear-btn" id="btn-domain-reset">重置</button></div>
+            </form>
+            <table id="id-table-cluster-domains-view" lay-filter="filter-table-cluster-domains-view"></table>
+        </div>
+    </div>
+    <script src="../component/layui/layui.js"></script>
+    <script src="../component/pear/pear.js"></script>
+    <script>
+    layui.use(['form','table','jquery'],function(){
+        var form=layui.form,table=layui.table,$=layui.$;
+        table.render({id:'id-table-cluster-domains-view',elem:'#id-table-cluster-domains-view',url:'/clusternode/domains',page:false,cols:[[
+            {field:'domain',title:'域名',minWidth:220},{field:'node_ips',title:'来源节点',minWidth:180,templet:function(d){return d.node_ips||'-';}},
+            {field:'node_count',title:'节点数',width:85},{field:'requests_1m',title:'1分钟请求',width:110},{field:'peak_5m',title:'5分钟峰值',width:110},
+            {field:'cc_hits_5m',title:'5分钟CC命中',width:125},{field:'requests_24h',title:'24小时访问',width:115},
+            {title:'集群阈值',minWidth:165,templet:function(d){return d.threshold_value+' 次 / '+d.duration_seconds+' 秒（'+(d.policy_source==='custom'?'特例':'默认')+'）';}},
+            {field:'status',title:'状态',width:90,templet:function(d){return d.domain==='*'?'默认':(d.status==='active'?'活跃':'已停用');}},{field:'last_seen',title:'最后发现',width:170}
+        ]]});
+        form.on('submit(filter-domain-search)',function(data){table.reloadData('id-table-cluster-domains-view',{where:data.field});return false;});
+        $('#btn-domain-reset').on('click',function(){form.val('filter-domain-query',{domain:'',status:'',sort24h:''});form.render();table.reloadData('id-table-cluster-domains-view',{where:{domain:'',status:'',sort24h:''}});});
+    });
+    </script>
+</body>
+</html>

@@ -16,3 +16,5 @@
   - 反爬虫、User-Agent 强制规则、Bot 陷阱与 robots.txt 使用说明
 - [INSTALL_PACKAGING.md](./INSTALL_PACKAGING.md)
   - 项目目录约定、离线依赖、安装包生成与发布检查
+- [QUICK_DEPLOY.md](./QUICK_DEPLOY.md)
+  - 面向部署人员的 Master / Node 傻瓜式安装、业务配置保留与启动检查

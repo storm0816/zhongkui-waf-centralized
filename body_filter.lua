@@ -16,6 +16,7 @@ local is_site_option_on = config.is_site_option_on
 local CONTENT_TYPE_REGEX = "^(?:text/html|text/plain|text/xml|application/json|application/xml|application/xhtml\\+xml)"
 local HTML_CONTENT_TYPE_REGEX = "^(?:text/html|application/xhtml\\+xml)"
 local TRAP_HTML = '<a href="%s" class="honeyLink">come-here</a><style>.honeyLink{display:none;}</style></body>'
+local SENSITIVE_SCAN_MAX_BYTES = 1024 * 1024
 
 local content = ngx.arg[1]
 
@@ -27,8 +28,15 @@ if is_site_option_on("waf") then
                 if content_type then
                     local from = ngxfind(content_type, CONTENT_TYPE_REGEX, "isjo")
                     if from then
-                        if content then
-                            content = sensitive.data_filter(content)
+                        local buffer = ngx.ctx.sensitive_response_buffer or ''
+                        if content and #buffer < SENSITIVE_SCAN_MAX_BYTES then
+                            local remaining = SENSITIVE_SCAN_MAX_BYTES - #buffer
+                            buffer = buffer .. string.sub(content, 1, remaining)
+                            ngx.ctx.sensitive_response_buffer = buffer
+                        end
+                        if ngx.arg[2] and buffer ~= '' then
+                            sensitive.report(sensitive.detect(buffer), content_type)
+                            ngx.ctx.sensitive_response_buffer = nil
                         end
                     end
                 end

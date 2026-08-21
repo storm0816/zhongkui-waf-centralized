@@ -2,7 +2,13 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 2.1.2`
+当前版本：`Version 2.1.3`
+
+### 2.1.3 发布说明
+
+- 敏感数据模块改为只检测和汇总，不再改写业务响应。
+- 安全运营新增“敏感数据发现”和“集群域名”页面。
+- 集群域名支持域名、状态筛选及 24 小时访问升降序；CC 配置页同步增加域名和状态筛选。
 
 ### 2.1.2 发布说明
 
@@ -97,6 +103,7 @@ sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui --mysql
 密码直接通过命令参数传入，方便复制部署。外部 MySQL/Redis 的地址和账号仍需提前填写对应的 `conf/system-master.json` 或 `conf/system-node.json`。
 
 高级安装和无人值守参数见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+首次部署、现网站点 `nginx.conf` / `conf.d` / `html` 保留方式见：[简明部署文档](./docs/QUICK_DEPLOY.md)。
 
 账号、角色、LDAP 与 MFA 配置见：[管理台账号、LDAP 与 MFA](./docs/ACCESS_CONTROL.md)。
 

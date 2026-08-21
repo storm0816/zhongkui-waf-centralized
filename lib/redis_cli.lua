@@ -35,7 +35,8 @@ local degrade_seconds = tonumber(redis_config.degrade_seconds) or 10
 local queue_max_len = tonumber(redis_config.queue_max_len) or 200000
 local protected_queue_keys = {
     [constants.KEY_REDIS_QUEUE_ATTACK_LOG] = true,
-    [constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG] = true
+    [constants.KEY_REDIS_QUEUE_IP_BLOCK_LOG] = true,
+    [constants.KEY_REDIS_QUEUE_SENSITIVE_DISCOVERY] = true
 }
 
 local function status_key(suffix)

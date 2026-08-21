@@ -17,6 +17,7 @@ local pairs = pairs
 local newtab = table.new
 local concat = table.concat
 local insert = table.insert
+local sort = table.sort
 local ngxmatch = ngx.re.match
 local quote_sql_str = ngx.quote_sql_str
 local floor = math.floor
@@ -550,6 +551,39 @@ local SQL_CREATE_TABLE_WAF_CLUSTER_NODE = [[
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ]]
 
+local SQL_CREATE_TABLE_SENSITIVE_DISCOVERY = [[
+    CREATE TABLE `sensitive_discovery` (
+        `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        `event_key` CHAR(32) NOT NULL COMMENT '聚合事件键',
+        `node_ip` VARCHAR(64) NULL COMMENT '发现节点',
+        `server_name` VARCHAR(255) NOT NULL COMMENT '域名',
+        `request_uri` VARCHAR(2048) NOT NULL COMMENT '请求URI',
+        `http_method` VARCHAR(20) NULL COMMENT '请求方法',
+        `content_type` VARCHAR(255) NULL COMMENT '响应类型',
+        `rule_id` VARCHAR(64) NOT NULL COMMENT '规则标识',
+        `rule_name` VARCHAR(255) NOT NULL COMMENT '发现规则',
+        `detection_type` VARCHAR(32) NOT NULL COMMENT '检测类型',
+        `matched_sample` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '脱敏后的命中样例',
+        `match_count` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '命中次数',
+        `status` VARCHAR(16) NOT NULL DEFAULT 'open' COMMENT '处理状态',
+        `first_seen` DATETIME NOT NULL,
+        `last_seen` DATETIME NOT NULL,
+        `update_time` DATETIME NULL,
+        `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        UNIQUE KEY `idx_unique_sensitive_event_key` (`event_key`),
+        KEY `idx_sensitive_last_seen` (`last_seen`),
+        KEY `idx_sensitive_server_status` (`server_name`, `status`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+]]
+
+local SQL_INSERT_SENSITIVE_DISCOVERY = [[
+    INSERT INTO sensitive_discovery (
+        event_key,node_ip,server_name,request_uri,http_method,content_type,
+        rule_id,rule_name,detection_type,matched_sample,match_count,status,first_seen,last_seen
+    ) VALUES
+]]
+
 local SQL_CREATE_TABLE_WAF_CLUSTER_DOMAIN = [[
     CREATE TABLE waf_cluster_domain (
         domain VARCHAR(255) NOT NULL PRIMARY KEY,
@@ -917,6 +951,7 @@ function _M.check_table(premature)
         { name = 'attack_log',          sql = SQL_CREATE_TABLE_ATTACK_LOG },
         { name = 'attack_log_archive',  sql = SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE },
         { name = 'ip_block_log',        sql = SQL_CREATE_TABLE_IP_BLOCK_LOG },
+        { name = 'sensitive_discovery', sql = SQL_CREATE_TABLE_SENSITIVE_DISCOVERY },
         { name = 'attack_type_traffic', sql = SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC },
         { name = 'waf_traffic_stats',   sql = SQL_CREATE_TABLE_WAF_TRAFFIC_STATS },
         { name = 'waf_cluster_node',    sql = SQL_CREATE_TABLE_WAF_CLUSTER_NODE },
@@ -1009,6 +1044,8 @@ function _M.check_table(premature)
         "ALTER TABLE attack_log ADD COLUMN node_ip VARCHAR(39) NULL COMMENT '节点IP' AFTER ip")
     ensure_column("attack_log_archive", "node_ip",
         "ALTER TABLE attack_log_archive ADD COLUMN node_ip VARCHAR(39) NULL COMMENT '节点IP' AFTER ip")
+    ensure_column("sensitive_discovery", "matched_sample",
+        "ALTER TABLE sensitive_discovery ADD COLUMN matched_sample VARCHAR(512) NOT NULL DEFAULT '' COMMENT '脱敏后的命中样例' AFTER detection_type")
 
     -- attack_log 常用查询维度索引（按时间、IP、攻击类型、站点、动作），减少大表查询和清理扫描压力。
     ensure_index("attack_log", "idx_attack_log_request_time",
@@ -1523,6 +1560,8 @@ function _M.write_sql_queue_to_mysql(premature, key)
         sql_str = SQL_INSERT_ATTACK_LOG
     elseif key == constants.KEY_IP_BLOCK_LOG then
         sql_str = SQL_INSERT_IP_BLOCK_LOG
+    elseif key == constants.KEY_SENSITIVE_DISCOVERY then
+        sql_str = SQL_INSERT_SENSITIVE_DISCOVERY
     end
 
     local insert_time_total = floor(len / BATCH_SIZE) + 1
@@ -1564,7 +1603,14 @@ function _M.write_sql_queue_to_mysql(premature, key)
             local sql_values = concat(buffer, ',')
 
             if sql_values then
-                local res, err = mysql.query(sql_str .. sql_values)
+                local statement = sql_str .. sql_values
+                if key == constants.KEY_SENSITIVE_DISCOVERY then
+                    statement = statement .. [[ ON DUPLICATE KEY UPDATE
+                        match_count = match_count + VALUES(match_count),
+                        matched_sample = VALUES(matched_sample),
+                        last_seen = NOW(), update_time = NOW()]]
+                end
+                local res, err = mysql.query(statement)
                 if not res then
                     ngx.log(ngx.ERR, "failed to write ", key, " queue to mysql: ", err)
                 elseif notifications then
@@ -2239,6 +2285,62 @@ function _M.write_cluster_nodes_to_mysql()
     mysql.query("UPDATE waf_cluster_domain SET status='inactive' WHERE last_seen < NOW() - INTERVAL 24 HOUR")
 end
 
+local function build_sensitive_discovery_sql_value(event)
+    return format('(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%s,NOW(),NOW())',
+        quote_sql_str(event.event_key or ''), quote_sql_str(event.node_ip or ''),
+        quote_sql_str(event.server_name or ''), quote_sql_str(event.request_uri or ''),
+        quote_sql_str(event.http_method or ''), quote_sql_str(event.content_type or ''),
+        quote_sql_str(event.rule_id or ''), quote_sql_str(event.rule_name or ''),
+        quote_sql_str(event.detection_type or ''), quote_sql_str(event.matched_sample or ''),
+        tonumber(event.match_count) or 1,
+        quote_sql_str(event.status or 'open'))
+end
+
+function _M.record_sensitive_discovery(event)
+    if type(event) ~= 'table' or not event.event_key then
+        return nil, 'invalid sensitive discovery event'
+    end
+
+    if is_system_option_on('centralized') then
+        local payload, err = cjson.encode(event)
+        if not payload then return nil, err end
+        return redis_cli.rpush(constants.KEY_REDIS_QUEUE_SENSITIVE_DISCOVERY, payload, 86400)
+    end
+
+    _M.write_sql_to_queue(constants.KEY_SENSITIVE_DISCOVERY, build_sensitive_discovery_sql_value(event))
+    return true
+end
+
+function _M.write_sensitive_discovery_redis_to_mysql()
+    local values = redis_cli.batch_lpop(constants.KEY_REDIS_QUEUE_SENSITIVE_DISCOVERY, BATCH_SIZE)
+    if not values or not values[1] then return end
+
+    local sql_values = newtab(BATCH_SIZE, 0)
+    local index = 1
+    for _, value in ipairs(values) do
+        local event, err = cjson.decode(value)
+        if event then
+            sql_values[index] = build_sensitive_discovery_sql_value(event)
+            index = index + 1
+        else
+            ngx.log(ngx.ERR, 'failed to decode sensitive discovery event: ', err)
+        end
+    end
+
+    if not sql_values[1] then return end
+    local sql = SQL_INSERT_SENSITIVE_DISCOVERY .. concat(sql_values, ',') .. [[
+        ON DUPLICATE KEY UPDATE
+            match_count = match_count + VALUES(match_count),
+            matched_sample = VALUES(matched_sample),
+            last_seen = NOW(), update_time = NOW()
+    ]]
+    local res, err = mysql.query(sql)
+    if not res then
+        ngx.log(ngx.ERR, 'failed to write sensitive discovery queue to mysql: ', err)
+        redis_cli.bath_rpush(constants.KEY_REDIS_QUEUE_SENSITIVE_DISCOVERY, values, 86400)
+    end
+end
+
 function _M.publish_cc_domain_policy()
     mysql.query("INSERT IGNORE INTO waf_cc_domain_policy (domain,threshold_value,duration_seconds,state) VALUES ('*',1000,60,'on')")
     local rows, err = mysql.query("SELECT domain,threshold_value,duration_seconds,state,update_time FROM waf_cc_domain_policy")
@@ -2297,7 +2399,20 @@ function _M.delete_cc_cluster_domain(domain)
     return _M.publish_cc_domain_policy()
 end
 
-function _M.list_cc_cluster_domains()
+function _M.list_cc_cluster_domains(filters)
+    filters = filters or {}
+    local domain = tostring(filters.domain or ''):lower()
+    local status = tostring(filters.status or ''):lower()
+    local where = ' WHERE 1=1 '
+    if domain ~= '' and domain ~= '*' then
+        where = where .. ' AND d.domain LIKE ' .. quote_sql_str('%' .. domain .. '%')
+    end
+    if status == 'active' or status == 'inactive' then
+        where = where .. ' AND d.status=' .. quote_sql_str(status)
+    elseif status == 'default' then
+        where = where .. ' AND 1=0 '
+    end
+
     local rows, err = mysql.query([[SELECT d.domain,d.status,d.first_seen,d.last_seen,
         COALESCE(p.threshold_value,def.threshold_value,1000) AS threshold_value,
         COALESCE(p.duration_seconds,def.duration_seconds,60) AS duration_seconds,
@@ -2308,16 +2423,20 @@ function _M.list_cc_cluster_domains()
         LEFT JOIN waf_cc_domain_policy p ON p.domain=d.domain AND p.state='on'
         LEFT JOIN waf_cc_domain_policy def ON def.domain='*'
         LEFT JOIN waf_cluster_node_domain nd ON nd.domain=d.domain
+        ]] .. where .. [[
         GROUP BY d.domain,d.status,d.first_seen,d.last_seen,p.domain,p.threshold_value,p.duration_seconds,def.threshold_value,def.duration_seconds
         ORDER BY d.status='active' DESC,d.last_seen DESC,d.domain ASC]])
     if not rows then return nil, err end
     local defaults = mysql.query("SELECT threshold_value,duration_seconds,state,update_time FROM waf_cc_domain_policy WHERE domain='*' LIMIT 1") or {}
     local default = defaults[1] or { threshold_value = 1000, duration_seconds = 60, state = "on" }
-    table.insert(rows, 1, {
-        domain = "*", status = "active", node_count = 0, node_ips = "全部域名",
-        threshold_value = default.threshold_value, duration_seconds = default.duration_seconds,
-        policy_source = "custom", last_seen = default.update_time or "-"
-    })
+    local include_default = (status == '' or status == 'default') and (domain == '' or domain == '*')
+    if include_default then
+        table.insert(rows, 1, {
+            domain = "*", status = "active", node_count = 0, node_ips = "全部域名",
+            threshold_value = default.threshold_value, duration_seconds = default.duration_seconds,
+            policy_source = "custom", last_seen = default.update_time or "-"
+        })
+    end
     local cc_cluster = require "cc_cluster"
     local now = ngx.time()
     for _, row in ipairs(rows) do
@@ -2338,6 +2457,15 @@ function _M.list_cc_cluster_domains()
         row.peak_5m = peak
         row.cc_hits_5m = hits
         row.requests_24h = requests_24h
+    end
+    local sort_24h = tostring(filters.sort_24h or ''):lower()
+    if sort_24h == 'asc' or sort_24h == 'desc' then
+        sort(rows, function(a, b)
+            local av, bv = tonumber(a.requests_24h) or 0, tonumber(b.requests_24h) or 0
+            if av == bv then return tostring(a.domain) < tostring(b.domain) end
+            if sort_24h == 'asc' then return av < bv end
+            return av > bv
+        end)
     end
     return rows
 end

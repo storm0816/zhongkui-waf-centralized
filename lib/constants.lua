@@ -3,7 +3,7 @@
 
 local _M = {}
 
-_M.APP_VERSION = '2.1.2'
+_M.APP_VERSION = '2.1.3'
 
 _M.KEY_HTTP_4XX = 'http4x'
 _M.KEY_HTTP_5XX = 'http5x'
@@ -18,8 +18,10 @@ _M.KEY_ATTACK_TYPE_PREFIX = 'attack_type_'
 _M.KEY_BLOCKED_PREFIX = 'blocked_'
 _M.KEY_ATTACK_LOG = 'attack_log'
 _M.KEY_IP_BLOCK_LOG = 'ip_block_log'
+_M.KEY_SENSITIVE_DISCOVERY = 'sensitive_discovery'
 _M.KEY_REDIS_QUEUE_ATTACK_LOG = 'waf:queue:attack_log'
 _M.KEY_REDIS_QUEUE_IP_BLOCK_LOG = 'waf:queue:ip_block_log'
+_M.KEY_REDIS_QUEUE_SENSITIVE_DISCOVERY = 'waf:queue:sensitive_discovery'
 _M.KEY_REDIS_DIRTY_TRAFFIC_STATS = 'waf:dirty:traffic_stats'
 _M.KEY_REDIS_DIRTY_ATTACK_TYPE_DATES = 'waf:dirty:attack_type_dates'
 _M.KEY_REDIS_RETRY_TRAFFIC_STATS = 'waf:retry:traffic_stats'

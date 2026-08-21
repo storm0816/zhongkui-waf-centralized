@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>敏感数据发现</title>
+    <link href="../component/pear/css/pear.css" rel="stylesheet">
+    <style>
+        .summary-grid {display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:12px;}
+        .summary-item {padding:18px 20px;background:#fff;border-left:3px solid #2d8cf0;}
+        .summary-label {color:#777;font-size:13px;}.summary-value {margin-top:8px;font-size:22px;font-weight:600;color:#253858;}
+        .query-bar .layui-inline {margin:0 10px 8px 0;}
+        @media (max-width:900px){.summary-grid{grid-template-columns:repeat(2,1fr);}}
+    </style>
+</head>
+<body class="pear-container">
+    <div class="summary-grid">
+        <div class="summary-item"><div class="summary-label">24小时命中</div><div class="summary-value" id="total-hits">0</div></div>
+        <div class="summary-item"><div class="summary-label">待确认事件</div><div class="summary-value" id="open-events">0</div></div>
+        <div class="summary-item"><div class="summary-label">涉及域名</div><div class="summary-value" id="domain-count">0</div></div>
+        <div class="summary-item"><div class="summary-label">最近发现</div><div class="summary-value" id="last-seen" style="font-size:15px;">-</div></div>
+    </div>
+    <div class="layui-card">
+        <div class="layui-card-header">敏感数据发现</div>
+        <div class="layui-card-body">
+            <form class="layui-form query-bar" lay-filter="filter-sensitive-query">
+                <div class="layui-inline"><input name="serverName" placeholder="查询域名" class="layui-input" style="width:240px;"></div>
+                <div class="layui-inline"><select name="detectionType"><option value="">全部类型</option><option value="regex">规则</option><option value="word">敏感词</option></select></div>
+                <div class="layui-inline"><select name="status"><option value="">全部状态</option><option value="open">待确认</option><option value="acknowledged">已确认</option><option value="ignored">已忽略</option></select></div>
+                <div class="layui-inline"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-sensitive-search">查询</button><button type="button" class="pear-btn" id="btn-sensitive-reset">重置</button></div>
+            </form>
+            <table id="id-table-sensitive-discovery" lay-filter="filter-table-sensitive-discovery"></table>
+        </div>
+    </div>
+    <script src="../component/layui/layui.js"></script>
+    <script src="../component/pear/pear.js"></script>
+    <script>
+    layui.use(['form','table','jquery'], function(){
+        var form=layui.form, table=layui.table, $=layui.$;
+        function loadSummary(){ $.get('/sensitive-discovery/summary',{},function(res){ if(!res||res.code!==0)return; var d=res.data||{}; $('#total-hits').text(d.total_hits||0); $('#open-events').text(d.open_events||0); $('#domain-count').text(d.domain_count||0); $('#last-seen').text(d.last_seen||'-'); },'json'); }
+        table.render({id:'id-table-sensitive-discovery',elem:'#id-table-sensitive-discovery',url:'/sensitive-discovery/list',page:true,limit:20,limits:[10,20,50,100],cols:[[
+            {field:'last_seen',title:'最后发现',width:170},{field:'server_name',title:'域名',minWidth:190},{field:'request_uri',title:'请求地址',minWidth:240},
+            {field:'http_method',title:'方法',width:80},{field:'matched_sample',title:'命中内容',minWidth:150},{field:'rule_name',title:'命中规则',minWidth:150},{field:'detection_type',title:'类型',width:90,templet:function(d){return d.detection_type==='word'?'敏感词':'规则';}},
+            {field:'match_count',title:'命中次数',width:105},{field:'node_ip',title:'来源节点',width:145},{field:'content_type',title:'响应类型',minWidth:160},
+            {field:'status',title:'状态',width:95,templet:function(d){return d.status==='acknowledged'?'已确认':(d.status==='ignored'?'已忽略':'待确认');}}
+        ]]});
+        form.on('submit(filter-sensitive-search)',function(data){table.reloadData('id-table-sensitive-discovery',{where:data.field,page:{curr:1}});return false;});
+        $('#btn-sensitive-reset').on('click',function(){form.val('filter-sensitive-query',{serverName:'',detectionType:'',status:''});form.render();table.reloadData('id-table-sensitive-discovery',{where:{serverName:'',detectionType:'',status:''},page:{curr:1}});});
+        loadSummary();
+    });
+    </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-		<title>敏感数据过滤</title>
+		<title>敏感发现设置</title>
 		<link href="../../component/pear/css/pear.css" rel="stylesheet">
 		<style>
 			p {margin: 6px 15px;}
@@ -31,7 +31,7 @@
 		<div class="layui-row layui-col-space10">
 			<div class="layui-col-md12">
 				<div class="layui-card">
-					<div class="layui-card-header">敏感数据过滤设置</div>
+					<div class="layui-card-header">敏感数据发现设置</div>
 					<div class="layui-card-body">
 						<div class="layui-row layui-col-space10">
 							<div class="layui-col-md12">
@@ -39,7 +39,7 @@
 									<div class="layui-input-group">
 										<div class="layui-input-prefix" style="padding: 9px 10px 9px 0;">状态</div>
 										<input type="checkbox" id="id-sensitive-state" name="state" lay-skin="switch" lay-filter="filter-sensitive-module-state" title="ON|OFF" />
-										<div class="layui-input-suffix" style="padding: 9px 0px 9px 10px;">开启后将对上游服务器返回的页面中敏感数据进行过滤打码处理（仅网页有效）。</div>
+										<div class="layui-input-suffix" style="padding: 9px 0px 9px 10px;">开启后仅检测并汇总上游响应中的敏感数据，不修改业务响应。</div>
 									</div>
 								</form>
 							</div>
@@ -61,7 +61,7 @@
 					<div class="layui-card-body">
 						<div class="layui-row layui-col-space10">
 							<div class="layui-col-md12">
-								<div style="float: left;">将会对上游服务器返回的页面内容中包含的敏感词打码处理。</div>
+								<div style="float: left;">发现上游响应中包含的敏感词后，将事件汇总到“安全运营 → 敏感数据发现”。</div>
 								<div style="float: right;"><button class="pear-btn pear-btn-primary pear-btn-xs" lay-on="editWords"><i class="layui-icon layui-icon-edit"></i></button></div>
 							</div>
 						</div>
@@ -87,23 +87,6 @@
 			<div class="layui-row layui-col-space10">
 				<div class="layui-col-md12">
 					<input type="text" name="rule" lay-verify="required" autocomplete="off" class="layui-input" />
-				</div>
-			</div>
-			<div class="layui-row layui-col-space10">
-				<div class="layui-col-md12">打码范围</div>
-			</div>
-			<div class="layui-row layui-col-space10">
-				<div class="layui-col-md12">
-					<input type="text" name="codingRange" lay-verify="required|codingRange" autocomplete="off" class="layui-input" />
-				</div>
-			</div>
-			<div class="layui-row layui-col-space10 layui-bg-gray">
-				<div class="layui-col-md12 layui-col-sm12">
-					<p>打码范围是匹配到的字符串中要处理的子字符串范围，有两种形式：</p>
-					<p>1. 直接标明要处理的子字符串的起始位置：</p>
-					<p><div style="padding-left: 30px;">1. 如“4,7”，则会将对从第4个位置开始到第7个位置之间的所有字符进行处理。</div></p>
-					<p><div style="padding-left: 30px;">2. 起止位置也可以是一个负数，如“4,-5”`，则会将对从第4个位置开始到倒数第5个位置之间的所有字符进行处理。</div></p>
-					<p>2. 使用`$`字面量加数字，比如：`$0`指的是由该模式匹配的整个子串，而`$1`指第一个带括号的捕获子串。</p>
 				</div>
 			</div>
 			<div class="layui-row layui-col-space10">
@@ -223,9 +206,7 @@
 					elem: '#id-table-rules',
 					cols: [[ //标题栏
 						{field: 'state', title: '状态', templet: '#id-template-rule-state', width: 100},
-						{field: 'action', title: '响应动作', templet: function(d) {
-							return '<div>' + getActionText(d.action) + '</div>';
-						}},
+						{field: 'action', title: '响应动作', templet: function() { return '<div>发现并记录</div>'; }},
 						{field: 'description', title: '备注', minWidth: 200},
 						{fixed: 'right', title:'操作', width: 80, minWidth: 80, toolbar: '#id-template-bar'}
 					]],
@@ -304,15 +285,6 @@
 					},
 					ruleCancel: function() {
 						layer.closeLast('page');
-					}
-				});
-
-				form.verify({
-					codingRange: function(value, elem) {
-						var regex = /^-?[1-9]\d*,-?[1-9]\d*$|^\$(?:0|[1-9]+\d*)$/
-						if (regex.test(value) == false) {
-							return "打码范围格式不正确";
-						}
 					}
 				});
 

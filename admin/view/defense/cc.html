@@ -81,6 +81,11 @@
 					<div class="layui-card-header">集群域名阈值</div>
 					<div class="layui-card-body">
 						<div class="layui-text" style="margin-bottom:12px;color:#666;">Node 自动上报防护域名。来源节点为历史归属信息，会持续保留；仅删除域名时才一并清理。这里设置集群累计阈值，按“域名 + 客户端IP + 集群 CC 规则”计数；未设置特例的域名使用“*”默认策略。实时统计保留 5 分钟，近 24 小时访问按小时汇总。域名连续 24 小时未上报后标记为已停用，才可删除。</div>
+						<form class="layui-form" lay-filter="filter-cluster-domain-query" style="margin-bottom:12px;">
+							<div class="layui-inline"><input name="domain" placeholder="查询域名" class="layui-input" style="width:240px;"></div>
+							<div class="layui-inline"><select name="status"><option value="">全部状态</option><option value="default">默认</option><option value="active">活跃</option><option value="inactive">已停用</option></select></div>
+							<div class="layui-inline"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-cluster-domain-search">查询</button><button type="button" class="pear-btn" id="btn-cluster-domain-reset">重置</button></div>
+						</form>
 						<table id="id-table-cluster-domains" lay-filter="filter-table-cluster-domains"></table>
 					</div>
 				</div>
@@ -492,6 +497,17 @@
 							{field:'last_seen', title:'最后发现', width:170},
 							{title:'操作', toolbar:'#id-template-domain-bar', width:140}
 						]]
+					});
+
+					form.on('submit(filter-cluster-domain-search)', function(data) {
+						table.reloadData('id-table-cluster-domains', {where: data.field});
+						return false;
+					});
+
+					$('#btn-cluster-domain-reset').on('click', function() {
+						form.val('filter-cluster-domain-query', {domain: '', status: ''});
+						form.render();
+						table.reloadData('id-table-cluster-domains', {where: {domain: '', status: ''}});
 					});
 
 					table.on('tool(filter-table-cluster-domains)', function(obj) {

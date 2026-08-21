@@ -158,7 +158,7 @@ function _M.do_request()
                 local rule_new = rule_utils.get_rule_from_request()
                 if rule_new then
                     rule_new.id = tonumber(rule_new.id)
-                    rule_new.action = 'coding'
+                    rule_new.action = 'detect'
 
                     response = rule_utils.save_or_update_site_rule(site_id, MODULE_ID, rule_new)
                     reload = true

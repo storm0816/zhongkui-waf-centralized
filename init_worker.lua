@@ -479,6 +479,7 @@ if is_global_option_on("waf") then
                 local attack_log_first_delay = attack_log_flush_interval > 2 and 2 or 1
                 local attack_log_lock_ttl = math.max(attack_log_flush_interval - 1, 1)
                 start_master_timer("attack_log_to_mysql", attack_log_flush_interval, attack_log_first_delay, attack_log_lock_ttl, sql.write_attack_log_redis_to_mysql)
+                start_master_timer("sensitive_discovery_to_mysql", 10, 4, 8, sql.write_sensitive_discovery_redis_to_mysql)
                 start_master_timer("waf_status_to_mysql", 120, 30, 110, sql.write_waf_status_redis_to_mysql)
                 start_master_timer("traffic_stats_to_mysql", 120, 50, 110, sql.write_traffic_stats_redis_to_mysql)
                 start_master_timer("ip_block_log_to_mysql", 120, 70, 110, sql.write_ip_block_log_redis_to_mysql)
@@ -495,6 +496,7 @@ if is_global_option_on("waf") then
                 -- 如果是单机模式，则定时将 内存中的 中的攻击日志、WAF 状态、流量统计、IP 阻断日志写入 MySQL
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
+                utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_SENSITIVE_DISCOVERY)
             end
         end
 
