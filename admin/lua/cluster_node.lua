@@ -135,6 +135,10 @@ local function listNodes()
                    blacklist_sync_at,
                    COALESCE(NULLIF(last_sync_status, ''), 'unknown') AS last_sync_status,
                    last_sync_at,
+                   COALESCE(NULLIF(program_update_target, ''), '-') AS program_update_target,
+                   COALESCE(NULLIF(program_update_status, ''), 'idle') AS program_update_status,
+                   COALESCE(program_update_message, '') AS program_update_message,
+                   program_update_at,
                    hostname,
                    last_seen,
                    CASE WHEN last_seen >= NOW() - INTERVAL %d SECOND THEN 1 ELSE 0 END AS is_online

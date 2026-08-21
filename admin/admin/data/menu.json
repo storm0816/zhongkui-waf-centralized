@@ -170,6 +170,13 @@
 				"href": "view/cluster-nodes.html"
 			},
 			{
+				"id": 82,
+				"title": "发布中心",
+				"icon": "layui-icon layui-icon-release",
+				"type": 1,
+				"href": "view/program-release.html"
+			},
+			{
 				"id": 87,
 				"title": "节点攻击概览",
 				"icon": "layui-icon layui-icon-chart-screen",

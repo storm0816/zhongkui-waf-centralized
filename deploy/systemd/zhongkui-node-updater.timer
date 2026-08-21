@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll ZhongKui WAF program update tasks
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+AccuracySec=2s
+
+[Install]
+WantedBy=timers.target

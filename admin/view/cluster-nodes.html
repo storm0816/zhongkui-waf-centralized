@@ -413,6 +413,8 @@
               '<div class="detail-item"><span>综合状态</span><strong>' + $('<div>').html(syncStateHtml(row)).text() + '</strong></div>' +
               '<div class="detail-item"><span>最近同步结果</span><strong>' + statusText(row.last_sync_status) + '</strong></div>' +
               '<div class="detail-item"><span>最近同步时间</span><strong>' + (row.last_sync_at || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>程序升级</span><strong>' + (row.program_update_status || 'idle') + ' / ' + (row.program_update_target || '-') + '</strong></div>' +
+              '<div class="detail-item"><span>升级信息</span><strong>' + (row.program_update_message || '-') + '</strong></div>' +
             '</div>' +
             '<div class="detail-card">' +
               '<h4>分项同步</h4>' +

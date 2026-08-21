@@ -447,6 +447,16 @@ echo -e "\033[34m[设置文件夹权限]\033[0m"
 # 设置 zhongkui-waf 目录权限，确保 webuser 用户有读写权限
 chown -R webuser:users $OPENRESTY_PATH/zhongkui-waf
 chmod -R 755 $OPENRESTY_PATH/zhongkui-waf
+mkdir -p /opt/openresty/zhongkui-program-releases
+chown -R webuser:users /opt/openresty/zhongkui-program-releases
+
+if [ "$ROLE" = "node" ]; then
+    cp -f "$ZHONGKUI_PATH/deploy/systemd/zhongkui-node-updater.service" /etc/systemd/system/
+    cp -f "$ZHONGKUI_PATH/deploy/systemd/zhongkui-node-updater.timer" /etc/systemd/system/
+    chmod 755 "$ZHONGKUI_PATH/bin/node_updater.sh"
+    systemctl daemon-reload
+    systemctl enable --now zhongkui-node-updater.timer
+fi
 
 # 设置日志目录权限
 mkdir -p $OPENRESTY_PATH/nginx/logs/hack

@@ -11,6 +11,8 @@ local constants = require "constants"
 local file_utils = require "file_utils"
 local ipmatcher = require "resty.ipmatcher"
 local nkeys = require "table.nkeys"
+local program_update = require "program_update"
+local program_release_store = require "program_release_store"
 
 local md5 = ngx.md5
 local pairs = pairs
@@ -474,6 +476,7 @@ if is_global_option_on("waf") then
             utils.start_timer(0, sql.check_table)
 
             if master_node then
+                utils.start_timer(0, program_release_store.ensure_tables)
                 -- master 聚合任务做错峰和 Redis 锁保护，避免多任务同时压 Redis/MySQL。
                 local attack_log_flush_interval = get_attack_log_flush_interval()
                 local attack_log_first_delay = attack_log_flush_interval > 2 and 2 or 1
@@ -489,6 +492,7 @@ if is_global_option_on("waf") then
                 start_master_timer("attack_log_retention_auto", 60, 20, 50, sql.archive_attack_log_auto)
                 -- 节点心跳每 30s 上报一次，这里也按 30s 落库，避免 120s 边界抖动导致页面误判离线。
                 start_master_timer("cluster_nodes_to_mysql", 30, 5, 25, sql.write_cluster_nodes_to_mysql)
+                start_master_timer("program_release_reconcile", 30, 12, 25, program_release_store.reconcile_deployments)
                 start_master_timer("cc_domain_policy_publish", 60, 8, 50, sql.publish_cc_domain_policy)
                 -- 清理长期离线节点，避免节点表持续膨胀。
                 start_master_timer("cleanup_offline_cluster_nodes", 300, 150, 280, sql.cleanup_offline_cluster_nodes)
@@ -546,6 +550,11 @@ if is_global_option_on("waf") then
             utils.start_timer_every(10, sql.write_waf_traffic_stats_to_redis)
             -- 定时将节点信息写入 Redis 中（30s + 0-10s 随机偏移，避免同秒写入）。
             start_timer_every_with_jitter(node_report_interval_base, node_report_jitter_max, sql.report_node_info)
+            if not master_node then
+                -- A root-owned local service performs the actual file switch;
+                -- the WAF worker only receives and validates the Redis task.
+                utils.start_timer_every_after(3, 15, program_update.poll)
+            end
         end
     end
 end

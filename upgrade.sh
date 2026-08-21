@@ -107,6 +107,16 @@ for relative_path in "${PRESERVE_PATHS[@]}"; do
 done
 
 chown -R webuser:users "$TARGET_DIR" 2>/dev/null || true
+mkdir -p /opt/openresty/zhongkui-program-releases
+chown -R webuser:users /opt/openresty/zhongkui-program-releases 2>/dev/null || true
+
+if [ "$ROLE" = "node" ]; then
+    cp -f "$TARGET_DIR/deploy/systemd/zhongkui-node-updater.service" /etc/systemd/system/
+    cp -f "$TARGET_DIR/deploy/systemd/zhongkui-node-updater.timer" /etc/systemd/system/
+    chmod 755 "$TARGET_DIR/bin/node_updater.sh"
+    systemctl daemon-reload
+    systemctl enable --now zhongkui-node-updater.timer
+fi
 
 if [ -f "$MMDB_SOURCE" ]; then
     mkdir -p "$(dirname "$MMDB_TARGET")"

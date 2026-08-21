@@ -1,0 +1,7 @@
+[Unit]
+Description=ZhongKui WAF Node Program Updater
+After=network.target openresty.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openresty/zhongkui-waf/bin/node_updater.sh

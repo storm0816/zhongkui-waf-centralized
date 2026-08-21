@@ -191,7 +191,8 @@ function _M.ensure_schema()
     end
 
     mysql.query([[INSERT IGNORE INTO waf_admin_permission (code, description) VALUES
-        ('read', '只读'), ('manage', '管理'), ('user.manage', '用户与角色管理')]])
+        ('read', '只读'), ('manage', '管理'), ('user.manage', '用户与角色管理'),
+        ('release.manage', '程序版本发布与回滚')]])
     mysql.query([[INSERT IGNORE INTO waf_admin_role (name, description, builtin) VALUES
         ('super_admin', '超级管理员', 1),
         ('manager', '安全管理员', 1),

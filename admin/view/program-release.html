@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>程序发布中心</title>
+  <link href="../component/pear/css/pear.css" rel="stylesheet">
+  <style>
+    .release-shell{padding:14px}.release-head{display:flex;justify-content:space-between;gap:16px;align-items:center}
+    .release-head h2{font-size:18px;color:#101828}.release-head p{color:#667085;margin-top:5px}
+    .summary-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin:12px 0}
+    .summary-card{background:#fff;border:1px solid #eaecf0;border-radius:8px;padding:14px 16px}
+    .summary-card .label{color:#667085;font-size:12px}.summary-card .value{font-size:22px;font-weight:600;color:#101828;margin-top:6px}
+    .release-note{border-left:4px solid #2f88ff;background:#eff8ff;padding:11px 16px;margin:12px 0;color:#344054}
+    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.toolbar .layui-input{width:220px}
+    .status{display:inline-block;padding:2px 9px;border-radius:999px;background:#f2f4f7;color:#475467}
+    .status.success,.status.ready{background:#ecfdf3;color:#067647}.status.failed,.status.rolled_back{background:#fef3f2;color:#b42318}
+    .status.downloading,.status.switching,.status.queued{background:#fffaeb;color:#b54708}.mono{font-family:Consolas,monospace;font-size:12px}
+    .layui-tab-content{padding:14px 0 0}.node-dialog{padding:12px 16px}.dialog-summary{color:#667085;margin-bottom:10px}
+    @media(max-width:850px){.summary-grid{grid-template-columns:1fr 1fr}.release-head{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body class="pear-container">
+<div class="release-shell">
+  <div class="layui-card"><div class="layui-card-body release-head">
+    <div><h2>程序发布中心</h2><p>Master 管理不可变版本，Node 主动拉取、校验、切换并回报结果。</p></div>
+    <button class="layui-btn release-action" id="create-release"><i class="layui-icon layui-icon-add-1"></i> 创建当前版本</button>
+  </div></div>
+
+  <div class="summary-grid">
+    <div class="summary-card"><div class="label">Master 版本</div><div class="value" id="summary-master">-</div></div>
+    <div class="summary-card"><div class="label">最新发布版本</div><div class="value" id="summary-release">-</div></div>
+    <div class="summary-card"><div class="label">在线 Node</div><div class="value" id="summary-online">-</div></div>
+    <div class="summary-card"><div class="label">待升级 Node</div><div class="value" id="summary-pending">-</div></div>
+  </div>
+
+  <div class="release-note">2.1.4 是自动发布基线。程序发布不会覆盖 Node 的 system.json、证书、日志和运行规则。</div>
+  <div class="layui-card"><div class="layui-card-body">
+    <div class="layui-tab layui-tab-brief" lay-filter="release-tabs">
+      <ul class="layui-tab-title"><li class="layui-this">版本管理</li><li>发布任务</li></ul>
+      <div class="layui-tab-content">
+        <div class="layui-tab-item layui-show"><table id="release-table" lay-filter="release-table"></table></div>
+        <div class="layui-tab-item">
+          <div class="toolbar">
+            <input class="layui-input" id="task-node-keyword" placeholder="查询 Node IP">
+            <select class="layui-select" id="task-status" style="width:150px;height:38px">
+              <option value="">全部状态</option><option value="running">执行中</option><option value="success">成功</option>
+              <option value="failed">失败</option><option value="rolled_back">已回滚</option>
+            </select>
+            <button class="layui-btn layui-btn-primary" id="task-search">查询</button>
+            <button class="layui-btn layui-btn-primary" id="task-reset">重置</button>
+          </div>
+          <table id="deployment-table" lay-filter="deployment-table"></table>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</div>
+
+<script type="text/html" id="release-actions"><button class="layui-btn layui-btn-xs release-action" lay-event="deploy">发布</button></script>
+<script src="../component/layui/layui.js"></script>
+<script>
+layui.use(['table','layer','jquery','element'],function(){
+  var table=layui.table,layer=layui.layer,$=layui.jquery,canRelease=false;
+  var releases=[],nodes=[],deployments=[],latestVersion='';
+  var statusNames={ready:'可发布',queued:'等待领取',downloading:'下载中',switching:'切换中',success:'成功',failed:'失败',rolled_back:'已回滚',idle:'空闲'};
+  function status(value){value=value||'idle';return '<span class="status '+value+'">'+(statusNames[value]||value)+'</span>';}
+  function effectiveStatus(row){return row.program_update_status&&row.program_update_status!=='idle'?row.program_update_status:(row.status||'idle');}
+  function refreshSummary(){
+    var online=nodes.filter(function(n){return n.node_role!=='master'&&Number(n.is_online)===1;});
+    var pending=latestVersion?online.filter(function(n){return n.app_version!==latestVersion;}).length:0;
+    $('#summary-release').text(latestVersion||'尚未创建');$('#summary-online').text(online.length);$('#summary-pending').text(pending);
+  }
+  function loadReleases(){
+    $.getJSON('/programrelease/list',function(res){
+      releases=res.data||[];latestVersion=releases.length?releases[0].version:'';$('#summary-master').text(res.current_version||'-');refreshSummary();
+      table.render({id:'release-table',elem:'#release-table',data:releases,page:false,cols:[[
+        {field:'version',title:'版本',width:110},{field:'status',title:'状态',width:100,templet:function(d){return status(d.status);}},
+        {field:'file_count',title:'文件数',width:90},{field:'total_bytes',title:'大小',width:110,templet:function(d){return Math.ceil((Number(d.total_bytes)||0)/1024)+' KB';}},
+        {field:'manifest_checksum',title:'清单 SHA-256',minWidth:250,templet:function(d){return '<span class="mono">'+d.manifest_checksum+'</span>';}},
+        {field:'notes',title:'说明',minWidth:170},{field:'created_by',title:'创建人',width:105},{field:'created_at',title:'创建时间',width:170},
+        {title:'操作',width:90,align:'center',toolbar:canRelease?'#release-actions':null,templet:canRelease?undefined:function(){return '-';}}
+      ]]});
+    });
+  }
+  function loadNodes(callback){$.getJSON('/clusternode/list',{page:1,limit:100},function(res){nodes=res.data||[];refreshSummary();if(callback){callback();}});}
+  function renderDeployments(){
+    var keyword=$.trim($('#task-node-keyword').val()||''),filter=$('#task-status').val();
+    var rows=deployments.filter(function(d){var state=effectiveStatus(d),running=['queued','downloading','switching'].indexOf(state)>=0;
+      return (!keyword||String(d.node_ip||'').indexOf(keyword)>=0)&&(!filter||(filter==='running'?running:state===filter));});
+    table.render({id:'deployment-table',elem:'#deployment-table',data:rows,page:true,limit:20,cols:[[
+      {field:'node_ip',title:'Node',width:150},{field:'release_version',title:'目标版本',width:105},{field:'app_version',title:'当前版本',width:105},
+      {title:'任务状态',width:115,templet:function(d){return status(effectiveStatus(d));}},
+      {title:'执行信息',minWidth:240,templet:function(d){return d.program_update_message||d.message||'-';}},
+      {field:'created_by',title:'发布人',width:100},{field:'created_at',title:'下发时间',width:170},{field:'updated_at',title:'更新时间',width:170}
+    ]]});
+  }
+  function loadDeployments(){$.getJSON('/programrelease/deployments',function(res){deployments=res.data||[];renderDeployments();});}
+  function deploy(version,nodeIps){
+    if(!nodeIps.length){return layer.msg('没有需要升级的在线 Node');}
+    layer.confirm('确认将 '+version+' 发布到 '+nodeIps.length+' 个 Node？',function(index){
+      $.post('/programrelease/deploy',{version:version,node_ips:nodeIps.join(',')},function(res){layer.close(index);if(res.code===0){layer.msg(res.msg);loadDeployments();}else{layer.alert(res.msg||'发布失败');}},'json');
+    });
+  }
+  function openNodeDialog(version){
+    loadNodes(function(){
+      var targets=nodes.filter(function(n){return n.node_role!=='master'&&Number(n.is_online)===1&&n.app_version!==version;});
+      var content='<div class="node-dialog"><div class="dialog-summary">目标版本：<b>'+version+'</b>，仅列出在线且版本不同的 Node。</div><table id="release-node-table" lay-filter="release-node-table"></table><div style="text-align:right;margin-top:12px"><button class="layui-btn" id="deploy-dialog-selected">发布所选</button><button class="layui-btn layui-btn-warm" id="deploy-dialog-all">发布全部 '+targets.length+' 台</button></div></div>';
+      layer.open({type:1,title:'选择发布 Node',area:['760px','560px'],content:content,success:function(){
+        table.render({id:'release-node-table',elem:'#release-node-table',data:targets,page:false,cols:[[
+          {type:'checkbox',width:48},{field:'ip',title:'Node IP',width:160},{field:'hostname',title:'主机名',minWidth:190},
+          {field:'app_version',title:'当前版本',width:110},{field:'last_seen',title:'最后上报',width:170}
+        ]]});
+        $('#deploy-dialog-selected').on('click',function(){deploy(version,(table.checkStatus('release-node-table').data||[]).map(function(n){return n.ip;}));});
+        $('#deploy-dialog-all').on('click',function(){deploy(version,targets.map(function(n){return n.ip;}));});
+      }});
+    });
+  }
+  table.on('tool(release-table)',function(obj){if(obj.event==='deploy'){openNodeDialog(obj.data.version);}});
+  $('#create-release').on('click',function(){layer.prompt({title:'版本说明（当前程序版本将生成不可变快照）',formType:2},function(value,index){
+    $.post('/programrelease/create',{notes:value},function(res){layer.close(index);if(res.code===0){layer.msg(res.msg);loadReleases();}else{layer.alert(res.msg||'创建失败');}},'json');
+  });});
+  $('#task-search').on('click',renderDeployments);$('#task-reset').on('click',function(){$('#task-node-keyword').val('');$('#task-status').val('');renderDeployments();});
+  $.getJSON('/user/me',function(res){var permissions=(res.data&&res.data.permissions)||[];canRelease=permissions.indexOf('release.manage')>=0;if(!canRelease){$('.release-action').hide();}loadReleases();});
+  loadNodes();loadDeployments();setInterval(loadDeployments,15000);
+});
+</script>
+</body>
+</html>
