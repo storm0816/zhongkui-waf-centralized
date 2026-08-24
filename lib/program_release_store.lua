@@ -1,4 +1,5 @@
 local mysql = require "mysql_cli"
+local scheduler = require "release_batch_scheduler"
 
 local _M = {}
 local quote = ngx.quote_sql_str
@@ -33,10 +34,37 @@ CREATE TABLE IF NOT EXISTS waf_program_deployment (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ]]
 
+local function ensure_column(table_name, column_name, definition)
+    local rows, err = mysql.query("SHOW COLUMNS FROM " .. table_name .. " LIKE " .. quote(column_name))
+    if not rows then return nil, err end
+    if rows[1] then return true end
+    return mysql.query("ALTER TABLE " .. table_name .. " ADD COLUMN " .. column_name .. " " .. definition)
+end
+
+local function ensure_index(table_name, index_name, definition)
+    local rows, err = mysql.query("SHOW INDEX FROM " .. table_name .. " WHERE Key_name=" .. quote(index_name))
+    if not rows then return nil, err end
+    if rows[1] then return true end
+    return mysql.query("ALTER TABLE " .. table_name .. " ADD INDEX " .. index_name .. " " .. definition)
+end
+
 function _M.ensure_tables()
     local ok, err = mysql.query(CREATE_RELEASE_TABLE)
     if not ok then return nil, err end
     ok, err = mysql.query(CREATE_DEPLOYMENT_TABLE)
+    if not ok then return nil, err end
+    local columns = {
+        {"plan_id", "VARCHAR(64) NOT NULL DEFAULT '' AFTER task_id"},
+        {"batch_no", "INT UNSIGNED NOT NULL DEFAULT 1 AFTER plan_id"},
+        {"is_canary", "TINYINT(1) NOT NULL DEFAULT 0 AFTER batch_no"},
+        {"batch_interval_seconds", "INT UNSIGNED NOT NULL DEFAULT 60 AFTER is_canary"},
+        {"queued_at", "DATETIME NULL AFTER updated_at"}
+    }
+    for _, column in ipairs(columns) do
+        ok, err = ensure_column("waf_program_deployment", column[1], column[2])
+        if not ok then return nil, err end
+    end
+    ok, err = ensure_index("waf_program_deployment", "idx_program_deployment_plan", "(plan_id,batch_no,status)")
     if not ok then return nil, err end
     return true
 end
@@ -68,30 +96,38 @@ end
 
 function _M.create_deployment(values)
     local sql = string.format([[INSERT INTO waf_program_deployment
-        (task_id,release_version,node_ip,status,message,created_by)
-        VALUES (%s,%s,%s,'queued','waiting for node',%s)]],
-        quote(values.task_id), quote(values.release_version), quote(values.node_ip), quote(values.created_by or ""))
+        (task_id,plan_id,batch_no,is_canary,batch_interval_seconds,release_version,node_ip,status,message,created_by)
+        VALUES (%s,%s,%d,%d,%d,%s,%s,'scheduled','等待发布调度',%s)]],
+        quote(values.task_id), quote(values.plan_id or ""), tonumber(values.batch_no) or 1,
+        values.is_canary and 1 or 0, tonumber(values.batch_interval_seconds) or 60,
+        quote(values.release_version), quote(values.node_ip), quote(values.created_by or ""))
     return mysql.query(sql)
 end
 
 function _M.list_deployments()
-    return mysql.query([[SELECT d.task_id,d.release_version,d.node_ip,d.status,d.message,d.created_by,
-        d.created_at,d.updated_at,d.finished_at,n.hostname,n.app_version,n.program_update_status,
+    return mysql.query([[SELECT d.task_id,d.plan_id,d.batch_no,d.is_canary,d.batch_interval_seconds,
+        d.release_version,d.node_ip,d.status,d.message,d.created_by,
+        d.created_at,d.updated_at,d.queued_at,d.finished_at,n.hostname,n.app_version,n.program_update_status,
         n.program_update_target,n.program_update_message,n.program_update_at,n.last_seen
         FROM waf_program_deployment d LEFT JOIN waf_cluster_node n ON n.ip=d.node_ip
         ORDER BY d.created_at DESC LIMIT 500]])
 end
 
 function _M.reconcile_deployments()
-    return mysql.query([[UPDATE waf_program_deployment d JOIN waf_cluster_node n ON n.ip=d.node_ip
+    local ok, err = mysql.query([[UPDATE waf_program_deployment d JOIN waf_cluster_node n ON n.ip=d.node_ip
         SET d.status=CASE
             WHEN n.app_version=d.release_version AND n.program_update_status='success' THEN 'success'
             WHEN n.program_update_target=d.release_version AND n.program_update_status<>'' THEN n.program_update_status
             ELSE d.status END,
             d.message=CASE WHEN n.program_update_target=d.release_version THEN n.program_update_message ELSE d.message END,
             d.finished_at=CASE WHEN n.app_version=d.release_version AND n.program_update_status='success'
+                THEN COALESCE(d.finished_at,NOW())
+                WHEN n.program_update_target=d.release_version
+                    AND n.program_update_status IN ('failed','rolled_back')
                 THEN COALESCE(d.finished_at,NOW()) ELSE d.finished_at END
-        WHERE d.status NOT IN ('success','cancelled')]])
+        WHERE d.status NOT IN ('success','cancelled','scheduled','waiting_canary')]])
+    if not ok then return nil, err end
+    return scheduler.dispatch("program")
 end
 
 return _M

@@ -38,6 +38,28 @@ local function post_args()
     return ngx.req.get_post_args() or {}
 end
 
+local function deployment_options(args, nodes)
+    local batch_size = math.floor(tonumber(args.batch_size) or 2)
+    local batch_interval = math.floor(tonumber(args.batch_interval) or 60)
+    if batch_size < 1 then batch_size = 1 elseif batch_size > 50 then batch_size = 50 end
+    if batch_interval < 30 then batch_interval = 30 elseif batch_interval > 3600 then batch_interval = 3600 end
+    local gray = tostring(args.gray_release or "") == "1" and #nodes > 1
+    local canary_ip = tostring(args.canary_ip or "")
+    local canary_index
+    if gray then
+        for index, node in ipairs(nodes) do
+            if node.ip == canary_ip then canary_index = index; break end
+        end
+        canary_index = canary_index or 1
+        local canary = table.remove(nodes, canary_index)
+        table.insert(nodes, 1, canary)
+        canary_ip = canary.ip
+    else
+        canary_ip = ""
+    end
+    return gray, batch_size, batch_interval, canary_ip
+end
+
 local function create_release()
     if not user.has_permission("release.manage") then return {code=403,msg="permission denied"} end
     local args = post_args()
@@ -76,25 +98,48 @@ local function deploy_release()
         end
     end
     local master_ip = local_ip()
-    local token = secure_id("geoip:" .. version)
-    redis_cli.set(constants.KEY_REDIS_GEOIP_RELEASE_PREFIX .. version .. ":token", token, 604800)
-    local count = 0
+    local eligible, seen = {}, {}
     for _, node in ipairs(nodes) do
-        if node.ip ~= master_ip and tostring(node.mmdb_checksum or "") ~= release.checksum then
-            local task_id = secure_id("geoip-task:" .. version .. ":" .. node.ip)
-            local task = cjson.encode({task_id=task_id,version=version,token=token,checksum=release.checksum,
-                base_url="http://" .. master_ip .. ":1226"})
-            local queued, queue_err = redis_cli.set(constants.KEY_REDIS_GEOIP_UPDATE_TASK_PREFIX .. node.ip, task, 604800)
-            if queued then
-                store.create_deployment({task_id=task_id,release_version=version,release_checksum=release.checksum,
-                    node_ip=node.ip,created_by=current_username()})
-                count = count + 1
-            else
-                ngx.log(ngx.ERR, "failed to queue GeoIP deployment for ", node.ip, ": ", queue_err)
-            end
+        if node.ip ~= master_ip and tostring(node.mmdb_checksum or "") ~= release.checksum and not seen[node.ip] then
+            seen[node.ip] = true
+            eligible[#eligible + 1] = node
         end
     end
-    return {code=0,msg="已向 " .. count .. " 个 Node 下发 GeoIP 任务",count=count}
+    nodes = eligible
+    if #nodes == 0 then return {code=400,msg="没有需要更新的 Node"} end
+
+    local gray, batch_size, batch_interval, canary_ip = deployment_options(args, nodes)
+    local plan_id = secure_id("geoip-plan:" .. version)
+    local token = secure_id("geoip:" .. version)
+    local token_ok, token_err = redis_cli.set(constants.KEY_REDIS_GEOIP_RELEASE_PREFIX .. version .. ":token", token, 604800)
+    if not token_ok then return {code=500,msg="创建发布令牌失败: " .. tostring(token_err)} end
+    local count = 0
+    for index, node in ipairs(nodes) do
+        local is_canary = gray and index == 1
+        local batch_no = is_canary and 0 or (gray
+            and (math.floor((index - 2) / batch_size) + 1)
+            or (math.floor((index - 1) / batch_size) + 1))
+        local saved, save_err = store.create_deployment({
+            task_id=secure_id("geoip-task:" .. version .. ":" .. node.ip), plan_id=plan_id,
+            batch_no=batch_no, is_canary=is_canary, batch_interval_seconds=batch_interval,
+            release_version=version, release_checksum=release.checksum,
+            node_ip=node.ip, created_by=current_username()
+        })
+        if saved then
+            count = count + 1
+        else
+            ngx.log(ngx.ERR, "failed to create GeoIP deployment for ", node.ip, ": ", save_err)
+        end
+    end
+    if count == 0 then return {code=500,msg="创建发布计划失败"} end
+    store.reconcile_deployments()
+    return {
+        code=0,
+        msg=(gray and ("灰度节点 " .. canary_ip .. " 已开始，") or "")
+            .. "已创建 " .. count .. " 个 Node 的分批发布计划",
+        count=count, plan_id=plan_id, gray_release=gray, canary_ip=canary_ip,
+        batch_size=batch_size, batch_interval=batch_interval
+    }
 end
 
 function _M.do_request()
