@@ -125,7 +125,8 @@ function _M.is_white_ip()
         end
 
         --local module = get_site_security_modules("whiteIp")
-        if is_group_match(constants.KEY_IP_GROUPS_WHITELIST, ip) then
+        if is_group_match(constants.KEY_IP_GROUPS_WHITELIST, ip)
+            or config.is_domain_ip_match("whitelist", ip, ngx.var.host or ngx.ctx.server_name or ngx.var.server_name) then
             -- do_action(module.moduleName, module.rules[1])
             ngx.status = ngx.OK
             return ngx.exit(ngx.status)
@@ -144,7 +145,10 @@ function _M.is_black_ip()
         local exists = nil
         local blackip = ngx.shared.dict_blackip
 
-        if ngx.ctx.geoip.is_allowed == false then
+        local country = ngx.ctx.geoip and ngx.ctx.geoip.country or nil
+        local country_code = ngx.ctx.geoip and ngx.ctx.geoip.iso_code or (country and country.iso_code or "")
+        if ngx.ctx.geoip.is_allowed == false
+            or config.is_domain_country_blocked(country_code, ngx.var.host or ngx.ctx.server_name or ngx.var.server_name) then
             exists = true
         else
             if is_system_option_on("redis") then
@@ -163,6 +167,10 @@ function _M.is_black_ip()
             if is_group_match(constants.KEY_IP_GROUPS_BLACKLIST, ip) then
                 exists = true
             end
+        end
+
+        if not exists and config.is_domain_ip_match("blacklist", ip, ngx.var.host or ngx.ctx.server_name or ngx.var.server_name) then
+            exists = true
         end
 
         if not exists and is_system_option_on('centralized') then

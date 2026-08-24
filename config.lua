@@ -150,6 +150,64 @@ local worker_rules_snapshot_version
 local storage_security_modules
 
 _M.ipgroups = {}
+_M.domain_ip_policies = { whitelist = {}, blacklist = {}, regions = {} }
+
+local function normalize_domain(value)
+    value = trim(tostring(value or "")):lower():gsub("%.$", "")
+    return value
+end
+
+local function load_domain_ip_policies(rules)
+    local grouped = { whitelist = {}, blacklist = {}, regions = {} }
+    for _, rule in ipairs(type(rules) == "table" and rules or {}) do
+        if type(rule) == "table" and rule.state ~= "off" then
+            local domain = normalize_domain(rule.domain)
+            local kind = tostring(rule.type or "")
+            local value = trim(tostring(rule.value or ""))
+            if domain ~= "" and value ~= "" then
+                if kind == "region" then
+                    value = value:upper()
+                    if not value:match("^[A-Z][A-Z]$") then
+                        return nil, "invalid domain region code for " .. domain
+                    end
+                    grouped.regions[domain] = grouped.regions[domain] or {}
+                    grouped.regions[domain][value] = true
+                elseif kind == "whitelist" or kind == "blacklist" then
+                    grouped[kind][domain] = grouped[kind][domain] or {}
+                    insert(grouped[kind][domain], value)
+                else
+                    return nil, "invalid domain IP policy type"
+                end
+            end
+        end
+    end
+
+    for _, kind in ipairs({ "whitelist", "blacklist" }) do
+        for domain, values in pairs(grouped[kind]) do
+            local matcher, err = ipmatcher.new(values)
+            if not matcher then
+                return nil, "invalid " .. kind .. " entry for " .. domain .. ": " .. tostring(err)
+            end
+            grouped[kind][domain] = matcher
+        end
+    end
+    _M.domain_ip_policies = grouped
+    return true
+end
+
+_M.load_domain_ip_policies = load_domain_ip_policies
+
+function _M.is_domain_ip_match(kind, ip, server_name)
+    local policies = _M.domain_ip_policies or {}
+    local matcher = (policies[kind] or {})[normalize_domain(server_name)]
+    return matcher and matcher:match(ip) or false
+end
+
+function _M.is_domain_country_blocked(country_code, server_name)
+    local regions = (_M.domain_ip_policies or {}).regions or {}
+    local countries = regions[normalize_domain(server_name)]
+    return countries and countries[tostring(country_code or ""):upper()] == true or false
+end
 
 local function canonical_encode(v)
     local vt = type(v)
@@ -564,7 +622,8 @@ local function get_cluster_rules_snapshot_payload()
         ip_groups = {
             ip_blacklist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipBlackList") or {},
             ip_whitelist = read_file_to_table(_M.CONF_PATH .. "/global_rules/ipWhiteList") or {},
-            custom_groups = (read_json_file(_M.CONF_PATH .. "/ipgroup.json", { rules = {} }).rules or {})
+            custom_groups = (read_json_file(_M.CONF_PATH .. "/ipgroup.json", { rules = {} }).rules or {}),
+            domain_policies = (read_json_file(_M.CONF_PATH .. "/global_rules/domainIpPolicy.json", { rules = {} }).rules or {})
         },
         source_files = source_files,
         source_hash = select(1, calculate_rule_source_hash(source_files))
@@ -656,6 +715,8 @@ local function apply_cluster_rules_snapshot(payload)
     add_ip_group(constants.KEY_IP_GROUPS_BLACKLIST, ip_groups.ip_blacklist or {})
     add_ip_group(constants.KEY_IP_GROUPS_WHITELIST, ip_groups.ip_whitelist or {})
     load_custom_ip_groups(ip_groups.custom_groups or {})
+    local domain_ok, domain_err = load_domain_ip_policies(ip_groups.domain_policies or {})
+    if not domain_ok then return nil, domain_err end
 
     return true
 end
@@ -1023,6 +1084,9 @@ local function load_ip_groups()
     if table_rule then
         load_custom_ip_groups(table_rule.rules)
     end
+    local domain_rules = read_json_file(_M.CONF_PATH .. '/global_rules/domainIpPolicy.json', { rules = {} })
+    local ok, err = load_domain_ip_policies(domain_rules.rules or {})
+    if not ok then error(err) end
 end
 
 -- 加载配置文件

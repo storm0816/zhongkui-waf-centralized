@@ -52,10 +52,27 @@
 				</div>
 			</div>
 		</div>
+		<div class="layui-row layui-col-space10" id="id-domain-policy-card" style="display:none;">
+			<div class="layui-col-md12">
+				<div class="layui-card">
+					<div class="layui-card-header">域名子黑白名单</div>
+					<div class="layui-card-body">
+						<div class="layui-text" style="margin-bottom:12px;color:#666;">子规则仅追加到全局规则，不会覆盖或关闭全局黑白名单，并受当前站点白名单/黑名单总开关控制。地域规则依赖各 Node 已发布且校验一致的 GeoIP 数据。</div>
+						<div class="layui-form layui-row layui-col-space10" lay-filter="filter-domain-search" style="margin-bottom:10px;">
+							<div class="layui-col-md3"><input class="layui-input" id="id-domain-keyword" placeholder="查询精确域名"></div>
+							<div class="layui-col-md2"><select id="id-domain-type"><option value="">全部类型</option><option value="whitelist">子白名单</option><option value="blacklist">子黑名单</option><option value="region">地域子黑名单</option></select></div>
+							<div class="layui-col-md2"><select id="id-domain-state"><option value="">全部状态</option><option value="on">启用</option><option value="off">停用</option></select></div>
+							<div class="layui-col-md5"><button type="button" class="pear-btn pear-btn-primary" id="id-domain-search">查询</button> <button type="button" class="pear-btn" id="id-domain-reset">重置</button> <button type="button" class="pear-btn pear-btn-primary" id="id-domain-add">+ 新增子规则</button></div>
+						</div>
+						<table id="id-table-domain-policy" lay-filter="filter-table-domain-policy"></table>
+					</div>
+				</div>
+			</div>
+		</div>
 		<div class="layui-row layui-col-space10 layui-form" lay-filter="filter-form-geoip">
 			<div class="layui-col-md12">
 				<div class="layui-card">
-					<div class="layui-card-header">地域级IP黑名单</div>
+					<div class="layui-card-header" id="id-geoip-title">地域级IP黑名单</div>
 					<div class="layui-card-body">
 						<div class="layui-row layui-col-space10">
 							<div class="layui-col-md12" id="id-tab-geoip"></div>
@@ -88,11 +105,26 @@
 			</div>
 		</form>
 
+		<form class="layui-form" style="background:#fff;padding:18px 24px;display:none;" lay-filter="filter-form-domain-policy" id="id-form-domain-policy">
+			<input type="hidden" name="id">
+			<div class="layui-form-item"><label class="layui-form-label">精确域名</label><div class="layui-input-block"><select name="domain" id="id-policy-domain" lay-verify="required"></select></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">规则类型</label><div class="layui-input-block"><select name="type" id="id-policy-type" lay-filter="filter-policy-type" lay-verify="required"><option value="whitelist">子白名单</option><option value="blacklist">子黑名单</option><option value="region">地域子黑名单</option></select></div></div>
+			<div class="layui-form-item" id="id-policy-ip-row"><label class="layui-form-label">IP / 网段</label><div class="layui-input-block"><input class="layui-input" id="id-policy-ip" placeholder="例如 203.0.113.10 或 203.0.113.0/24"></div></div>
+			<div class="layui-form-item" id="id-policy-region-row" style="display:none;"><label class="layui-form-label">国家/地区</label><div class="layui-input-block"><select id="id-policy-region"></select></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">备注</label><div class="layui-input-block"><input class="layui-input" name="comment" maxlength="255" placeholder="可选"></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">状态</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" title="ON|OFF" checked></div></div>
+			<div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="filter-domain-policy-save">保存并发布</button> <button type="button" class="pear-btn" lay-on="cancel">取消</button></div></div>
+		</form>
+
 		<script type="text/html" id="iplist_bar">
 			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit"><i class="layui-icon layui-icon-edit"></i></button>
 		</script>
 		<script type="text/html" id="iplist_state">
 			<input type="checkbox" name="state" value="{{= d.id }}" lay-skin="switch" lay-filter="iplist_switch_status" title="ON|OFF" {{= d.state == "on" ? "checked" : "" }} />
+		</script>
+		<script type="text/html" id="domain_policy_bar">
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit">编辑</button>
+			<button class="pear-btn pear-btn-danger pear-btn-xs" lay-event="remove">删除</button>
 		</script>
 
 		<script src="../../component/layui/layui.js"></script>
@@ -111,6 +143,7 @@
 
 				var currentTabId;
 				var disallowArray;
+				var siteDomainMap = {};
 
 				function escapeHtml(value) {
 					return String(value || '')
@@ -166,12 +199,75 @@
 					return lines.join('\n');
 				}
 
+				function selectedSiteDomains() {
+					return siteDomainMap[String($('#site').val())] || [];
+				}
+
+				function fillPolicyDomains(selected) {
+					var html = '';
+					$.each(selectedSiteDomains(), function(_, domain) {
+						html += '<option value="' + escapeHtml(domain) + '"' + (domain === selected ? ' selected' : '') + '>' + escapeHtml(domain) + '</option>';
+					});
+					$('#id-policy-domain').html(html);
+					form.render('select', 'filter-form-domain-policy');
+				}
+
+				function togglePolicyValue(kind) {
+					$('#id-policy-ip-row').toggle(kind !== 'region');
+					$('#id-policy-region-row').toggle(kind === 'region');
+				}
+
+				function reloadDomainPolicies() {
+					if ($('#site').val() == '0') return;
+					table.reload('id-table-domain-policy', {
+						where: {siteId: $('#site').val(), domain: $.trim($('#id-domain-keyword').val() || ''), type: $('#id-domain-type').val(), state: $('#id-domain-state').val()},
+						page: {curr: 1}
+					});
+				}
+
+				function postWithConflictConfirmation(url, field, onSuccess) {
+					$.post(url, field, function(res) {
+						if (res && res.code == 200) {
+							onSuccess(res);
+							return;
+						}
+						if (res && res.code == 409 && res.data && res.data.canForce && !field.force) {
+							layer.confirm(escapeHtml(res.msg || '检测到重叠规则，是否继续保存？'), {
+								title: '规则重叠提示',
+								btn: ['仍然保存', '取消']
+							}, function(index) {
+								layer.close(index);
+								var confirmed = $.extend({}, field, {force: '1'});
+								postWithConflictConfirmation(url, confirmed, onSuccess);
+							});
+							return;
+						}
+						popup.failure((res && res.msg) || '保存失败');
+					}, 'json');
+				}
+
+				function openDomainPolicy(row) {
+					row = row || {type:'whitelist', state:'on'};
+					fillPolicyDomains(row.domain || selectedSiteDomains()[0] || '');
+					form.val('filter-form-domain-policy', {id:row.id || '', domain:row.domain || selectedSiteDomains()[0] || '', type:row.type || 'whitelist', comment:row.comment || '', state:(row.state || 'on') === 'on'});
+					$('#id-policy-ip').val(row.type === 'region' ? '' : (row.value || ''));
+					$('#id-policy-region').val(row.type === 'region' ? (row.value || '') : '');
+					togglePolicyValue(row.type || 'whitelist');
+					form.render(null, 'filter-form-domain-policy');
+					layer.open({type:1,title:(row.id ? '编辑' : '新增') + '域名子规则',area:['680px','520px'],content:$('#id-form-domain-policy'),end:function(){$('#id-form-domain-policy').trigger('reset');}});
+				}
+
 				// 切换域名
 				form.on('select(filter-site)', function(data) {
 					if (data.value == 0) {
 						$('#id-div-iplist').show();
+						$('#id-domain-policy-card').hide();
+						$('#id-geoip-title').text('地域级IP黑名单');
 					} else {
 						$('#id-div-iplist').hide();
+						$('#id-domain-policy-card').show();
+						$('#id-geoip-title').text('站点级地域黑名单（兼容：应用该站点全部域名）');
+						reloadDomainPolicies();
 					}
 					getSiteConfig();
 				});
@@ -218,6 +314,7 @@
 										}
 										items += '<div class="layui-col-md3">';
 										items += '<input type="checkbox" name="geoip_disallow_country" value="' + v.iso_code + '" title="' + v.name_cn + '" />';
+										$('#id-policy-region').append('<option value="' + escapeHtml(v.iso_code) + '">' + escapeHtml(v.name_cn) + ' (' + escapeHtml(v.iso_code) + ')</option>');
 										items += '</div>';
 										if (idx == value.length - 1) {
 											var left = 4 - value.length % 4;
@@ -239,6 +336,7 @@
 
 								$('#id-tab-geoip').html(html);
 								form.render('checkbox', 'filter-form-geoip');
+								form.render('select', 'filter-form-domain-policy');
 
 								currentTabId = 'A';
 								element.render('tab', 'filter-tab-geoip');
@@ -299,6 +397,7 @@
 						if (data && data.data) {
 							$.each(data.data, function(key, site) {
 								var serverName = site.serverNames.join(',');
+								siteDomainMap[String(site.id)] = site.serverNames || [];
 								$('#site').append('<option value="' + site.id + '">' + serverName + '</option>');
 							});
 
@@ -327,6 +426,57 @@
 						{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#iplist_bar'}
 					]],
 					skin: 'line'
+				});
+
+				table.render({
+					id: 'id-table-domain-policy',
+					elem: '#id-table-domain-policy',
+					url: '/ip/filter/domain/list',
+					where: {siteId: $('#site').val()},
+					page: true,
+					limit: 20,
+					cols: [[
+						{field:'domain',title:'精确域名',minWidth:190},
+						{field:'type',title:'类型',width:130,templet:function(d){return {whitelist:'子白名单',blacklist:'子黑名单',region:'地域子黑名单'}[d.type] || d.type;}},
+						{field:'value',title:'IP / 网段 / 地区',minWidth:180},
+						{field:'comment',title:'备注',minWidth:160,templet:function(d){return escapeHtml(d.comment || '');}},
+						{field:'state',title:'状态',width:90,templet:function(d){return d.state === 'off' ? '<span style="color:#999">停用</span>' : '<span style="color:#16a34a">启用</span>'; }},
+						{fixed:'right',title:'操作',width:130,toolbar:'#domain_policy_bar'}
+					]]
+				});
+
+				table.on('tool(filter-table-domain-policy)', function(obj) {
+					if (obj.event === 'edit') openDomainPolicy(obj.data);
+					if (obj.event === 'remove') {
+						layer.confirm('确认删除该域名子规则？', function(index) {
+							$.post('/ip/filter/domain/remove', {id:obj.data.id}, function(res) {
+								layer.close(index);
+								if (res && res.code == 200) { popup.success('已删除并发布'); reloadDomainPolicies(); }
+								else popup.failure(res.msg || '删除失败');
+							}, 'json');
+						});
+					}
+				});
+
+				form.on('select(filter-policy-type)', function(data) { togglePolicyValue(data.value); });
+				$('#id-domain-add').on('click', function() {
+					if (!selectedSiteDomains().length) return popup.failure('当前站点没有可用域名');
+					openDomainPolicy();
+				});
+				$('#id-domain-search').on('click', reloadDomainPolicies);
+				$('#id-domain-reset').on('click', function() { $('#id-domain-keyword').val(''); $('#id-domain-type').val(''); $('#id-domain-state').val(''); form.render('select', 'filter-domain-search'); reloadDomainPolicies(); });
+
+				form.on('submit(filter-domain-policy-save)', function(data) {
+					var field = data.field;
+					field.value = field.type === 'region' ? $('#id-policy-region').val() : $.trim($('#id-policy-ip').val() || '');
+					field.state = field.state ? 'on' : 'off';
+					if (!field.value) { popup.failure(field.type === 'region' ? '请选择国家或地区' : '请填写IP或CIDR网段'); return false; }
+					postWithConflictConfirmation('/ip/filter/domain/save', field, function() {
+						layer.closeLast('page');
+						popup.success('已保存并发布');
+						reloadDomainPolicies();
+					});
+					return false;
 				});
 
 				// 触发单元格工具事件
@@ -381,17 +531,11 @@
 					var field = data.field;
 					var content = collectIpListContent();
 					if (content === null) return false;
-					$.post('/ip/filter/rule/update', {id: field.id, content: content}, function(data) {
-						if (data && data.code == 200) {
+					postWithConflictConfirmation('/ip/filter/rule/update', {id: field.id, content: content}, function() {
 							table.reloadData('id-table-iplist');
 							layer.closeLast('page');
 							popup.success("已保存");
-							return true;
-						} else {
-							popup.failure(data.msg);
-							return false;
-						}
-					}, "json");
+					});
 
 					return false;
 				});
