@@ -1,11 +1,12 @@
-## attack_log 大表治理（上线建议）
+## 攻击日志与敏感数据发现归档（上线建议）
 
-> 已集成到系统设置页面：`系统设置 -> 攻击日志归档清理（懒人模式）`。  
+> 已集成到系统设置页面：`系统设置 -> 攻击日志与敏感数据归档清理（共享策略）`。
 > 可直接配置自动任务，或点击“立即执行一次”。
 >
-> **当前内置实现（2.1.2）**：仅由 master 执行；将超过保留天数的数据按周归档到
-> `attack_log_archive_YYYYMMDD_YYYYMMDD`，再按批次删除主表数据。页面配置保存在
-> master 本地 `conf/system.json` 的 `attackLogRetention` 中，不使用 MySQL EVENT。
+> **当前内置实现**：仅由 master 执行；攻击日志按 `request_time`、敏感数据发现按 `last_seen` 使用同一份
+> `attackLogRetention` 配置。两者分别按周归档到 `attack_log_archive_YYYYMMDD_YYYYMMDD` 与
+> `sensitive_discovery_archive_YYYYMMDD_YYYYMMDD`，确认写入成功后才按批次删除对应主表数据。配置保存在
+> master 本地 `conf/system.json`，不使用 MySQL EVENT。
 > 下文的分区表与 MySQL EVENT 是 DBA 的备选治理方案，不能与内置自动归档同时启用，
 > 否则会出现重复任务和额外锁竞争。
 
@@ -20,6 +21,13 @@
 - `attack_log` 主表只保留最近 `30~90` 天，保证查询和写入稳定。
 - 历史日志进入 `attack_log_archive`，支持长期留存和低频查询。
 - 自动化归档与清理，降低人工运维成本。
+
+### 敏感数据发现归档
+
+- `sensitive_discovery` 与 `attack_log` 共用页面中的保留天数、批次大小和执行间隔，不增加第二套定时任务。
+- 敏感发现按 `last_seen` 判断过期，并写入 `sensitive_discovery_archive_YYYYMMDD_YYYYMMDD` 周归档表。
+- 每轮每张主表最多处理一个批次；敏感发现仅删除已确认存在于对应归档表中的 `event_key`，归档写入失败时保留原记录。
+- “立即执行归档”会同时运行攻击日志和敏感发现归档，并分别显示写入与删除数量。
 
 ### 1) 创建归档分区表
 

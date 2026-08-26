@@ -2,7 +2,13 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 2.1.7`
+当前版本：`Version 2.1.8`
+
+### 2.1.8 发布说明
+
+- 攻击日志与敏感数据发现共用归档保留天数、批次大小和执行间隔配置，仅由 Master 自动执行。
+- 敏感数据发现按 `last_seen` 按周归档到 `sensitive_discovery_archive_YYYYMMDD_YYYYMMDD`；确认归档写入成功后再删除源记录。
+- 系统设置的手动归档入口会同时执行攻击日志和敏感数据发现归档，并分别反馈处理数量。
 
 ### 2.1.7 发布说明
 
@@ -72,14 +78,14 @@
 - 攻击检测：SQL 注入、XSS、SSRF、CC、Bot、反爬虫、人机验证、ACL、自定义规则
 - 爬虫治理：访问频率限制、UA 强制规则、Bot 陷阱、动态 `robots.txt`
 - IP 管控：黑白名单（支持 IPv6 与网段）
-- 敏感数据过滤：身份证、手机号、银行卡、密码等脱敏与关键词过滤
+- 敏感数据发现：识别身份证、手机号、银行卡、密码等敏感内容并汇总记录，不改写业务响应
 
 平台与数据能力：
 - 站点独立配置 + 全局配置
 - 管理后台可视化（攻击日志、流量统计、节点状态）
 - 管理台账号支持角色权限、LDAP 主备认证、TOTP MFA 与操作审计
 - 支持 Redis + MySQL 的集群化架构
-- 攻击日志归档清理（系统页面懒人模式，支持自动与手动执行）
+- 攻击日志与敏感数据发现归档清理（共享保留、批次和频率配置，支持自动与手动执行）
 - 规则情报候选池（每日自动生成候选，人工审核，默认不自动生效）
 
 集群增强能力（当前版本）：
@@ -95,18 +101,16 @@
 推荐直接使用安装命令：
 
 ```bash
-tar -xzf zhongkui-waf-node-2.1.2.tar.gz
-cd zhongkui-waf-node-2.1.2
-chmod +x install.sh
+tar -xzf zhongkui-waf-node-2.1.8.tar.gz
+cd zhongkui-waf-node-2.1.8
 sudo ./install.sh --role node
 ```
 
 master 节点：
 
 ```bash
-tar -xzf zhongkui-waf-master-2.1.2.tar.gz
-cd zhongkui-waf-master-2.1.2
-chmod +x install.sh
+tar -xzf zhongkui-waf-master-2.1.8.tar.gz
+cd zhongkui-waf-master-2.1.8
 sudo ./install.sh --role master
 ```
 
@@ -117,6 +121,19 @@ sudo ./upgrade.sh --role master
 ```
 
 `upgrade.sh` 不会执行重编译，也不会用包内配置覆盖服务器的 `conf/system.json`。
+
+### 一键发布 Node（2.1.4 及以上）
+
+当 Master 和目标 Node 均已升级到 `2.1.4` 或更高版本后，后续程序升级可在
+“集群与大屏 → 发布中心”完成：
+
+1. 先把新版本代码升级到 Master 并完成验证。
+2. 在“程序版本”创建当前版本的不可变快照，例如 `2.1.8`。已存在的版本快照不能覆盖。
+3. 点击“发布”，选择参与范围：`发布所选`只处理勾选的 Node；`发布全部`处理列表内全部版本不同的在线 Node。
+4. 选择发布方式：关闭灰度时按批次大小直接发布；开启灰度时，先发布指定的 1 台 Node，成功后再按批次大小和批次间隔继续其余节点。
+5. 在任务列表确认每台 Node 的下载、校验、重载和版本上报均成功。
+
+发布计划保存在 MySQL。Master 重启后会继续未完成的计划；灰度节点失败或回滚时，后续批次会自动暂停。GeoIP 数据发布使用相同的灰度和批次机制，但需在“GeoIP 版本”单独创建数据快照。
 
 本机 Redis：
 
@@ -146,7 +163,13 @@ chmod +x scripts/build_release.sh
 ./scripts/build_release.sh
 ```
 
-安装包会生成到 `dist/`：`zhongkui-waf-master-2.1.2.tar.gz` 与 `zhongkui-waf-node-2.1.2.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+Windows 构建机可执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_release_windows.ps1
+```
+
+安装包会生成到 `dist/`：`zhongkui-waf-master-2.1.8.tar.gz` 与 `zhongkui-waf-node-2.1.8.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Node 包不包含 LDAP 配置。Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据；`scripts/`、Git 和私有环境文件不会进入压缩包。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 
 常用参数：
 
@@ -205,7 +228,7 @@ chmod +x scripts/build_release.sh
 
 统计与落库策略：
 - 攻击日志/封禁日志：Redis List 队列（`waf:queue:attack_log`、`waf:queue:ip_block_log`）
-- 攻击日志归档：按 7 天落表到 `attack_log_archive_YYYYMMDD_YYYYMMDD`，避免单表无限增长
+- 安全记录归档：攻击日志按 `request_time`、敏感数据发现按 `last_seen` 共享归档策略，分别按周落表到 `attack_log_archive_YYYYMMDD_YYYYMMDD` 与 `sensitive_discovery_archive_YYYYMMDD_YYYYMMDD`，避免主表无限增长
 - 流量/攻击类型：dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）
 - MySQL 异常时：retry set 回放补写（`waf:retry:*`）
 
@@ -389,11 +412,11 @@ Disallow: /zhongkuiwaf/honey/trap
 
 完整配置、原理、测试方法和上线建议见：[反爬虫与爬虫公约](./docs/CRAWLER_PROTECTION.md)。
 
-#### 敏感数据过滤
+#### 敏感数据发现
 
-开启敏感信息过滤后，`Zhongkui-WAF`将对响应数据进行过滤。
+敏感数据功能当前采用“发现与汇总”模式：命中手机号、身份证号、银行卡号、密码字段或自定义敏感词时，WAF 记录命中的脱敏样例、规则、域名、路径和来源节点，供“安全运营 → 敏感数据发现”页面排查。
 
-`Zhongkui-WAF`内置了对响应内容中的身份证号码、手机号码、银行卡号、密码信息进行脱敏处理。需要注意的是，内置的敏感信息脱敏功能目前仅支持处理中华人民共和国境内使用的数据格式（如身份证号、电话号码、银行卡号），暂不支持处理中国境外的身份证号、电话号码、银行卡号等数据格式。但你可以使用正则表达式配置不同的规则，以过滤请求响应内容中任何你想要过滤掉的数据。
+它不会替换或修改业务响应内容，避免因脱敏改写造成接口兼容性问题。规则配置仍通过集群规则快照发布到 Node；发现记录由 Node 写入 Redis，再由 Master 汇总到 MySQL。
 
 ### 常见问题
 

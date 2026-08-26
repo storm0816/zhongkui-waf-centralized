@@ -276,6 +276,10 @@ local SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE = [[
     CREATE TABLE IF NOT EXISTS `attack_log_archive` LIKE `attack_log`;
 ]]
 
+local SQL_CREATE_TABLE_SENSITIVE_DISCOVERY_ARCHIVE = [[
+    CREATE TABLE IF NOT EXISTS `sensitive_discovery_archive` LIKE `sensitive_discovery`;
+]]
+
 local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
     CREATE TABLE `ip_block_log` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -756,6 +760,22 @@ local function ensure_attack_log_week_archive_table(table_name)
     return mysql.query(create_sql)
 end
 
+local function get_sensitive_discovery_archive_range_table_name(range_start, range_end)
+    local attack_table = get_attack_log_archive_range_table_name(range_start, range_end)
+    if not attack_table then
+        return nil
+    end
+    return attack_table:gsub("^attack_log_archive_", "sensitive_discovery_archive_")
+end
+
+local function ensure_sensitive_discovery_week_archive_table(table_name)
+    local create_sql = format(
+        "CREATE TABLE IF NOT EXISTS `%s` LIKE `sensitive_discovery`",
+        table_name
+    )
+    return mysql.query(create_sql)
+end
+
 local function get_oldest_archive_request_time(days)
     local sql = format([[
         SELECT MIN(request_time) AS request_time
@@ -973,6 +993,7 @@ function _M.check_table(premature)
         { name = 'attack_log_archive',  sql = SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE },
         { name = 'ip_block_log',        sql = SQL_CREATE_TABLE_IP_BLOCK_LOG },
         { name = 'sensitive_discovery', sql = SQL_CREATE_TABLE_SENSITIVE_DISCOVERY },
+        { name = 'sensitive_discovery_archive', sql = SQL_CREATE_TABLE_SENSITIVE_DISCOVERY_ARCHIVE },
         { name = 'attack_type_traffic', sql = SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC },
         { name = 'waf_traffic_stats',   sql = SQL_CREATE_TABLE_WAF_TRAFFIC_STATS },
         { name = 'waf_cluster_node',    sql = SQL_CREATE_TABLE_WAF_CLUSTER_NODE },
@@ -1068,6 +1089,11 @@ function _M.check_table(premature)
     ensure_column("sensitive_discovery", "matched_sample",
         "ALTER TABLE sensitive_discovery ADD COLUMN matched_sample VARCHAR(512) NOT NULL DEFAULT '' COMMENT '脱敏后的命中样例' AFTER detection_type")
 
+    ensure_index("sensitive_discovery", "idx_sensitive_last_seen",
+        "ALTER TABLE sensitive_discovery ADD INDEX idx_sensitive_last_seen (last_seen)")
+    ensure_index("sensitive_discovery", "idx_sensitive_server_status",
+        "ALTER TABLE sensitive_discovery ADD INDEX idx_sensitive_server_status (server_name,status)")
+
     -- attack_log 常用查询维度索引（按时间、IP、攻击类型、站点、动作），减少大表查询和清理扫描压力。
     ensure_index("attack_log", "idx_attack_log_request_time",
         "ALTER TABLE attack_log ADD INDEX idx_attack_log_request_time (request_time)")
@@ -1077,6 +1103,8 @@ function _M.check_table(premature)
         "ALTER TABLE attack_log ADD INDEX idx_attack_log_type_time (attack_type, request_time)")
     ensure_index("attack_log", "idx_attack_log_server_time",
         "ALTER TABLE attack_log ADD INDEX idx_attack_log_server_time (server_name, request_time)")
+    ensure_index("attack_log", "idx_attack_log_time_server",
+        "ALTER TABLE attack_log ADD INDEX idx_attack_log_time_server (request_time, server_name)")
     ensure_index("attack_log", "idx_attack_log_action_time",
         "ALTER TABLE attack_log ADD INDEX idx_attack_log_action_time (action, request_time)")
     ensure_index("attack_log", "idx_attack_log_node_time",
@@ -2482,6 +2510,21 @@ function _M.list_cc_cluster_domains(filters)
         GROUP BY d.domain,d.status,d.first_seen,d.last_seen,p.domain,p.threshold_value,p.duration_seconds,def.threshold_value,def.duration_seconds
         ORDER BY d.status='active' DESC,d.last_seen DESC,d.domain ASC]])
     if not rows then return nil, err end
+
+    local attack_rows, attack_err = mysql.query([[
+        SELECT server_name, COUNT(*) AS attack_count_24h
+        FROM attack_log
+        WHERE request_time >= NOW() - INTERVAL 24 HOUR
+          AND server_name IS NOT NULL
+          AND server_name <> ''
+        GROUP BY server_name
+    ]])
+    if not attack_rows then return nil, attack_err end
+    local attack_count_by_domain = {}
+    for _, attack_row in ipairs(attack_rows) do
+        attack_count_by_domain[tostring(attack_row.server_name or ""):lower()] = tonumber(attack_row.attack_count_24h) or 0
+    end
+
     local defaults = mysql.query("SELECT threshold_value,duration_seconds,state,update_time FROM waf_cc_domain_policy WHERE domain='*' LIMIT 1") or {}
     local default = defaults[1] or { threshold_value = 1000, duration_seconds = 60, state = "on" }
     local include_default = (status == '' or status == 'default') and (domain == '' or domain == '*')
@@ -2495,12 +2538,11 @@ function _M.list_cc_cluster_domains(filters)
     local cc_cluster = require "cc_cluster"
     local now = ngx.time()
     for _, row in ipairs(rows) do
-        local requests, hits, peak, requests_24h = 0, 0, 0, 0
+        local requests, hits, requests_24h = 0, 0, 0
         for offset = 0, 4 do
             local minute = os.date("%Y%m%d%H%M", now - offset * 60)
             local value = tonumber(redis_cli.get(cc_cluster.get_metric_key("requests", row.domain, minute))) or 0
             requests = requests + value
-            if value > peak then peak = value end
             hits = hits + (tonumber(redis_cli.get(cc_cluster.get_metric_key("hits", row.domain, minute))) or 0)
             if offset == 0 then row.requests_1m = value end
         end
@@ -2509,8 +2551,8 @@ function _M.list_cc_cluster_domains(filters)
             requests_24h = requests_24h + (tonumber(redis_cli.get(cc_cluster.get_hourly_request_metric_key(row.domain, hour))) or 0)
         end
         row.requests_5m = requests
-        row.peak_5m = peak
         row.cc_hits_5m = hits
+        row.attack_count_24h = attack_count_by_domain[tostring(row.domain or ""):lower()] or 0
         row.requests_24h = requests_24h
     end
     local sort_24h = tostring(filters.sort_24h or ''):lower()
@@ -3030,7 +3072,126 @@ function _M.archive_attack_log_once(force)
     }
 end
 
-function _M.archive_attack_log_auto()
+function _M.archive_sensitive_discovery_once(force)
+    if not is_system_option_on("mysql") then
+        return { code = 0, msg = "mysql is off, skip", skipped = true }
+    end
+
+    local enabled, days, batch = get_attack_log_retention_config()
+    if not force and not enabled then
+        return { code = 0, msg = "attackLogRetention is off, skip", skipped = true }
+    end
+
+    local range_sql = format([[
+        SELECT
+            DATE_FORMAT(
+                DATE_SUB(DATE(MIN(last_seen)), INTERVAL WEEKDAY(MIN(last_seen)) DAY),
+                '%%Y-%%m-%%d 00:00:00'
+            ) AS week_start,
+            DATE_FORMAT(
+                DATE_ADD(
+                    DATE_SUB(DATE(MIN(last_seen)), INTERVAL WEEKDAY(MIN(last_seen)) DAY),
+                    INTERVAL 7 DAY
+                ),
+                '%%Y-%%m-%%d 00:00:00'
+            ) AS week_end
+        FROM sensitive_discovery
+        WHERE last_seen < NOW() - INTERVAL %d DAY
+    ]], days)
+    local range_res, range_err = mysql.query(range_sql)
+    if not range_res then
+        ngx.log(ngx.ERR, "failed to query sensitive discovery archive range: ", range_err)
+        return { code = 500, msg = "query sensitive archive range failed", error = range_err }
+    end
+    if not range_res[1] or not range_res[1].week_start or not range_res[1].week_end then
+        return {
+            code = 0,
+            msg = "no archive rows",
+            inserted = 0,
+            deleted = 0,
+            days = days,
+            batch = batch
+        }
+    end
+
+    local week_start = tostring(range_res[1].week_start)
+    local week_end = tostring(range_res[1].week_end)
+    local table_name = get_sensitive_discovery_archive_range_table_name(week_start, week_end)
+    if not table_name then
+        return { code = 500, msg = "invalid sensitive archive table name", error = week_start .. "~" .. week_end }
+    end
+
+    local create_res, create_err = ensure_sensitive_discovery_week_archive_table(table_name)
+    if not create_res then
+        ngx.log(ngx.ERR, "failed to ensure sensitive discovery archive table: ", table_name, ", err=", create_err)
+        return { code = 500, msg = "ensure sensitive archive table failed", error = create_err }
+    end
+
+    local insert_sql = format(
+        "INSERT IGNORE INTO `%s` SELECT * FROM sensitive_discovery WHERE last_seen < NOW() - INTERVAL %d DAY AND last_seen >= %s AND last_seen < %s ORDER BY id ASC LIMIT %d",
+        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch
+    )
+    local insert_res, insert_err = mysql.query(insert_sql)
+    if not insert_res then
+        ngx.log(ngx.ERR, "failed to archive sensitive discovery to ", table_name, ": ", insert_err)
+        return { code = 500, msg = "sensitive archive insert failed", error = insert_err }
+    end
+
+    -- Only remove records that are already present in the archive table.
+    local delete_sql = format([[
+        DELETE FROM sensitive_discovery
+        WHERE event_key IN (
+            SELECT event_key FROM (
+                SELECT source.event_key
+                FROM sensitive_discovery AS source
+                INNER JOIN `%s` AS archive ON archive.event_key = source.event_key
+                WHERE source.last_seen < NOW() - INTERVAL %d DAY
+                  AND source.last_seen >= %s
+                  AND source.last_seen < %s
+                ORDER BY source.id ASC
+                LIMIT %d
+            ) AS copied_rows
+        )
+    ]], table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch)
+    local delete_res, delete_err = mysql.query(delete_sql)
+    if not delete_res then
+        ngx.log(ngx.ERR, "failed to delete archived sensitive discovery rows from source: ", delete_err)
+        return { code = 500, msg = "sensitive archive delete failed", error = delete_err }
+    end
+
+    local inserted = insert_res.affected_rows or 0
+    local deleted = delete_res.affected_rows or 0
+    if inserted > 0 or deleted > 0 then
+        ngx.log(ngx.INFO, "sensitive discovery retention run success, table=", table_name, ", days=", days,
+            ", batch=", batch, ", inserted=", inserted, ", deleted=", deleted)
+    end
+
+    return {
+        code = 0,
+        msg = "ok",
+        inserted = inserted,
+        deleted = deleted,
+        days = days,
+        batch = batch,
+        archive_table = table_name,
+        archive_range = string.format("%s_%s", get_datetime_label(week_start), get_datetime_label(week_end))
+    }
+end
+
+function _M.archive_security_records_once(force)
+    local attack_log = _M.archive_attack_log_once(force)
+    local sensitive_discovery = _M.archive_sensitive_discovery_once(force)
+    local failed = (attack_log and attack_log.code ~= 0) or (sensitive_discovery and sensitive_discovery.code ~= 0)
+
+    return {
+        code = failed and 500 or 0,
+        msg = failed and "security record archive failed" or "ok",
+        attack_log = attack_log or {},
+        sensitive_discovery = sensitive_discovery or {}
+    }
+end
+
+function _M.archive_security_records_auto()
     local enabled, _, _, interval = get_attack_log_retention_config()
     if not enabled then
         return
@@ -3038,7 +3199,7 @@ function _M.archive_attack_log_auto()
 
     local dict = ngx.shared.dict_config
     if not dict then
-        _M.archive_attack_log_once(false)
+        _M.archive_security_records_once(false)
         return
     end
 
@@ -3049,7 +3210,12 @@ function _M.archive_attack_log_auto()
     end
 
     dict:set(ATTACK_LOG_RETENTION_LAST_RUN_KEY, now)
-    _M.archive_attack_log_once(false)
+    _M.archive_security_records_once(false)
+end
+
+-- Keep the previous function name for callers upgraded from older versions.
+function _M.archive_attack_log_auto()
+    return _M.archive_security_records_auto()
 end
 
 -- 在适当的地方调用 write_sql_redis_to_mysql 函数，例如定时任务

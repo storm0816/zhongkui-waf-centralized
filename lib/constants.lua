@@ -3,7 +3,7 @@
 
 local _M = {}
 
-_M.APP_VERSION = '2.1.7'
+_M.APP_VERSION = '2.1.8'
 
 _M.KEY_HTTP_4XX = 'http4x'
 _M.KEY_HTTP_5XX = 'http5x'

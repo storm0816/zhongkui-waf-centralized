@@ -170,8 +170,8 @@ function _M.do_request()
             response.code = 500
             response.msg = err
         end
-    elseif uri == "/system/attacklog/archive/run" and ngx.req.get_method() == "POST" then
-        local result = sql.archive_attack_log_once(true)
+    elseif (uri == "/system/attacklog/archive/run" or uri == "/system/security/archive/run") and ngx.req.get_method() == "POST" then
+        local result = sql.archive_security_records_once(true)
         if result and result.code == 0 then
             response.code = 0
             response.data = result

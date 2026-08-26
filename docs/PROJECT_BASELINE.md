@@ -73,7 +73,7 @@ Zhongkui-WAF 已完成从单机规则型 WAF 到可运营的 master/node 集群 
 ## 6. 日志与归档标准
 
 - Node 写 Redis 队列，master 批量写 MySQL；队列消费必须保持幂等与失败重试。
-- `attack_log` 是热数据表。归档任务只在 master 执行，将超过保留天数的数据按周转入 `attack_log_archive_YYYYMMDD_YYYYMMDD`，再分批删除主表数据。
+- `attack_log` 与 `sensitive_discovery` 都是热数据表。归档任务只在 master 执行，使用同一份保留天数、批次大小和执行间隔配置；前者按 `request_time`、后者按 `last_seen` 分别按周转入 `attack_log_archive_YYYYMMDD_YYYYMMDD` 与 `sensitive_discovery_archive_YYYYMMDD_YYYYMMDD`，复制成功后再分批删除主表数据。
 - 归档不是永久删除。归档表会持续增长，生产环境必须纳入 MySQL 容量、备份和长期保留策略。
 - 当前推荐起点：保留 3~90 天热数据、每批 5,000 条、每 300 秒执行一次；应根据 MySQL IO、锁等待和积压量调整批次，而非盲目提高频率。
 

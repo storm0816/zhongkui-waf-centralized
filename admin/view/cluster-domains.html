@@ -27,8 +27,8 @@
         var form=layui.form,table=layui.table,$=layui.$;
         table.render({id:'id-table-cluster-domains-view',elem:'#id-table-cluster-domains-view',url:'/clusternode/domains',page:false,cols:[[
             {field:'domain',title:'域名',minWidth:220},{field:'node_ips',title:'来源节点',minWidth:180,templet:function(d){return d.node_ips||'-';}},
-            {field:'node_count',title:'节点数',width:85},{field:'requests_1m',title:'1分钟请求',width:110},{field:'peak_5m',title:'5分钟峰值',width:110},
-            {field:'cc_hits_5m',title:'5分钟CC命中',width:125},{field:'requests_24h',title:'24小时访问',width:115},
+            {field:'node_count',title:'节点数',width:85},{field:'requests_1m',title:'1分钟请求',width:110},
+            {field:'cc_hits_5m',title:'5分钟CC命中',width:125},{field:'attack_count_24h',title:'24小时被攻击',width:135},{field:'requests_24h',title:'24小时访问',width:115},
             {title:'集群阈值',minWidth:165,templet:function(d){return d.threshold_value+' 次 / '+d.duration_seconds+' 秒（'+(d.policy_source==='custom'?'特例':'默认')+'）';}},
             {field:'status',title:'状态',width:90,templet:function(d){return d.domain==='*'?'默认':(d.status==='active'?'活跃':'已停用');}},{field:'last_seen',title:'最后发现',width:170}
         ]]});
