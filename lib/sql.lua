@@ -6,6 +6,7 @@ local config = require "config"
 local geoip_version = require "geoip_version"
 local cc_cluster = require "cc_cluster"
 local dingtalk = require "dingtalk"
+local dingtalk_notification_store = require "dingtalk_notification_store"
 local utils = require "utils"
 local constants = require "constants"
 local cjson = require "cjson.safe"
@@ -50,6 +51,10 @@ local MAX_ATTACK_LOG_RETENTION_BATCH = 50000
 local DEFAULT_ATTACK_LOG_RETENTION_INTERVAL = 300
 local MIN_ATTACK_LOG_RETENTION_INTERVAL = 60
 local ATTACK_LOG_RETENTION_LAST_RUN_KEY = "attack_log_retention:last_run"
+local DEFAULT_BLOCK_LOG_RETENTION_DAYS = 90
+local DEFAULT_BLOCK_LOG_RETENTION_BATCH = 5000
+local DEFAULT_BLOCK_LOG_RETENTION_INTERVAL = 300
+local BLOCK_LOG_RETENTION_LAST_RUN_KEY = "block_log_retention:last_run"
 local CLUSTER_RULES_VERSION_DICT_KEY = "cluster:rules:snapshot:version"
 local CLUSTER_WHITELIST_VERSION_DICT_KEY = "cluster:ip_whitelist:version"
 local CLUSTER_BLACKLIST_VERSION_DICT_KEY = "cluster:master:blacklist:version"
@@ -427,6 +432,18 @@ local function get_attack_log_retention_config()
     return state == "on", floor(days), floor(batch), floor(interval)
 end
 
+local function get_block_log_retention_config()
+    local conf = get_system_config("blockLogRetention") or {}
+    local state = tostring(conf.state or "on")
+    local days = tonumber(conf.days) or DEFAULT_BLOCK_LOG_RETENTION_DAYS
+    local batch = tonumber(conf.batch_size or conf.batchSize) or DEFAULT_BLOCK_LOG_RETENTION_BATCH
+    local interval = tonumber(conf.interval_seconds or conf.intervalSeconds) or DEFAULT_BLOCK_LOG_RETENTION_INTERVAL
+    if days < 1 then days = DEFAULT_BLOCK_LOG_RETENTION_DAYS end
+    if batch < 100 then batch = 100 elseif batch > MAX_ATTACK_LOG_RETENTION_BATCH then batch = MAX_ATTACK_LOG_RETENTION_BATCH end
+    if interval < MIN_ATTACK_LOG_RETENTION_INTERVAL then interval = MIN_ATTACK_LOG_RETENTION_INTERVAL end
+    return state == "on", floor(days), floor(batch), floor(interval)
+end
+
 local function get_attack_log_flush_config()
     local sys = get_system_config("system") or {}
     local batch_size = tonumber(sys.attack_log_flush_batch_size) or DEFAULT_ATTACK_LOG_FLUSH_BATCH_SIZE
@@ -776,6 +793,16 @@ local function ensure_sensitive_discovery_week_archive_table(table_name)
     return mysql.query(create_sql)
 end
 
+local function get_ip_block_log_archive_range_table_name(range_start, range_end)
+    local attack_table = get_attack_log_archive_range_table_name(range_start, range_end)
+    if not attack_table then return nil end
+    return attack_table:gsub("^attack_log_archive_", "ip_block_log_archive_")
+end
+
+local function ensure_ip_block_log_week_archive_table(table_name)
+    return mysql.query(format("CREATE TABLE IF NOT EXISTS `%s` LIKE `ip_block_log`", table_name))
+end
+
 local function get_oldest_archive_request_time(days)
     local sql = format([[
         SELECT MIN(request_time) AS request_time
@@ -1014,6 +1041,16 @@ function _M.check_table(premature)
             if not res then
                 ngx.log(4, 'failed to create table ' .. name .. ' ', err)
             end
+        end
+    end
+
+    local notification_ok, notification_err = dingtalk_notification_store.ensure_schema()
+    if not notification_ok then
+        ngx.log(ngx.ERR, "failed to ensure dingtalk notification schema: ", notification_err or "nil")
+    else
+        local published, publish_err = dingtalk_notification_store.publish_policies()
+        if not published then
+            ngx.log(ngx.WARN, "failed to publish dingtalk throttle policies: ", publish_err or "nil")
         end
     end
 
@@ -2564,7 +2601,17 @@ function _M.list_cc_cluster_domains(filters)
             return av > bv
         end)
     end
-    return rows
+    local total = #rows
+    local page = floor(tonumber(filters.page) or 1)
+    local limit = floor(tonumber(filters.limit) or 20)
+    if page < 1 then page = 1 end
+    if limit < 1 then limit = 20 elseif limit > 100 then limit = 100 end
+    local offset = (page - 1) * limit
+    local result = {}
+    for index = offset + 1, math.min(offset + limit, total) do
+        result[#result + 1] = rows[index]
+    end
+    return result, nil, total
 end
 
 function _M.cleanup_offline_cluster_nodes()
@@ -3180,16 +3227,82 @@ function _M.archive_sensitive_discovery_once(force)
     }
 end
 
+function _M.archive_ip_block_log_once(force)
+    if not is_system_option_on("mysql") then
+        return { code = 0, msg = "mysql is off, skip", skipped = true }
+    end
+
+    local enabled, days, batch = get_block_log_retention_config()
+    if not force and not enabled then
+        return { code = 0, msg = "blockLogRetention is off, skip", skipped = true }
+    end
+
+    local range_res, range_err = mysql.query(format([[SELECT
+        DATE_FORMAT(DATE_SUB(DATE(MIN(start_time)), INTERVAL WEEKDAY(MIN(start_time)) DAY),'%%Y-%%m-%%d 00:00:00') AS week_start,
+        DATE_FORMAT(DATE_ADD(DATE_SUB(DATE(MIN(start_time)), INTERVAL WEEKDAY(MIN(start_time)) DAY),INTERVAL 7 DAY),'%%Y-%%m-%%d 00:00:00') AS week_end
+        FROM ip_block_log WHERE start_time<NOW()-INTERVAL %d DAY]], days))
+    if not range_res then return { code = 500, msg = "query ip block archive range failed", error = range_err } end
+    if not range_res[1] or not range_res[1].week_start or range_res[1].week_start == ngx.null
+        or not range_res[1].week_end or range_res[1].week_end == ngx.null then
+        return { code = 0, msg = "no archive rows", inserted = 0, deleted = 0, days = days, batch = batch }
+    end
+
+    local week_start, week_end = tostring(range_res[1].week_start), tostring(range_res[1].week_end)
+    local table_name = get_ip_block_log_archive_range_table_name(week_start, week_end)
+    if not table_name then return { code = 500, msg = "invalid ip block archive table name" } end
+    if not ensure_ip_block_log_week_archive_table(table_name) then
+        return { code = 500, msg = "ensure ip block archive table failed" }
+    end
+
+    local inserted = mysql.query(format([[INSERT IGNORE INTO `%s` SELECT * FROM ip_block_log
+        WHERE start_time<NOW()-INTERVAL %d DAY AND start_time>=%s AND start_time<%s ORDER BY id ASC LIMIT %d]],
+        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch))
+    if not inserted then return { code = 500, msg = "archive ip block log failed" } end
+    local deleted = mysql.query(format([[DELETE FROM ip_block_log WHERE id IN
+        (SELECT id FROM (SELECT source.id FROM ip_block_log source INNER JOIN `%s` archive ON archive.id=source.id
+        WHERE source.start_time<NOW()-INTERVAL %d DAY AND source.start_time>=%s AND source.start_time<%s
+        ORDER BY source.id ASC LIMIT %d) copied)]],
+        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch))
+    if not deleted then return { code = 500, msg = "delete archived ip block log failed" } end
+    return { code = 0, msg = "ok", inserted = inserted.affected_rows or 0, deleted = deleted.affected_rows or 0,
+        days = days, batch = batch, archive_table = table_name }
+end
+
+function _M.archive_dingtalk_failure_once(force)
+    if not is_system_option_on("mysql") then
+        return { code = 0, msg = "mysql is off, skip", skipped = true }
+    end
+
+    local enabled, days, batch = get_block_log_retention_config()
+    if not force and not enabled then
+        return { code = 0, msg = "blockLogRetention is off, skip", skipped = true }
+    end
+    return dingtalk_notification_store.archive_records(days, batch)
+end
+
 function _M.archive_security_records_once(force)
     local attack_log = _M.archive_attack_log_once(force)
     local sensitive_discovery = _M.archive_sensitive_discovery_once(force)
-    local failed = (attack_log and attack_log.code ~= 0) or (sensitive_discovery and sensitive_discovery.code ~= 0)
+    local failed = (attack_log and attack_log.code ~= 0)
+        or (sensitive_discovery and sensitive_discovery.code ~= 0)
 
     return {
         code = failed and 500 or 0,
         msg = failed and "security record archive failed" or "ok",
         attack_log = attack_log or {},
         sensitive_discovery = sensitive_discovery or {}
+    }
+end
+
+function _M.archive_blocking_records_once(force)
+    local ip_block_log = _M.archive_ip_block_log_once(force)
+    local dingtalk_notification = _M.archive_dingtalk_failure_once(force)
+    local failed = (ip_block_log and ip_block_log.code ~= 0) or (dingtalk_notification and dingtalk_notification.code ~= 0)
+    return {
+        code = failed and 500 or 0,
+        msg = failed and "blocking record archive failed" or "ok",
+        ip_block_log = ip_block_log or {},
+        dingtalk_notification = dingtalk_notification or {}
     }
 end
 
@@ -3213,6 +3326,21 @@ function _M.archive_security_records_auto()
 
     dict:set(ATTACK_LOG_RETENTION_LAST_RUN_KEY, now)
     _M.archive_security_records_once(false)
+end
+
+function _M.archive_blocking_records_auto()
+    local enabled, _, _, interval = get_block_log_retention_config()
+    if not enabled then return end
+    local dict = ngx.shared.dict_config
+    if not dict then
+        _M.archive_blocking_records_once(false)
+        return
+    end
+    local now = ngx.time()
+    local last_run = tonumber(dict:get(BLOCK_LOG_RETENTION_LAST_RUN_KEY)) or 0
+    if now - last_run < interval then return end
+    dict:set(BLOCK_LOG_RETENTION_LAST_RUN_KEY, now)
+    _M.archive_blocking_records_once(false)
 end
 
 -- Keep the previous function name for callers upgraded from older versions.

@@ -12,7 +12,7 @@ local cjson_encode = cjson.encode
 
 local _M = {}
 local DEFAULT_PAGE = 1
-local DEFAULT_LIMIT = 10
+local DEFAULT_LIMIT = 20
 local MAX_LIMIT = 100
 
 local SQL_COUNT_ATTACK_LOG = 'SELECT COUNT(*) AS total FROM attack_log '

@@ -134,6 +134,26 @@
 
 		<div class="layui-row layui-col-space10">
 			<div class="layui-col-md12">
+				<form class="layui-form" lay-filter="filter-form-block-log-retention">
+					<div class="layui-card" lay-filter="component-form-element">
+						<div class="layui-card-header">IP封禁日志与钉钉封禁记录归档清理（共享策略）</div>
+						<div class="layui-card-body">
+							<div class="layui-row layui-col-space10"><div class="layui-col-md10" style="padding-left:20px;">仅在 master 自动执行：IP封禁日志按封禁开始时间、钉钉封禁发送记录按发送时间使用同一保留天数、批次大小和执行间隔，分别按周归档后再清理主表。</div></div>
+							<div class="layui-row layui-col-space10">
+								<div class="layui-col-md2"><label class="layui-form-label" style="width:auto;">自动任务</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" title="ON|OFF" /></div></div>
+								<div class="layui-col-md3"><label class="layui-form-label" style="width:auto;">保留天数</label><div class="layui-input-group"><input type="text" name="days" lay-verify="required|number" autocomplete="off" class="layui-input" /><div class="layui-input-suffix" style="padding:9px 0 9px 10px;">天</div></div></div>
+								<div class="layui-col-md3"><label class="layui-form-label" style="width:auto;">批次大小</label><div class="layui-input-group"><input type="text" name="batch_size" lay-verify="required|number" autocomplete="off" class="layui-input" /><div class="layui-input-suffix" style="padding:9px 0 9px 10px;">条</div></div></div>
+								<div class="layui-col-md3"><label class="layui-form-label" style="width:auto;">执行间隔</label><div class="layui-input-group"><input type="text" name="interval_seconds" lay-verify="required|number" autocomplete="off" class="layui-input" /><div class="layui-input-suffix" style="padding:9px 0 9px 10px;">秒</div></div></div>
+							</div>
+							<div class="layui-row layui-col-space10"><div class="layui-col-md8"><div class="layui-input-block"><button type="submit" class="pear-btn pear-btn-primary btn-save" lay-submit lay-filter="filter-form-block-log-retention-save" style="display:none;">保存</button><button type="button" id="btn-block-log-retention-run" class="pear-btn">立即执行归档</button></div></div></div>
+						</div>
+					</div>
+				</form>
+			</div>
+		</div>
+
+		<div class="layui-row layui-col-space10">
+			<div class="layui-col-md12">
 				<form class="layui-form" lay-filter="filter-form-sort">
 					<div class="layui-card" lay-filter="component-form-element">
 						<div class="layui-card-header">规则引擎设置</div>
@@ -493,10 +513,11 @@
 
 				$(function() {
 					$.get('/system/get', {}, function(data) {
-						if (data && data.data) {
-							var system = data.data;
+					if (data && data.data) {
+						var system = data.data;
+						setFormValue($('form[lay-filter="filter-form-block-log-retention"]'), {state: 'on', days: 90, batch_size: 5000, interval_seconds: 300});
 
-							$.each(JSON.parse(data.data), function(key, value) {
+						$.each(JSON.parse(data.data), function(key, value) {
 								if (key == "redis") {
 									var $form = $('form[lay-filter="filter-form-redis"]');
 									setFormValue($form, value);
@@ -508,6 +529,9 @@
 									setFormValue($form, value);
 								} else if (key == "attackLogRetention") {
 									var $form = $('form[lay-filter="filter-form-attack-log-retention"]');
+									setFormValue($form, value);
+								} else if (key == "blockLogRetention") {
+									var $form = $('form[lay-filter="filter-form-block-log-retention"]');
 									setFormValue($form, value);
 								} else if (key == "rulesSort") {
 									var $form = $('form[lay-filter="filter-form-sort"]');
@@ -685,6 +709,19 @@
 					return false;
 				});
 
+				form.on('submit(filter-form-block-log-retention-save)', function(data) {
+					var field = data.field;
+					var elem = data.elem;
+					var $form = $(elem).parents('form');
+
+					getFormfiled($form, field);
+					update({blockLogRetention: JSON.stringify(field)}, function() {
+						$form.find('.btn-save').hide();
+					});
+
+					return false;
+				});
+
 				form.on('submit(filter-form-geoip-save)', function(data) {
 					var field = data.field;
 					var elem = data.elem;
@@ -752,6 +789,24 @@
 								msg += "，" + data.msg;
 							}
 							popup.success(msg);
+						} else {
+							popup.failure((data && data.msg) ? data.msg : '执行失败');
+						}
+					}, 'json');
+				});
+
+				$('#btn-block-log-retention-run').on('click', function() {
+					$.post('/system/blocking/archive/run', {}, function(data) {
+						if (data && (data.code == 0 || data.code == 200)) {
+							var detail = data.data || {};
+							var ipBlockLog = detail.ip_block_log || {};
+							var dingtalkNotification = detail.dingtalk_notification || {};
+							if (ipBlockLog.skipped && dingtalkNotification.skipped) {
+								popup.warning("已跳过执行：" + (data.msg || ipBlockLog.msg || "当前节点未启用 MySQL 或不满足执行条件"));
+								return;
+							}
+							popup.success("IP封禁日志：inserted=" + (ipBlockLog.inserted || 0) + ", deleted=" + (ipBlockLog.deleted || 0)
+								+ "；封禁通报记录：inserted=" + (dingtalkNotification.inserted || 0) + ", deleted=" + (dingtalkNotification.deleted || 0));
 						} else {
 							popup.failure((data && data.msg) ? data.msg : '执行失败');
 						}

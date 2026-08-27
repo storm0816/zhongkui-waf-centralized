@@ -1,6 +1,7 @@
 -- DingTalk notification module for OpenResty
 local config = require "config"
 local cjson = require "cjson.safe"
+local notification_store = require "dingtalk_notification_store"
 
 local _M = {}
 
@@ -61,12 +62,12 @@ end
 function _M.notify_ip_block(block_info)
     local cfg = config.get_system_config("dingtalk")
     if not cfg or cfg.state ~= "on" then
-        return
+        return false, "dingtalk disabled", "skipped"
     end
 
     local webhook = cfg.webhook
     if not webhook or webhook == "" then
-        return
+        return false, "dingtalk webhook is empty", "skipped"
     end
 
     local at_mobiles = cfg.at_mobiles or ""
@@ -102,15 +103,36 @@ function _M.notify_ip_block(block_info)
     })
     if not body then
         ngx.log(ngx.ERR, "[dingtalk] ip block json encode failed")
-        return
+        notification_store.record_failure(block_info, "json encode failed")
+        return false, "json encode failed", "failed"
+    end
+
+    local domain = notification_store.normalize_domain(block_info and block_info.server)
+    local policy = notification_store.get_policy(domain)
+    local reservation
+    if policy and tostring(policy.state) == "on" then
+        local should_send, reserved, throttle_err = notification_store.reserve_window(domain, policy.interval_minutes)
+        if not should_send then
+            ngx.log(ngx.NOTICE, "[dingtalk] ip block notification throttled, domain=", domain)
+            return true, nil, "throttled"
+        end
+        reservation = reserved
+        if throttle_err then
+            ngx.log(ngx.WARN, "[dingtalk] throttle unavailable, fail open, domain=", domain, " err=", throttle_err)
+        end
     end
 
     ngx.log(ngx.NOTICE, "[dingtalk] sending ip block notification")
     local ok, err = send_request(webhook, body)
     if ok then
         ngx.log(ngx.NOTICE, "[dingtalk] ip block notification sent successfully")
+        notification_store.record_success(block_info)
+        return true, nil, "sent"
     else
+        notification_store.release_window(reservation)
+        notification_store.record_failure(block_info, err)
         ngx.log(ngx.ERR, "[dingtalk] ip block notification failed: ", err)
+        return false, err, "failed"
     end
 end
 

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>封禁通报</title>
+    <link href="../component/pear/css/pear.css" rel="stylesheet">
+    <style>
+        .query-bar .layui-inline { margin: 0 10px 10px 0; }
+        .policy-note { color: #666; margin: 0 0 14px; line-height: 1.7; }
+        .failure-message { white-space: normal; word-break: break-word; }
+    </style>
+</head>
+<body class="pear-container">
+    <div class="layui-card">
+        <div class="layui-card-body">
+            <div class="layui-tab" lay-filter="dingtalk-notification-tab">
+                <ul class="layui-tab-title">
+                    <li class="layui-this">降频策略</li>
+                    <li>发送记录</li>
+                </ul>
+                <div class="layui-tab-content">
+                    <div class="layui-tab-item layui-show">
+                        <p class="policy-note">仅对精确域名生效。开启后，同一域名在设定时间内最多发送一次钉钉封禁通报；封禁、攻击日志与统计不受影响。发送失败不会进入降频窗口，并会记录到“发送异常”。</p>
+                        <form class="layui-form query-bar" lay-filter="throttle-policy-query">
+                            <div class="layui-inline"><input class="layui-input" name="domain" placeholder="查询域名" style="width:230px;"></div>
+                            <div class="layui-inline"><select name="state"><option value="">全部状态</option><option value="on">已开启</option><option value="off">已关闭</option></select></div>
+                            <div class="layui-inline"><select name="result"><option value="">最近结果全部</option><option value="success">最近发送成功</option><option value="failure">最近发送失败</option></select></div>
+                            <div class="layui-inline"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="throttle-policy-search">查询</button><button type="button" class="pear-btn" id="throttle-policy-reset">重置</button><button type="button" class="pear-btn pear-btn-primary" id="throttle-policy-add">新增策略</button></div>
+                        </form>
+                        <table id="throttle-policy-table" lay-filter="throttle-policy-table"></table>
+                    </div>
+                    <div class="layui-tab-item">
+                        <p class="policy-note">记录实际调用钉钉接口的成功与失败结果。被降频跳过的通报不会记为成功；该记录与攻击事件、敏感数据发现共用归档保留天数、批次大小和执行间隔。</p>
+                        <form class="layui-form query-bar" lay-filter="dingtalk-failure-query">
+                            <div class="layui-inline"><input class="layui-input" name="domain" placeholder="查询域名" style="width:200px;"></div>
+                            <div class="layui-inline"><select name="sendStatus"><option value="">全部结果</option><option value="success">发送成功</option><option value="failure">发送失败</option></select></div>
+                            <div class="layui-inline"><input class="layui-input" name="keyword" placeholder="异常关键字" style="width:200px;"></div>
+                            <div class="layui-inline"><input class="layui-input" id="failure-start-time" name="startTime" placeholder="开始时间" style="width:180px;"></div>
+                            <div class="layui-inline"><input class="layui-input" id="failure-end-time" name="endTime" placeholder="结束时间" style="width:180px;"></div>
+                            <div class="layui-inline"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="dingtalk-failure-search">查询</button><button type="button" class="pear-btn" id="dingtalk-failure-reset">重置</button></div>
+                        </form>
+                        <table id="dingtalk-record-table" lay-filter="dingtalk-record-table"></table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/html" id="throttle-policy-toolbar">
+        <a class="layui-btn layui-btn-xs" lay-event="edit">修改</a>
+        <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="delete">删除</a>
+    </script>
+    <div id="throttle-policy-dialog" style="display:none;padding:20px 28px 0;">
+        <form class="layui-form" lay-filter="throttle-policy-form">
+            <div class="layui-form-item"><label class="layui-form-label">域名</label><div class="layui-input-block"><input name="domain" lay-verify="required" autocomplete="off" placeholder="例如 gw.com.cn，精确匹配" class="layui-input"></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">启用降频</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" lay-text="ON|OFF" checked></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">降频时间</label><div class="layui-input-block"><input name="interval_minutes" type="number" min="1" max="10080" lay-verify="required|number" value="10" class="layui-input"><div class="layui-form-mid layui-word-aux">分钟，范围 1 - 10080</div></div></div>
+            <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="throttle-policy-save">保存</button></div></div>
+        </form>
+    </div>
+
+    <script src="../component/layui/layui.js"></script>
+    <script src="../component/pear/pear.js"></script>
+    <script>
+    layui.use(['form', 'table', 'jquery', 'laydate', 'popup'], function () {
+        var form = layui.form, table = layui.table, $ = layui.$, laydate = layui.laydate, popup = layui.popup;
+        var dialogIndex = null;
+        function esc(value) { return $('<div>').text(value == null ? '' : String(value)).html(); }
+        function stateText(row) { return row.state === 'on' ? '<span class="layui-badge layui-bg-green">已开启</span>' : '<span class="layui-badge">已关闭</span>'; }
+        function resultText(row) {
+            if (row.last_result === 'success') return '<span class="layui-badge layui-bg-green">成功</span>';
+            if (row.last_result === 'failure') return '<span class="layui-badge layui-bg-red">失败</span>';
+            return '<span class="layui-badge layui-bg-gray">暂无</span>';
+        }
+        function reloadPolicies(where) { table.reloadData('throttle-policy-table', {where: where || {}, page: {curr: 1}}); }
+        function reloadRecords(where) { table.reloadData('dingtalk-record-table', {where: where || {}, page: {curr: 1}}); }
+        function openPolicy(row) {
+            form.val('throttle-policy-form', {domain: row ? row.domain : '', interval_minutes: row ? row.interval_minutes : 10, state: row && row.state === 'on'});
+            form.render();
+            dialogIndex = layer.open({type: 1, title: row ? '修改封禁通报降频策略' : '新增封禁通报降频策略', area: ['540px', '340px'], content: $('#throttle-policy-dialog')});
+        }
+
+        table.render({
+            id: 'throttle-policy-table', elem: '#throttle-policy-table', url: '/dingtalk-notification/policies', page: true, limit: 20, limits: [10, 20, 50, 100],
+            cols: [[
+                {field: 'domain', title: '域名', minWidth: 200},
+                {title: '降频状态', width: 105, templet: stateText},
+                {field: 'interval_minutes', title: '降频时间', width: 120, templet: function (d) { return esc(d.interval_minutes) + ' 分钟'; }},
+                {field: 'last_success_at', title: '最近成功', width: 170, templet: function(d){ return esc(d.last_success_at || '-'); }},
+                {title: '最近结果', width: 105, templet: resultText},
+                {field: 'last_failure_at', title: '最近失败', width: 170, templet: function(d){ return esc(d.last_failure_at || '-'); }},
+                {field: 'last_failure_reason', title: '最近失败原因', minWidth: 200, templet: function(d){ return '<div class="failure-message">' + esc(d.last_failure_reason || '-') + '</div>'; }},
+                {field: 'update_time', title: '更新时间', width: 170, templet: function(d){ return esc(d.update_time || '-'); }},
+                {title: '操作', toolbar: '#throttle-policy-toolbar', width: 120}
+            ]]
+        });
+        table.render({
+            id: 'dingtalk-record-table', elem: '#dingtalk-record-table', url: '/dingtalk-notification/records', page: true, limit: 20, limits: [10, 20, 50, 100],
+            cols: [[
+                {field: 'occurred_at', title: '发送时间', width: 170},
+                {field: 'domain', title: '域名', minWidth: 170, templet: function(d){ return esc(d.domain || '-'); }},
+                {field: 'send_status', title: '发送结果', width: 105, templet: function(d){ return d.send_status === 'success' ? '<span class="layui-badge layui-bg-green">成功</span>' : '<span class="layui-badge layui-bg-red">失败</span>'; }},
+                {field: 'ip', title: '封禁 IP', width: 150, templet: function(d){ return esc(d.ip || '-'); }},
+                {field: 'block_reason', title: '封禁原因', width: 130, templet: function(d){ return esc(d.block_reason || '-'); }},
+                {field: 'action', title: '处置动作', minWidth: 150, templet: function(d){ return esc(d.action || '-'); }},
+                {field: 'request_uri', title: '请求地址', minWidth: 190, templet: function(d){ return esc(d.request_uri || '-'); }},
+                {field: 'error_message', title: '失败原因', minWidth: 230, templet: function(d){ return '<div class="failure-message">' + esc(d.error_message || '-') + '</div>'; }}
+            ]]
+        });
+
+        laydate.render({elem: '#failure-start-time', type: 'datetime'});
+        laydate.render({elem: '#failure-end-time', type: 'datetime'});
+        $('#throttle-policy-add').on('click', function () { openPolicy(null); });
+        $('#throttle-policy-reset').on('click', function () { form.val('throttle-policy-query', {domain: '', state: '', result: ''}); form.render(); reloadPolicies({}); });
+        $('#dingtalk-failure-reset').on('click', function () { form.val('dingtalk-failure-query', {domain: '', sendStatus: '', keyword: '', startTime: '', endTime: ''}); form.render(); reloadRecords({}); });
+        form.on('submit(throttle-policy-search)', function (data) { reloadPolicies(data.field); return false; });
+        form.on('submit(dingtalk-failure-search)', function (data) { reloadRecords(data.field); return false; });
+        form.on('submit(throttle-policy-save)', function (data) {
+            data.field.state = data.field.state ? 'on' : 'off';
+            $.post('/dingtalk-notification/policy/save', data.field, function (res) {
+                if (res && res.code === 0) { layer.close(dialogIndex); reloadPolicies(); popup.success('保存成功'); }
+                else { popup.failure((res && res.msg) || '保存失败'); }
+            }, 'json');
+            return false;
+        });
+        table.on('tool(throttle-policy-table)', function (obj) {
+            if (obj.event === 'edit') { openPolicy(obj.data); return; }
+            if (obj.event === 'delete') {
+                layer.confirm('确认删除域名 ' + esc(obj.data.domain) + ' 的降频策略？删除后将立即恢复正常发送。', {icon: 3, title: '删除策略'}, function (index) {
+                    $.post('/dingtalk-notification/policy/delete', {domain: obj.data.domain}, function (res) {
+                        if (res && res.code === 0) { layer.close(index); reloadPolicies(); popup.success('删除成功'); }
+                        else { popup.failure((res && res.msg) || '删除失败'); }
+                    }, 'json');
+                });
+            }
+        });
+    });
+    </script>
+</body>
+</html>

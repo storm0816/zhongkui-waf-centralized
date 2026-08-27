@@ -493,6 +493,7 @@ if is_global_option_on("waf") then
                 start_master_timer("waf_traffic_stats_to_mysql", 120, 110, 110, sql.write_waf_traffic_stats_redis_to_mysql)
                 start_master_timer("replay_retry_markers", 120, 115, 110, sql.replay_retry_markers)
                 start_master_timer("security_record_retention_auto", 60, 20, 50, sql.archive_security_records_auto)
+                start_master_timer("blocking_record_retention_auto", 60, 30, 50, sql.archive_blocking_records_auto)
                 -- 节点心跳每 30s 上报一次，这里也按 30s 落库，避免 120s 边界抖动导致页面误判离线。
                 start_master_timer("cluster_nodes_to_mysql", 30, 5, 25, sql.write_cluster_nodes_to_mysql)
                 start_master_timer("program_release_reconcile", 30, 12, 25, program_release_store.reconcile_deployments)

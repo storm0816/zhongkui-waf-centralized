@@ -181,6 +181,17 @@ function _M.do_request()
             response.msg = result and (result.msg or result.error) or "执行失败"
             response.data = result or {}
         end
+    elseif uri == "/system/blocking/archive/run" and ngx.req.get_method() == "POST" then
+        local result = sql.archive_blocking_records_once(true)
+        if result and result.code == 0 then
+            response.code = 0
+            response.data = result
+            response.msg = "执行成功"
+        else
+            response.code = 500
+            response.msg = result and (result.msg or result.error) or "执行失败"
+            response.data = result or {}
+        end
     end
 
     -- 如果没有错误且需要重载配置文件则重载配置文件

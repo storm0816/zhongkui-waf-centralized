@@ -47,6 +47,13 @@
 				"icon": "layui-icon layui-icon-website",
 				"type": 1,
 				"href": "view/cluster-domains.html"
+			},
+			{
+				"id": 26,
+				"title": "封禁通报",
+				"icon": "pear-icon pear-icon-notification",
+				"type": 1,
+				"href": "view/dingtalk-notification.html"
 			}
 		]
 	},

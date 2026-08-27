@@ -3,7 +3,7 @@
 
 local _M = {}
 
-_M.APP_VERSION = '2.1.8'
+_M.APP_VERSION = '2.1.9'
 
 _M.KEY_HTTP_4XX = 'http4x'
 _M.KEY_HTTP_5XX = 'http5x'
@@ -32,6 +32,8 @@ _M.KEY_REDIS_CLUSTER_RULES_PUBLISH_LOCK = 'waf:cluster:rules:publish:lock'
 _M.KEY_REDIS_IP_WHITELIST = 'waf:rules:ip_whitelist'
 _M.KEY_REDIS_IP_BLACKLIST = 'waf:rules:ip_blacklist'
 _M.KEY_REDIS_CC_DOMAIN_POLICY = 'waf:cc:domain:policy'
+_M.KEY_REDIS_DINGTALK_THROTTLE_POLICY = 'waf:dingtalk:block:throttle:policy'
+_M.KEY_REDIS_DINGTALK_THROTTLE_PREFIX = 'waf:dingtalk:block:throttle:window:'
 _M.KEY_REDIS_PROGRAM_RELEASE_PREFIX = 'waf:program:release:'
 _M.KEY_REDIS_GEOIP_RELEASE_PREFIX = 'waf:geoip:release:'
 _M.KEY_REDIS_GEOIP_UPDATE_TASK_PREFIX = 'waf:geoip:update:task:'

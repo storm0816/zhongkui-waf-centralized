@@ -2,7 +2,13 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 2.1.8`
+当前版本：`Version 2.1.9`
+
+### 2.1.9 发布说明
+
+- 新增 IP 封禁日志与钉钉封禁通报记录的独立归档策略；两类记录共用保留天数、批次大小和执行间隔，仅由 Master 自动执行。
+- IP 封禁日志按 `start_time`、钉钉发送记录按 `occurred_at` 分周归档；确认归档写入成功后再清理源表。
+- 系统设置新增独立的手动归档入口，可分别查看 IP 封禁日志和钉钉封禁通报记录的归档数量。
 
 ### 2.1.8 发布说明
 
@@ -101,16 +107,16 @@
 推荐直接使用安装命令：
 
 ```bash
-tar -xzf zhongkui-waf-node-2.1.8.tar.gz
-cd zhongkui-waf-node-2.1.8
+tar -xzf zhongkui-waf-node-2.1.9.tar.gz
+cd zhongkui-waf-node-2.1.9
 sudo ./install.sh --role node
 ```
 
 master 节点：
 
 ```bash
-tar -xzf zhongkui-waf-master-2.1.8.tar.gz
-cd zhongkui-waf-master-2.1.8
+tar -xzf zhongkui-waf-master-2.1.9.tar.gz
+cd zhongkui-waf-master-2.1.9
 sudo ./install.sh --role master
 ```
 
@@ -128,7 +134,7 @@ sudo ./upgrade.sh --role master
 “集群与大屏 → 发布中心”完成：
 
 1. 先把新版本代码升级到 Master 并完成验证。
-2. 在“程序版本”创建当前版本的不可变快照，例如 `2.1.8`。已存在的版本快照不能覆盖。
+2. 在“程序版本”创建当前版本的不可变快照，例如 `2.1.9`。已存在的版本快照不能覆盖。
 3. 点击“发布”，选择参与范围：`发布所选`只处理勾选的 Node；`发布全部`处理列表内全部版本不同的在线 Node。
 4. 选择发布方式：关闭灰度时按批次大小直接发布；开启灰度时，先发布指定的 1 台 Node，成功后再按批次大小和批次间隔继续其余节点。
 5. 在任务列表确认每台 Node 的下载、校验、重载和版本上报均成功。
@@ -169,7 +175,7 @@ Windows 构建机可执行：
 powershell -ExecutionPolicy Bypass -File .\scripts\build_release_windows.ps1
 ```
 
-安装包会生成到 `dist/`：`zhongkui-waf-master-2.1.8.tar.gz` 与 `zhongkui-waf-node-2.1.8.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Node 包不包含 LDAP 配置。Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据；`scripts/`、Git 和私有环境文件不会进入压缩包。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+安装包会生成到 `dist/`：`zhongkui-waf-master-2.1.9.tar.gz` 与 `zhongkui-waf-node-2.1.9.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Node 包不包含 LDAP 配置。Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据；`scripts/`、Git 和私有环境文件不会进入压缩包。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 
 常用参数：
 
