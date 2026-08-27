@@ -2998,7 +2998,8 @@ function _M.archive_attack_log_once(force)
         ngx.log(ngx.ERR, "failed to query attack_log archive range: ", range_err)
         return { code = 500, msg = "query archive range failed", error = range_err }
     end
-    if not range_res[1] or not range_res[1].week_start or not range_res[1].week_end then
+    if not range_res[1] or not range_res[1].week_start or range_res[1].week_start == ngx.null
+        or not range_res[1].week_end or range_res[1].week_end == ngx.null then
         return {
             code = 0,
             msg = "no archive rows",
@@ -3103,7 +3104,8 @@ function _M.archive_sensitive_discovery_once(force)
         ngx.log(ngx.ERR, "failed to query sensitive discovery archive range: ", range_err)
         return { code = 500, msg = "query sensitive archive range failed", error = range_err }
     end
-    if not range_res[1] or not range_res[1].week_start or not range_res[1].week_end then
+    if not range_res[1] or not range_res[1].week_start or range_res[1].week_start == ngx.null
+        or not range_res[1].week_end or range_res[1].week_end == ngx.null then
         return {
             code = 0,
             msg = "no archive rows",
