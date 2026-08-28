@@ -6,6 +6,7 @@ local config = require "config"
 local redis_cli = require "redis_cli"
 local isarray = require "table.isarray"
 local sql = require "sql"
+local dingtalk = require "dingtalk"
 local utils = require "utils"
 local constants = require "constants"
 local file_utils = require "file_utils"
@@ -494,6 +495,7 @@ if is_global_option_on("waf") then
                 start_master_timer("replay_retry_markers", 120, 115, 110, sql.replay_retry_markers)
                 start_master_timer("security_record_retention_auto", 60, 20, 50, sql.archive_security_records_auto)
                 start_master_timer("blocking_record_retention_auto", 60, 30, 50, sql.archive_blocking_records_auto)
+                start_master_timer("dingtalk_block_summary", 60, 40, 50, dingtalk.flush_block_summaries)
                 -- 节点心跳每 30s 上报一次，这里也按 30s 落库，避免 120s 边界抖动导致页面误判离线。
                 start_master_timer("cluster_nodes_to_mysql", 30, 5, 25, sql.write_cluster_nodes_to_mysql)
                 start_master_timer("program_release_reconcile", 30, 12, 25, program_release_store.reconcile_deployments)
@@ -506,6 +508,7 @@ if is_global_option_on("waf") then
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_SENSITIVE_DISCOVERY)
+                utils.start_timer_every(60, dingtalk.flush_block_summaries)
             end
         end
 

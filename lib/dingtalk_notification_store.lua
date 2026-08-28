@@ -2,6 +2,7 @@ local cjson = require "cjson.safe"
 local mysql = require "mysql_cli"
 local redis_cli = require "redis_cli"
 local constants = require "constants"
+local config = require "config"
 
 local _M = {}
 
@@ -48,6 +49,28 @@ CREATE TABLE IF NOT EXISTS waf_dingtalk_failure_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ]]
 
+local CREATE_SUMMARY_TABLE = [[
+CREATE TABLE IF NOT EXISTS waf_dingtalk_summary_pending (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    domain VARCHAR(255) NOT NULL,
+    interval_minutes INT UNSIGNED NOT NULL,
+    bucket_epoch BIGINT UNSIGNED NOT NULL,
+    block_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    retry_at DATETIME NULL,
+    attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+    last_error VARCHAR(1024) NULL,
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_dingtalk_summary_bucket (domain, interval_minutes, bucket_epoch),
+    KEY idx_dingtalk_summary_due (retry_at, bucket_epoch)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+]]
+
+local LOCAL_POLICY_CACHE_KEY = "dingtalk:summary:local:policies"
+local SUMMARY_RETRY_SECONDS = 300
+local SUMMARY_RETRY_TTL_SECONDS = 604800
+
 function _M.normalize_domain(value)
     local domain = lower(tostring(value or ""))
     domain = domain:gsub("^%s+", ""):gsub("%s+$", "")
@@ -63,15 +86,11 @@ local function valid_domain(domain)
     return domain:match("^[a-z0-9][a-z0-9%.%-]*[a-z0-9]$") ~= nil
 end
 
-local function clear_window(domain)
-    local key = constants.KEY_REDIS_DINGTALK_THROTTLE_PREFIX .. ngx.md5(domain)
-    return redis_cli.del(key)
-end
-
 function _M.ensure_schema()
     if schema_ready then return true end
     if not mysql.query(CREATE_POLICY_TABLE) then return nil, "create throttle policy table failed" end
     if not mysql.query(CREATE_FAILURE_TABLE) then return nil, "create notification failure table failed" end
+    if not mysql.query(CREATE_SUMMARY_TABLE) then return nil, "create notification summary table failed" end
 
     -- The original table stored failures only. Keep its data and extend it into
     -- the unified delivery record table used by the management console.
@@ -103,13 +122,24 @@ function _M.publish_policies()
     end
     local encoded = cjson.encode(policies)
     if not encoded then return nil, "encode throttle policies failed" end
-    return redis_cli.set(constants.KEY_REDIS_DINGTALK_THROTTLE_POLICY, encoded, -1)
+    if config.is_centralized_mode() then
+        return redis_cli.set(constants.KEY_REDIS_DINGTALK_THROTTLE_POLICY, encoded, -1)
+    end
+    local dict = ngx.shared and ngx.shared.dict_config
+    if not dict then return nil, "local policy cache unavailable" end
+    return dict:set(LOCAL_POLICY_CACHE_KEY, encoded)
 end
 
 function _M.get_policy(domain)
     domain = _M.normalize_domain(domain)
     if domain == "" then return nil end
-    local raw = redis_cli.get(constants.KEY_REDIS_DINGTALK_THROTTLE_POLICY)
+    local raw
+    if config.is_centralized_mode() then
+        raw = redis_cli.get(constants.KEY_REDIS_DINGTALK_THROTTLE_POLICY)
+    else
+        local dict = ngx.shared and ngx.shared.dict_config
+        raw = dict and dict:get(LOCAL_POLICY_CACHE_KEY) or nil
+    end
     if raw then
         local policies = cjson.decode(raw)
         if type(policies) == "table" then return policies[domain] end
@@ -119,23 +149,91 @@ function _M.get_policy(domain)
     return rows and rows[1] or nil
 end
 
-function _M.reserve_window(domain, interval_minutes)
+function _M.add_summary_block(domain, interval_minutes)
     domain = _M.normalize_domain(domain)
     local seconds = math.floor((tonumber(interval_minutes) or 0) * 60)
-    if domain == "" or seconds <= 0 then return true, nil, nil end
-    local token = tostring(ngx.worker.pid()) .. ":" .. tostring(ngx.now()) .. ":" .. tostring(math.random())
-    local key = constants.KEY_REDIS_DINGTALK_THROTTLE_PREFIX .. ngx.md5(domain)
-    local acquired, err = redis_cli.acquire_lock(key, token, seconds)
-    if err then return true, nil, err end
-    if not acquired then return false, nil, nil end
-    return true, { key = key, token = token }, nil
+    if domain == "" or seconds <= 0 then return nil, "invalid summary window" end
+    local bucket = math.floor(ngx.time() / seconds) * seconds
+    local key = constants.KEY_REDIS_DINGTALK_SUMMARY_PREFIX .. ngx.md5(domain) .. ":" .. seconds .. ":" .. bucket
+    local member = cjson.encode({domain=domain, interval_minutes=math.floor(seconds / 60), bucket=bucket})
+    if not member then return nil, "encode summary member failed" end
+    local count, err = redis_cli.increment_summary(key, constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING,
+        member, math.max(seconds * 3, SUMMARY_RETRY_TTL_SECONDS), bucket + seconds)
+    if not count then return nil, err end
+    return true, nil, bucket, member
 end
 
-function _M.release_window(reservation)
-    if reservation and reservation.key and reservation.token then
-        return redis_cli.release_lock(reservation.key, reservation.token)
+function _M.list_due_summary_blocks(now, limit)
+    local members, err = redis_cli.list_due_summaries(constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING,
+        now, limit or 200)
+    if not members then return nil, err end
+    local rows = {}
+    for _, member in ipairs(members) do
+        local item = cjson.decode(member)
+        if type(item) == "table" then
+            item.member = member
+            item.interval_minutes = tonumber(item.interval_minutes) or 0
+            item.bucket = tonumber(item.bucket) or 0
+            item.domain = _M.normalize_domain(item.domain)
+            item.key = constants.KEY_REDIS_DINGTALK_SUMMARY_PREFIX .. ngx.md5(item.domain)
+                .. ":" .. (item.interval_minutes * 60) .. ":" .. item.bucket
+            local value, get_err = redis_cli.get(item.key)
+            if get_err then return nil, get_err end
+            item.block_count = tonumber(value) or 0
+            rows[#rows + 1] = item
+        else
+            redis_cli.remove_pending_summary(constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING, member)
+        end
     end
-    return true
+    return rows
+end
+
+function _M.complete_summary_block(item)
+    return redis_cli.complete_summary(item.key, constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING, item.member)
+end
+
+function _M.add_local_summary_block(domain, interval_minutes)
+    domain = _M.normalize_domain(domain)
+    local seconds = math.floor((tonumber(interval_minutes) or 0) * 60)
+    if domain == "" or seconds <= 0 then return nil, "invalid summary window" end
+    local bucket = math.floor(ngx.time() / seconds) * seconds
+    local ok, err = _M.ensure_schema()
+    if not ok then return nil, err end
+    local sql = format([[INSERT INTO waf_dingtalk_summary_pending
+        (domain,interval_minutes,bucket_epoch,block_count) VALUES (%s,%d,%d,1)
+        ON DUPLICATE KEY UPDATE block_count=block_count+1,update_time=NOW()]],
+        quote(domain), math.floor(seconds / 60), bucket)
+    if not mysql.query(sql) then return nil, "save local summary failed" end
+    return true, nil, bucket
+end
+
+function _M.list_due_local_summary_blocks(now, limit)
+    local ok, err = _M.ensure_schema()
+    if not ok then return nil, err end
+    return mysql.query(format([[SELECT id,domain,interval_minutes,bucket_epoch AS bucket,block_count
+        FROM waf_dingtalk_summary_pending
+        WHERE bucket_epoch+(interval_minutes*60)<=%d AND (retry_at IS NULL OR retry_at<=NOW())
+        ORDER BY bucket_epoch ASC LIMIT %d]], now, limit or 200))
+end
+
+function _M.complete_local_summary_block(item)
+    return mysql.query("DELETE FROM waf_dingtalk_summary_pending WHERE id=" .. tonumber(item.id))
+end
+
+function _M.retry_summary_block(item, err)
+    if config.is_centralized_mode() then
+        return redis_cli.reschedule_summary(item.key, constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING,
+            item.member, ngx.time() + SUMMARY_RETRY_SECONDS, SUMMARY_RETRY_TTL_SECONDS)
+    end
+    return mysql.query("UPDATE waf_dingtalk_summary_pending SET attempt_count=attempt_count+1,retry_at="
+        .. "DATE_ADD(NOW(),INTERVAL " .. SUMMARY_RETRY_SECONDS .. " SECOND),last_error="
+        .. quote(tostring(err or "unknown error")) .. " WHERE id=" .. tonumber(item.id))
+end
+
+function _M.list_enabled_policies()
+    local ok, err = _M.ensure_schema()
+    if not ok then return nil, err end
+    return mysql.query("SELECT domain,interval_minutes FROM waf_dingtalk_throttle_policy WHERE state='on'")
 end
 
 local function record_delivery(block_info, send_status, err)
@@ -143,6 +241,15 @@ local function record_delivery(block_info, send_status, err)
     block_info = block_info or {}
     local domain = _M.normalize_domain(block_info.server)
     local message = tostring(err or "")
+    if tostring(block_info.attack_type or "") == "block_summary" and send_status == "failure" then
+        local existing = mysql.query("SELECT id FROM waf_dingtalk_failure_log WHERE domain=" .. quote(domain)
+            .. " AND send_status='failure' AND block_reason='block_summary' AND request_uri="
+            .. quote(tostring(block_info.uri or "")) .. " LIMIT 1")
+        if existing and existing[1] then
+            return mysql.query("UPDATE waf_dingtalk_failure_log SET error_message=" .. quote(message)
+                .. ",occurred_at=NOW() WHERE id=" .. tonumber(existing[1].id))
+        end
+    end
     local sql = format([[INSERT INTO waf_dingtalk_failure_log
         (domain,ip,block_reason,action,request_uri,send_status,error_message,occurred_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())]],
@@ -169,6 +276,14 @@ function _M.record_failure(block_info, err)
     return record_delivery(block_info, "failure", err or "unknown error")
 end
 
+function _M.was_summary_sent(domain, event_key)
+    domain = _M.normalize_domain(domain)
+    local rows = mysql.query("SELECT id FROM waf_dingtalk_failure_log WHERE domain=" .. quote(domain)
+        .. " AND send_status='success' AND block_reason='block_summary' AND request_uri="
+        .. quote(tostring(event_key or "")) .. " LIMIT 1")
+    return rows and rows[1] ~= nil
+end
+
 function _M.save_policy(values)
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
@@ -181,7 +296,6 @@ function _M.save_policy(values)
         VALUES (%s,%s,%d) ON DUPLICATE KEY UPDATE state=VALUES(state),
         interval_minutes=VALUES(interval_minutes),update_time=NOW()]], quote(domain), quote(state), interval)
     if not mysql.query(sql) then return nil, "保存降频策略失败" end
-    clear_window(domain)
     local published, publish_err = _M.publish_policies()
     if not published then return nil, publish_err or "发布降频策略失败" end
     return true
@@ -195,7 +309,6 @@ function _M.delete_policy(domain)
     if not mysql.query("DELETE FROM waf_dingtalk_throttle_policy WHERE domain=" .. quote(domain)) then
         return nil, "删除降频策略失败"
     end
-    clear_window(domain)
     return _M.publish_policies()
 end
 

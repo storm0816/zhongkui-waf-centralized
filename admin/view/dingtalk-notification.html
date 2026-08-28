@@ -21,7 +21,7 @@
                 </ul>
                 <div class="layui-tab-content">
                     <div class="layui-tab-item layui-show">
-                        <p class="policy-note">仅对精确域名生效。开启后，同一域名在设定时间内最多发送一次钉钉封禁通报；封禁、攻击日志与统计不受影响。发送失败不会进入降频窗口，并会记录到“发送异常”。</p>
+                        <p class="policy-note">仅对精确域名生效。开启后，封禁仍会正常执行和记录；系统按设定周期发送一条域名封禁汇总通报。集群模式由 Master 汇总，单机模式由本机汇总。</p>
                         <form class="layui-form query-bar" lay-filter="throttle-policy-query">
                             <div class="layui-inline"><input class="layui-input" name="domain" placeholder="查询域名" style="width:230px;"></div>
                             <div class="layui-inline"><select name="state"><option value="">全部状态</option><option value="on">已开启</option><option value="off">已关闭</option></select></div>
@@ -54,8 +54,8 @@
     <div id="throttle-policy-dialog" style="display:none;padding:20px 28px 0;">
         <form class="layui-form" lay-filter="throttle-policy-form">
             <div class="layui-form-item"><label class="layui-form-label">域名</label><div class="layui-input-block"><input name="domain" lay-verify="required" autocomplete="off" placeholder="例如 gw.com.cn，精确匹配" class="layui-input"></div></div>
-            <div class="layui-form-item"><label class="layui-form-label">启用降频</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" lay-text="ON|OFF" checked></div></div>
-            <div class="layui-form-item"><label class="layui-form-label">降频时间</label><div class="layui-input-block"><input name="interval_minutes" type="number" min="1" max="10080" lay-verify="required|number" value="10" class="layui-input"><div class="layui-form-mid layui-word-aux">分钟，范围 1 - 10080</div></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">启用汇总</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" lay-text="ON|OFF" checked></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">汇总周期</label><div class="layui-input-block"><input name="interval_minutes" type="number" min="1" max="10080" lay-verify="required|number" value="10" class="layui-input"><div class="layui-form-mid layui-word-aux">分钟，范围 1 - 10080</div></div></div>
             <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="throttle-policy-save">保存</button></div></div>
         </form>
     </div>
@@ -85,8 +85,8 @@
             id: 'throttle-policy-table', elem: '#throttle-policy-table', url: '/dingtalk-notification/policies', page: true, limit: 20, limits: [10, 20, 50, 100],
             cols: [[
                 {field: 'domain', title: '域名', minWidth: 200},
-                {title: '降频状态', width: 105, templet: stateText},
-                {field: 'interval_minutes', title: '降频时间', width: 120, templet: function (d) { return esc(d.interval_minutes) + ' 分钟'; }},
+                {title: '汇总状态', width: 105, templet: stateText},
+                {field: 'interval_minutes', title: '汇总周期', width: 120, templet: function (d) { return esc(d.interval_minutes) + ' 分钟'; }},
                 {field: 'last_success_at', title: '最近成功', width: 170, templet: function(d){ return esc(d.last_success_at || '-'); }},
                 {title: '最近结果', width: 105, templet: resultText},
                 {field: 'last_failure_at', title: '最近失败', width: 170, templet: function(d){ return esc(d.last_failure_at || '-'); }},

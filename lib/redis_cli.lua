@@ -676,6 +676,66 @@ function _M.acquire_lock(key, token, ttl)
     return res == "OK", err
 end
 
+function _M.increment_summary(key, pending_key, member, expire_seconds, due_at)
+    local red, err = _M.get_connection()
+    if not red then return nil, err end
+    local script = [[
+        local count = redis.call('incr', KEYS[1])
+        if count == 1 then redis.call('expire', KEYS[1], ARGV[1]) end
+        redis.call('zadd', KEYS[2], ARGV[2], ARGV[3])
+        return count
+    ]]
+    local res
+    res, err = red:eval(script, 2, key, pending_key, expire_seconds, due_at, member)
+    _M.close_connection(red)
+    return res, err
+end
+
+function _M.list_due_summaries(pending_key, due_at, limit)
+    local red, err = _M.get_connection()
+    if not red then return nil, err end
+    local res
+    res, err = red:zrangebyscore(pending_key, "-inf", due_at, "LIMIT", 0, limit or 200)
+    _M.close_connection(red)
+    return res, err
+end
+
+function _M.reschedule_summary(key, pending_key, member, due_at, expire_seconds)
+    local red, err = _M.get_connection()
+    if not red then return nil, err end
+    local res
+    local script = [[
+        if redis.call('exists', KEYS[1]) == 0 then
+            redis.call('zrem', KEYS[2], ARGV[1])
+            return 0
+        end
+        redis.call('expire', KEYS[1], ARGV[3])
+        return redis.call('zadd', KEYS[2], ARGV[2], ARGV[1])
+    ]]
+    res, err = red:eval(script, 2, key, pending_key, member, due_at, expire_seconds)
+    _M.close_connection(red)
+    return res, err
+end
+
+function _M.remove_pending_summary(pending_key, member)
+    local red, err = _M.get_connection()
+    if not red then return nil, err end
+    local res
+    res, err = red:zrem(pending_key, member)
+    _M.close_connection(red)
+    return res, err
+end
+
+function _M.complete_summary(key, pending_key, member)
+    local red, err = _M.get_connection()
+    if not red then return nil, err end
+    local res
+    res, err = red:eval("redis.call('del',KEYS[1]); return redis.call('zrem',KEYS[2],ARGV[1])", 2,
+        key, pending_key, member)
+    _M.close_connection(red)
+    return res, err
+end
+
 function _M.release_lock(key, token)
     local red, err = _M.get_connection()
     local res = nil
