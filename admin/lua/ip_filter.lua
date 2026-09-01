@@ -260,8 +260,6 @@ local function validate_domain_policy(args)
     local comment = trim(tostring(args.comment or ""))
     local state = tostring(args.state or "on") == "off" and "off" or "on"
     if not valid_domain(domain) then return nil, "域名格式错误，仅支持精确域名" end
-    local _, domains = configured_domains()
-    if not domains[domain] then return nil, "该域名不在防护站点中" end
     if kind == "region" then
         value = value:upper()
         if not value:match("^[A-Z][A-Z]$") then return nil, "国家/地区代码格式错误" end

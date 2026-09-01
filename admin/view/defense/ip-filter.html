@@ -7,24 +7,13 @@
 		<link href="../../component/pear/css/pear.css" rel="stylesheet">
 	</head>
 	<body class="pear-container">
-		<form class="layui-form" lay-filter="filter-form-sites">
-			<div class="layui-row layui-col-space10">
-				<div class="layui-col-md12">
-					<div class="layui-card">
-						<div class="layui-card-body layui-row">
-							<div class="layui-col-md6">
-								<div class="layui-input-inline">
-									<select name="site" id="site" lay-filter="filter-site">
-										<option value="0">全局设置</option>
-									</select>
-								</div>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-		</form>
-		<div class="layui-row layui-col-space10">
+		<div class="layui-tab layui-tab-brief" lay-filter="filter-ip-scope-tab">
+			<ul class="layui-tab-title">
+				<li class="layui-this" lay-id="global">全局黑白名单</li>
+				<li lay-id="domain">子域名黑白名单</li>
+			</ul>
+		</div>
+		<div class="layui-row layui-col-space10" id="id-global-ip-card">
 			<div class="layui-col-md12">
 				<div class="layui-card">
 					<div class="layui-card-header">IP黑白名单</div>
@@ -57,7 +46,7 @@
 				<div class="layui-card">
 					<div class="layui-card-header">域名子黑白名单</div>
 					<div class="layui-card-body">
-						<div class="layui-text" style="margin-bottom:12px;color:#666;">子规则仅追加到全局规则，不会覆盖或关闭全局黑白名单，并受当前站点白名单/黑名单总开关控制。地域规则依赖各 Node 已发布且校验一致的 GeoIP 数据。</div>
+						<div class="layui-text" style="margin-bottom:12px;color:#666;">按精确域名独立维护，不需要配置端口、SSL 或源站。子规则追加到全局规则，不覆盖全局名单；地域子黑名单依赖各 Node 已发布且校验一致的 GeoIP 数据。</div>
 						<div class="layui-form layui-row layui-col-space10" lay-filter="filter-domain-search" style="margin-bottom:10px;">
 							<div class="layui-col-md3"><input class="layui-input" id="id-domain-keyword" placeholder="查询精确域名"></div>
 							<div class="layui-col-md2"><select id="id-domain-type"><option value="">全部类型</option><option value="whitelist">子白名单</option><option value="blacklist">子黑名单</option><option value="region">地域子黑名单</option></select></div>
@@ -69,7 +58,7 @@
 				</div>
 			</div>
 		</div>
-		<div class="layui-row layui-col-space10 layui-form" lay-filter="filter-form-geoip">
+		<div class="layui-row layui-col-space10 layui-form" id="id-global-geoip-card" lay-filter="filter-form-geoip">
 			<div class="layui-col-md12">
 				<div class="layui-card">
 					<div class="layui-card-header" id="id-geoip-title">地域级IP黑名单</div>
@@ -107,7 +96,7 @@
 
 		<form class="layui-form" style="background:#fff;padding:18px 24px;display:none;" lay-filter="filter-form-domain-policy" id="id-form-domain-policy">
 			<input type="hidden" name="id">
-			<div class="layui-form-item"><label class="layui-form-label">精确域名</label><div class="layui-input-block"><select name="domain" id="id-policy-domain" lay-verify="required"></select></div></div>
+			<div class="layui-form-item"><label class="layui-form-label">精确域名</label><div class="layui-input-block"><input class="layui-input" name="domain" lay-verify="required" maxlength="253" placeholder="例如 api.gw.com.cn，不需要配置端口或源站"></div></div>
 			<div class="layui-form-item"><label class="layui-form-label">规则类型</label><div class="layui-input-block"><select name="type" id="id-policy-type" lay-filter="filter-policy-type" lay-verify="required"><option value="whitelist">子白名单</option><option value="blacklist">子黑名单</option><option value="region">地域子黑名单</option></select></div></div>
 			<div class="layui-form-item" id="id-policy-ip-row"><label class="layui-form-label">IP / 网段</label><div class="layui-input-block"><input class="layui-input" id="id-policy-ip" placeholder="例如 203.0.113.10 或 203.0.113.0/24"></div></div>
 			<div class="layui-form-item" id="id-policy-region-row" style="display:none;"><label class="layui-form-label">国家/地区</label><div class="layui-input-block"><select id="id-policy-region"></select></div></div>
@@ -143,7 +132,6 @@
 
 				var currentTabId;
 				var disallowArray;
-				var siteDomainMap = {};
 
 				function escapeHtml(value) {
 					return String(value || '')
@@ -199,28 +187,14 @@
 					return lines.join('\n');
 				}
 
-				function selectedSiteDomains() {
-					return siteDomainMap[String($('#site').val())] || [];
-				}
-
-				function fillPolicyDomains(selected) {
-					var html = '';
-					$.each(selectedSiteDomains(), function(_, domain) {
-						html += '<option value="' + escapeHtml(domain) + '"' + (domain === selected ? ' selected' : '') + '>' + escapeHtml(domain) + '</option>';
-					});
-					$('#id-policy-domain').html(html);
-					form.render('select', 'filter-form-domain-policy');
-				}
-
 				function togglePolicyValue(kind) {
 					$('#id-policy-ip-row').toggle(kind !== 'region');
 					$('#id-policy-region-row').toggle(kind === 'region');
 				}
 
 				function reloadDomainPolicies() {
-					if ($('#site').val() == '0') return;
 					table.reload('id-table-domain-policy', {
-						where: {siteId: $('#site').val(), domain: $.trim($('#id-domain-keyword').val() || ''), type: $('#id-domain-type').val(), state: $('#id-domain-state').val()},
+						where: {domain: $.trim($('#id-domain-keyword').val() || ''), type: $('#id-domain-type').val(), state: $('#id-domain-state').val()},
 						page: {curr: 1}
 					});
 				}
@@ -248,8 +222,7 @@
 
 				function openDomainPolicy(row) {
 					row = row || {type:'whitelist', state:'on'};
-					fillPolicyDomains(row.domain || selectedSiteDomains()[0] || '');
-					form.val('filter-form-domain-policy', {id:row.id || '', domain:row.domain || selectedSiteDomains()[0] || '', type:row.type || 'whitelist', comment:row.comment || '', state:(row.state || 'on') === 'on'});
+					form.val('filter-form-domain-policy', {id:row.id || '', domain:row.domain || '', type:row.type || 'whitelist', comment:row.comment || '', state:(row.state || 'on') === 'on'});
 					$('#id-policy-ip').val(row.type === 'region' ? '' : (row.value || ''));
 					$('#id-policy-region').val(row.type === 'region' ? (row.value || '') : '');
 					togglePolicyValue(row.type || 'whitelist');
@@ -257,23 +230,8 @@
 					layer.open({type:1,title:(row.id ? '编辑' : '新增') + '域名子规则',area:['680px','520px'],content:$('#id-form-domain-policy'),end:function(){$('#id-form-domain-policy').trigger('reset');}});
 				}
 
-				// 切换域名
-				form.on('select(filter-site)', function(data) {
-					if (data.value == 0) {
-						$('#id-div-iplist').show();
-						$('#id-domain-policy-card').hide();
-						$('#id-geoip-title').text('地域级IP黑名单');
-					} else {
-						$('#id-div-iplist').hide();
-						$('#id-domain-policy-card').show();
-						$('#id-geoip-title').text('站点级地域黑名单（兼容：应用该站点全部域名）');
-						reloadDomainPolicies();
-					}
-					getSiteConfig();
-				});
-
 				function getSiteConfig() {
-					$.get('/ip/filter/config/get', {siteId : $('#site').val()}, function(res) {
+					$.get('/ip/filter/config/get', {siteId : 0}, function(res) {
 						if (res && res.data) {
 							config = JSON.parse(res.data);
 
@@ -373,7 +331,7 @@
 										arr.push($(this).val());
 									});
 
-									var param = {siteId: $('#site').val(), countries: JSON.stringify(arr)}
+									var param = {siteId: 0, countries: JSON.stringify(arr)}
 									$.post('/ip/filter/rule/geo/update', param, function(data) {
 										if (data && data.code == 200) {
 											popup.success("已保存");
@@ -392,19 +350,15 @@
 
 				$(function() {
 					initCountries();
-
-					$.get('/sites/list', {}, function(data) {
-						if (data && data.data) {
-							$.each(data.data, function(key, site) {
-								var serverName = site.serverNames.join(',');
-								siteDomainMap[String(site.id)] = site.serverNames || [];
-								$('#site').append('<option value="' + site.id + '">' + serverName + '</option>');
-							});
-
-							form.render(null, 'filter-form-sites');
-							getSiteConfig();
-						}
-					}, "json");
+					getSiteConfig();
+					element.render('tab', 'filter-ip-scope-tab');
+					element.on('tab(filter-ip-scope-tab)', function() {
+						var scope = $(this).attr('lay-id');
+						var isDomain = scope === 'domain';
+						$('#id-global-ip-card, #id-global-geoip-card').toggle(!isDomain);
+						$('#id-domain-policy-card').toggle(isDomain);
+						if (isDomain) reloadDomainPolicies();
+					});
 
 					// 阻止回车触发表单提交
 					$('input').on('keydown', function (e) {
@@ -415,7 +369,7 @@
 					});
 				});
 
-				table.render({
+					table.render({
 					elem: '#id-table-iplist',
 					url: '/ip/filter/rule/list',
 					cols: [[ //标题栏
@@ -432,7 +386,7 @@
 					id: 'id-table-domain-policy',
 					elem: '#id-table-domain-policy',
 					url: '/ip/filter/domain/list',
-					where: {siteId: $('#site').val()},
+					where: {},
 					page: true,
 					limit: 20,
 					cols: [[
@@ -460,7 +414,6 @@
 
 				form.on('select(filter-policy-type)', function(data) { togglePolicyValue(data.value); });
 				$('#id-domain-add').on('click', function() {
-					if (!selectedSiteDomains().length) return popup.failure('当前站点没有可用域名');
 					openDomainPolicy();
 				});
 				$('#id-domain-search').on('click', reloadDomainPolicies);
@@ -543,7 +496,7 @@
 				form.on('switch(filter-ip-module-state)', function(obj) {
 					var name = this.name;
 					var state = this.checked ? 'on' : 'off';
-					var param = {siteId: $('#site').val(), state : state}
+					var param = {siteId: 0, state : state}
 					param[name] = name;
 					$.post('/ip/filter/config/state/update', param, function(data) {
 						if (data && data.code == 200) {

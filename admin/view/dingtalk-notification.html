@@ -56,6 +56,7 @@
             <div class="layui-form-item"><label class="layui-form-label">域名</label><div class="layui-input-block"><input name="domain" lay-verify="required" autocomplete="off" placeholder="例如 gw.com.cn，精确匹配" class="layui-input"></div></div>
             <div class="layui-form-item"><label class="layui-form-label">启用汇总</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" lay-text="ON|OFF" checked></div></div>
             <div class="layui-form-item"><label class="layui-form-label">汇总周期</label><div class="layui-input-block"><input name="interval_minutes" type="number" min="1" max="10080" lay-verify="required|number" value="10" class="layui-input"><div class="layui-form-mid layui-word-aux">分钟，范围 1 - 10080</div></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">发送时间</label><div class="layui-input-block"><input name="summary_time" type="time" value="00:00" class="layui-input"><div class="layui-form-mid layui-word-aux">统计窗口以此时间为边界；例如 1440 分钟设为 12:00，则每天中午 12 点发送汇总</div></div></div>
             <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="throttle-policy-save">保存</button></div></div>
         </form>
     </div>
@@ -76,9 +77,9 @@
         function reloadPolicies(where) { table.reloadData('throttle-policy-table', {where: where || {}, page: {curr: 1}}); }
         function reloadRecords(where) { table.reloadData('dingtalk-record-table', {where: where || {}, page: {curr: 1}}); }
         function openPolicy(row) {
-            form.val('throttle-policy-form', {domain: row ? row.domain : '', interval_minutes: row ? row.interval_minutes : 10, state: row && row.state === 'on'});
+            form.val('throttle-policy-form', {domain: row ? row.domain : '', interval_minutes: row ? row.interval_minutes : 10, summary_time: row ? (row.summary_time || '00:00') : '00:00', state: row && row.state === 'on'});
             form.render();
-            dialogIndex = layer.open({type: 1, title: row ? '修改封禁通报降频策略' : '新增封禁通报降频策略', area: ['540px', '340px'], content: $('#throttle-policy-dialog')});
+            dialogIndex = layer.open({type: 1, title: row ? '修改封禁通报降频策略' : '新增封禁通报降频策略', area: ['620px', '400px'], content: $('#throttle-policy-dialog')});
         }
 
         table.render({
@@ -87,6 +88,7 @@
                 {field: 'domain', title: '域名', minWidth: 200},
                 {title: '汇总状态', width: 105, templet: stateText},
                 {field: 'interval_minutes', title: '汇总周期', width: 120, templet: function (d) { return esc(d.interval_minutes) + ' 分钟'; }},
+                {field: 'summary_time', title: '发送时间', width: 120, templet: function (d) { return esc(d.summary_time || '00:00'); }},
                 {field: 'last_success_at', title: '最近成功', width: 170, templet: function(d){ return esc(d.last_success_at || '-'); }},
                 {title: '最近结果', width: 105, templet: resultText},
                 {field: 'last_failure_at', title: '最近失败', width: 170, templet: function(d){ return esc(d.last_failure_at || '-'); }},

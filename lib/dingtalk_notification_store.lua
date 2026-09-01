@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS waf_dingtalk_throttle_policy (
     domain VARCHAR(255) NOT NULL,
     state VARCHAR(16) NOT NULL DEFAULT 'on',
     interval_minutes INT UNSIGNED NOT NULL DEFAULT 10,
+    summary_time CHAR(5) NOT NULL DEFAULT '00:00',
     last_success_at DATETIME NULL,
     last_failure_at DATETIME NULL,
     last_failure_reason VARCHAR(1024) NULL,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS waf_dingtalk_summary_pending (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     domain VARCHAR(255) NOT NULL,
     interval_minutes INT UNSIGNED NOT NULL,
+    summary_time CHAR(5) NOT NULL DEFAULT '00:00',
     bucket_epoch BIGINT UNSIGNED NOT NULL,
     block_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
     retry_at DATETIME NULL,
@@ -70,6 +72,28 @@ CREATE TABLE IF NOT EXISTS waf_dingtalk_summary_pending (
 local LOCAL_POLICY_CACHE_KEY = "dingtalk:summary:local:policies"
 local SUMMARY_RETRY_SECONDS = 300
 local SUMMARY_RETRY_TTL_SECONDS = 604800
+
+local function normalize_summary_time(value)
+    local raw = tostring(value or "00:00")
+    if raw == "" then raw = "00:00" end
+    local hour, minute = raw:match("^(%d%d?):(%d%d)$")
+    hour, minute = tonumber(hour), tonumber(minute)
+    if not hour or not minute or hour > 23 or minute > 59 then return nil end
+    return format("%02d:%02d", hour, minute)
+end
+
+-- Anchor rolling windows to a local clock time. A 1440-minute policy with
+-- 12:00 therefore groups events from one noon to the next noon.
+local function summary_bucket(seconds, summary_time)
+    local normalized = normalize_summary_time(summary_time)
+    if not normalized then return nil end
+    local hour, minute = normalized:match("^(%d%d):(%d%d)$")
+    local now = ngx.time()
+    local today = os.date("*t", now)
+    local anchor = os.time({year=today.year, month=today.month, day=today.day,
+        hour=tonumber(hour), min=tonumber(minute), sec=0})
+    return math.floor((now - anchor) / seconds) * seconds + anchor, normalized
+end
 
 function _M.normalize_domain(value)
     local domain = lower(tostring(value or ""))
@@ -92,6 +116,22 @@ function _M.ensure_schema()
     if not mysql.query(CREATE_FAILURE_TABLE) then return nil, "create notification failure table failed" end
     if not mysql.query(CREATE_SUMMARY_TABLE) then return nil, "create notification summary table failed" end
 
+    local policy_time_column = mysql.query([[SELECT COUNT(*) AS total FROM information_schema.columns
+        WHERE table_schema=DATABASE() AND table_name='waf_dingtalk_throttle_policy' AND column_name='summary_time']])
+    if not policy_time_column or not policy_time_column[1] then return nil, "check throttle policy schema failed" end
+    if tonumber(policy_time_column[1].total) == 0
+        and not mysql.query("ALTER TABLE waf_dingtalk_throttle_policy ADD COLUMN summary_time CHAR(5) NOT NULL DEFAULT '00:00' AFTER interval_minutes") then
+        return nil, "upgrade throttle policy schema failed"
+    end
+
+    local pending_time_column = mysql.query([[SELECT COUNT(*) AS total FROM information_schema.columns
+        WHERE table_schema=DATABASE() AND table_name='waf_dingtalk_summary_pending' AND column_name='summary_time']])
+    if not pending_time_column or not pending_time_column[1] then return nil, "check summary pending schema failed" end
+    if tonumber(pending_time_column[1].total) == 0
+        and not mysql.query("ALTER TABLE waf_dingtalk_summary_pending ADD COLUMN summary_time CHAR(5) NOT NULL DEFAULT '00:00' AFTER interval_minutes") then
+        return nil, "upgrade summary pending schema failed"
+    end
+
     -- The original table stored failures only. Keep its data and extend it into
     -- the unified delivery record table used by the management console.
     local columns = mysql.query([[SELECT COUNT(*) AS total FROM information_schema.columns
@@ -108,7 +148,7 @@ end
 function _M.publish_policies()
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
-    local rows = mysql.query("SELECT domain,state,interval_minutes FROM waf_dingtalk_throttle_policy")
+    local rows = mysql.query("SELECT domain,state,interval_minutes,summary_time FROM waf_dingtalk_throttle_policy")
     if not rows then return nil, "query throttle policies failed" end
     local policies = {}
     for _, row in ipairs(rows) do
@@ -116,7 +156,8 @@ function _M.publish_policies()
         if domain ~= "" then
             policies[domain] = {
                 state = tostring(row.state or "off"),
-                interval_minutes = tonumber(row.interval_minutes) or 10
+                interval_minutes = tonumber(row.interval_minutes) or 10,
+                summary_time = normalize_summary_time(row.summary_time) or "00:00"
             }
         end
     end
@@ -145,17 +186,19 @@ function _M.get_policy(domain)
         if type(policies) == "table" then return policies[domain] end
     end
     if not _M.ensure_schema() then return nil end
-    local rows = mysql.query("SELECT state,interval_minutes FROM waf_dingtalk_throttle_policy WHERE domain=" .. quote(domain) .. " LIMIT 1")
+    local rows = mysql.query("SELECT state,interval_minutes,summary_time FROM waf_dingtalk_throttle_policy WHERE domain=" .. quote(domain) .. " LIMIT 1")
     return rows and rows[1] or nil
 end
 
-function _M.add_summary_block(domain, interval_minutes)
+function _M.add_summary_block(domain, interval_minutes, summary_time)
     domain = _M.normalize_domain(domain)
     local seconds = math.floor((tonumber(interval_minutes) or 0) * 60)
     if domain == "" or seconds <= 0 then return nil, "invalid summary window" end
-    local bucket = math.floor(ngx.time() / seconds) * seconds
+    local bucket, normalized_time = summary_bucket(seconds, summary_time)
+    if not bucket then return nil, "invalid summary time" end
     local key = constants.KEY_REDIS_DINGTALK_SUMMARY_PREFIX .. ngx.md5(domain) .. ":" .. seconds .. ":" .. bucket
-    local member = cjson.encode({domain=domain, interval_minutes=math.floor(seconds / 60), bucket=bucket})
+    local member = cjson.encode({domain=domain, interval_minutes=math.floor(seconds / 60),
+        summary_time=normalized_time, bucket=bucket})
     if not member then return nil, "encode summary member failed" end
     local count, err = redis_cli.increment_summary(key, constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING,
         member, math.max(seconds * 3, SUMMARY_RETRY_TTL_SECONDS), bucket + seconds)
@@ -173,6 +216,7 @@ function _M.list_due_summary_blocks(now, limit)
         if type(item) == "table" then
             item.member = member
             item.interval_minutes = tonumber(item.interval_minutes) or 0
+            item.summary_time = normalize_summary_time(item.summary_time) or "00:00"
             item.bucket = tonumber(item.bucket) or 0
             item.domain = _M.normalize_domain(item.domain)
             item.key = constants.KEY_REDIS_DINGTALK_SUMMARY_PREFIX .. ngx.md5(item.domain)
@@ -192,17 +236,18 @@ function _M.complete_summary_block(item)
     return redis_cli.complete_summary(item.key, constants.KEY_REDIS_DINGTALK_SUMMARY_PENDING, item.member)
 end
 
-function _M.add_local_summary_block(domain, interval_minutes)
+function _M.add_local_summary_block(domain, interval_minutes, summary_time)
     domain = _M.normalize_domain(domain)
     local seconds = math.floor((tonumber(interval_minutes) or 0) * 60)
     if domain == "" or seconds <= 0 then return nil, "invalid summary window" end
-    local bucket = math.floor(ngx.time() / seconds) * seconds
+    local bucket, normalized_time = summary_bucket(seconds, summary_time)
+    if not bucket then return nil, "invalid summary time" end
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
     local sql = format([[INSERT INTO waf_dingtalk_summary_pending
-        (domain,interval_minutes,bucket_epoch,block_count) VALUES (%s,%d,%d,1)
+        (domain,interval_minutes,summary_time,bucket_epoch,block_count) VALUES (%s,%d,%s,%d,1)
         ON DUPLICATE KEY UPDATE block_count=block_count+1,update_time=NOW()]],
-        quote(domain), math.floor(seconds / 60), bucket)
+        quote(domain), math.floor(seconds / 60), quote(normalized_time), bucket)
     if not mysql.query(sql) then return nil, "save local summary failed" end
     return true, nil, bucket
 end
@@ -210,7 +255,7 @@ end
 function _M.list_due_local_summary_blocks(now, limit)
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
-    return mysql.query(format([[SELECT id,domain,interval_minutes,bucket_epoch AS bucket,block_count
+    return mysql.query(format([[SELECT id,domain,interval_minutes,summary_time,bucket_epoch AS bucket,block_count
         FROM waf_dingtalk_summary_pending
         WHERE bucket_epoch+(interval_minutes*60)<=%d AND (retry_at IS NULL OR retry_at<=NOW())
         ORDER BY bucket_epoch ASC LIMIT %d]], now, limit or 200))
@@ -233,7 +278,7 @@ end
 function _M.list_enabled_policies()
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
-    return mysql.query("SELECT domain,interval_minutes FROM waf_dingtalk_throttle_policy WHERE state='on'")
+    return mysql.query("SELECT domain,interval_minutes,summary_time FROM waf_dingtalk_throttle_policy WHERE state='on'")
 end
 
 local function record_delivery(block_info, send_status, err)
@@ -292,9 +337,12 @@ function _M.save_policy(values)
     local state = tostring(values.state or "off") == "on" and "on" or "off"
     local interval = math.floor(tonumber(values.interval_minutes or values.intervalMinutes) or 0)
     if interval < 1 or interval > 10080 then return nil, "降频时间必须为 1-10080 分钟" end
-    local sql = format([[INSERT INTO waf_dingtalk_throttle_policy (domain,state,interval_minutes)
-        VALUES (%s,%s,%d) ON DUPLICATE KEY UPDATE state=VALUES(state),
-        interval_minutes=VALUES(interval_minutes),update_time=NOW()]], quote(domain), quote(state), interval)
+    local summary_time = normalize_summary_time(values.summary_time or values.summaryTime)
+    if not summary_time then return nil, "invalid summary time, use HH:mm" end
+    local sql = format([[INSERT INTO waf_dingtalk_throttle_policy (domain,state,interval_minutes,summary_time)
+        VALUES (%s,%s,%d,%s) ON DUPLICATE KEY UPDATE state=VALUES(state),
+        interval_minutes=VALUES(interval_minutes),summary_time=VALUES(summary_time),update_time=NOW()]],
+        quote(domain), quote(state), interval, quote(summary_time))
     if not mysql.query(sql) then return nil, "保存降频策略失败" end
     local published, publish_err = _M.publish_policies()
     if not published then return nil, publish_err or "发布降频策略失败" end
@@ -339,7 +387,7 @@ function _M.list_policies(filters)
     if not count_rows or not count_rows[1] then return nil, "查询策略数量失败" end
     local total = tonumber(count_rows[1].total) or 0
     local page, limit, offset = page_values(filters)
-    local rows = mysql.query([[SELECT id,domain,state,interval_minutes,last_success_at,last_failure_at,
+    local rows = mysql.query([[SELECT id,domain,state,interval_minutes,summary_time,last_success_at,last_failure_at,
         last_failure_reason,create_time,update_time,
         CASE WHEN last_failure_at IS NOT NULL AND (last_success_at IS NULL OR last_failure_at>last_success_at)
             THEN 'failure' WHEN last_success_at IS NOT NULL THEN 'success' ELSE 'none' END AS last_result

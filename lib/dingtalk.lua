@@ -117,7 +117,7 @@ function _M.notify_ip_block(block_info)
         local add_summary = config.is_centralized_mode()
             and notification_store.add_summary_block
             or notification_store.add_local_summary_block
-        local added, summary_err = add_summary(domain, policy.interval_minutes)
+        local added, summary_err = add_summary(domain, policy.interval_minutes, policy.summary_time)
         if added then
             ngx.log(ngx.NOTICE, "[dingtalk] ip block added to summary, domain=", domain)
             return true, nil, "aggregated"
@@ -145,7 +145,10 @@ function _M.flush_block_summaries()
     if not policies then ngx.log(ngx.ERR, "[dingtalk] load summary policies failed: ", err or "nil"); return end
     local policy_map = {}
     for _, policy in ipairs(policies) do
-        policy_map[notification_store.normalize_domain(policy.domain)] = tonumber(policy.interval_minutes) or 0
+        policy_map[notification_store.normalize_domain(policy.domain)] = {
+            interval_minutes = tonumber(policy.interval_minutes) or 0,
+            summary_time = tostring(policy.summary_time or "00:00")
+        }
     end
 
     local now = ngx.time()
@@ -163,6 +166,7 @@ function _M.flush_block_summaries()
     for _, item in ipairs(rows) do
         local domain = notification_store.normalize_domain(item.domain)
         local interval = tonumber(item.interval_minutes) or 0
+        local summary_time = tostring(item.summary_time or "00:00")
         local bucket = tonumber(item.bucket) or 0
         local count = tonumber(item.block_count) or 0
         local seconds = interval * 60
@@ -170,14 +174,16 @@ function _M.flush_block_summaries()
             and notification_store.complete_summary_block
             or notification_store.complete_local_summary_block
 
-        if policy_map[domain] ~= interval or interval <= 0 or bucket <= 0 or count <= 0 then
+        local policy = policy_map[domain]
+        if not policy or policy.interval_minutes ~= interval or policy.summary_time ~= summary_time
+            or interval <= 0 or bucket <= 0 or count <= 0 then
             local removed, remove_err = complete(item)
             if not removed then
                 ngx.log(ngx.ERR, "[dingtalk] discard stale summary failed, domain=", domain,
                     " err=", remove_err or "nil")
             end
         else
-            local event_key = string.format("summary:%d:%d", interval, bucket)
+            local event_key = string.format("summary:%d:%s:%d", interval, summary_time, bucket)
             if notification_store.was_summary_sent(domain, event_key) then
                 local removed, remove_err = complete(item)
                 if not removed then
