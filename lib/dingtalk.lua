@@ -5,10 +5,24 @@ local notification_store = require "dingtalk_notification_store"
 
 local _M = {}
 
-local function get_at_list(cfg)
+local function append_at_mobiles(at_list, seen, mobiles)
+    for mobile in tostring(mobiles or ""):gmatch("[%d]+") do
+        if not seen[mobile] then
+            seen[mobile] = true
+            table.insert(at_list, mobile)
+        end
+    end
+end
+
+local function get_at_list(cfg, policy_mobile, notify_global)
     local at_list = {}
-    for mobile in tostring(cfg.at_mobiles or ""):gmatch("[%d]+") do
-        table.insert(at_list, mobile)
+    local seen = {}
+    local has_policy_mobile = tostring(policy_mobile or "") ~= ""
+    if has_policy_mobile then
+        append_at_mobiles(at_list, seen, policy_mobile)
+    end
+    if not has_policy_mobile or tostring(notify_global or "on") ~= "off" then
+        append_at_mobiles(at_list, seen, cfg.at_mobiles)
     end
     return at_list
 end
@@ -147,7 +161,9 @@ function _M.flush_block_summaries()
     for _, policy in ipairs(policies) do
         policy_map[notification_store.normalize_domain(policy.domain)] = {
             interval_minutes = tonumber(policy.interval_minutes) or 0,
-            summary_time = tostring(policy.summary_time or "00:00")
+            summary_time = tostring(policy.summary_time or "00:00"),
+            at_mobile = tostring(policy.at_mobile or ""),
+            notify_global = tostring(policy.notify_global or "on")
         }
     end
 
@@ -195,7 +211,7 @@ function _M.flush_block_summaries()
                     domain, interval, count, os.date("%Y-%m-%d %H:%M:%S", bucket),
                     os.date("%Y-%m-%d %H:%M:%S", bucket + seconds))
                 local body = cjson.encode({msgtype="text", text={content=msg},
-                    at={atMobiles=get_at_list(cfg), isAtAll=false}})
+                    at={atMobiles=get_at_list(cfg, policy.at_mobile, policy.notify_global), isAtAll=false}})
                 local ok, send_err = send_request(cfg.webhook, body)
                 local info = {server=domain, attack_type="block_summary", action="SUMMARY", uri=event_key}
                 if ok then

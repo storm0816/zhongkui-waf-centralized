@@ -36,7 +36,7 @@
         },
         {
             "attackType": "backdoor",
-            "rule": "(?:phpMyAdmin2|phpMyAdmin|phpmyadmin|dbadmin|pma|myadmin|admin|mysql)\/scripts\/setup%.php",
+            "rule": "(?:phpMyAdmin2|phpMyAdmin|phpmyadmin|dbadmin|pma|myadmin|admin|mysql)\/scripts\/setup\\.php$",
             "state": "on",
             "severityLevel": "high",
             "action": "redirect",
@@ -52,7 +52,7 @@
         },
         {
             "attackType": "rce",
-            "rule": "\/(attachments|upimg|images|css|uploadfiles|html|uploads|templets|static|template|data|inc|forumdata|upload|includes|cache|avatar)\/(\\\\w+).(php|jsp)",
+            "rule": "\/(attachments|upimg|images|css|uploadfiles|html|uploads|templets|static|template|data|inc|forumdata|upload|includes|cache|avatar)\/[A-Za-z0-9_-]+\\.(?:php|jsp)$",
             "state": "on",
             "severityLevel": "high",
             "action": "redirect",

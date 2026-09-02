@@ -6,7 +6,7 @@
             "id": 1,
             "state": "on",
             "action": "deny",
-            "rule": "select.+(from|limit)",
+            "rule": "\\bselect\\s+(?:\\*|[A-Za-z0-9_`]+(?:\\s*\\([^)]{0,64}\\))?)(?:\\s*,\\s*(?:[A-Za-z0-9_`]+(?:\\s*\\([^)]{0,64}\\))?))*\\s+from\\b",
             "attackType": "sqli",
             "severityLevel": "high"
         },
@@ -22,7 +22,7 @@
             "id": 3,
             "state": "on",
             "action": "deny",
-            "rule": "having|rongjitest",
+            "rule": "\\brongjitest\\b",
             "attackType": "sqli",
             "severityLevel": "high"
         },
@@ -78,7 +78,7 @@
             "id": 10,
             "state": "on",
             "action": "deny",
-            "rule": "into(\\s+)+(?:dump|out)file\\s*",
+            "rule": "\\binto\\s+(?:dump|out)file\\b",
             "attackType": "sqli",
             "severityLevel": "high"
         },
@@ -86,7 +86,7 @@
             "id": 11,
             "state": "on",
             "action": "deny",
-            "rule": "group\\s+by.+\\(",
+            "rule": "\\bgroup\\s+by\\s+[^&]{0,256}(?:--|#|\\/\\*|\\bhaving\\b|\\border\\s+by\\b|\\blimit\\b)",
             "attackType": "sqli",
             "severityLevel": "high"
         },
@@ -94,7 +94,7 @@
             "id": 12,
             "state": "on",
             "action": "deny",
-            "rule": "(?:define|eval|file_get_contents|include|require|require_once|shell_exec|phpinfo|system|passthru|preg_\\w+|execute|echo|print|print_r|var_dump|(fp)open|alert|showmodaldialog)\\(",
+            "rule": "\\b(?:eval|file_get_contents|include|require(?:_once)?|shell_exec|phpinfo|system|passthru|preg_\\w+|execute|var_dump|[fp]open)\\s*\\(",
             "attackType": "rce",
             "severityLevel": "high"
         },

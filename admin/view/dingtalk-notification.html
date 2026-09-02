@@ -21,7 +21,7 @@
                 </ul>
                 <div class="layui-tab-content">
                     <div class="layui-tab-item layui-show">
-                        <p class="policy-note">仅对精确域名生效。开启后，封禁仍会正常执行和记录；系统按设定周期发送一条域名封禁汇总通报。集群模式由 Master 汇总，单机模式由本机汇总。</p>
+                        <p class="policy-note">仅对精确域名生效。开启后，封禁仍会正常执行和记录；系统按设定周期发送一条域名封禁汇总通报。可为策略设置通知人手机号，并选择是否同时 @ 系统钉钉配置中的全局通知人。集群模式由 Master 汇总，单机模式由本机汇总。</p>
                         <form class="layui-form query-bar" lay-filter="throttle-policy-query">
                             <div class="layui-inline"><input class="layui-input" name="domain" placeholder="查询域名" style="width:230px;"></div>
                             <div class="layui-inline"><select name="state"><option value="">全部状态</option><option value="on">已开启</option><option value="off">已关闭</option></select></div>
@@ -57,6 +57,8 @@
             <div class="layui-form-item"><label class="layui-form-label">启用汇总</label><div class="layui-input-block"><input type="checkbox" name="state" lay-skin="switch" lay-text="ON|OFF" checked></div></div>
             <div class="layui-form-item"><label class="layui-form-label">汇总周期</label><div class="layui-input-block"><input name="interval_minutes" type="number" min="1" max="10080" lay-verify="required|number" value="10" class="layui-input"><div class="layui-form-mid layui-word-aux">分钟，范围 1 - 10080</div></div></div>
             <div class="layui-form-item"><label class="layui-form-label">发送时间</label><div class="layui-input-block"><input name="summary_time" type="time" value="00:00" class="layui-input"><div class="layui-form-mid layui-word-aux">统计窗口以此时间为边界；例如 1440 分钟设为 12:00，则每天中午 12 点发送汇总</div></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">手机号 <i class="layui-icon layui-icon-tips" title="通知人手机号"></i></label><div class="layui-input-block"><input name="at_mobile" maxlength="11" autocomplete="off" placeholder="通知人手机号，留空使用全局 @ 人员" class="layui-input"><div class="layui-form-mid layui-word-aux">仅支持一个 11 位中国大陆手机号，用于 @ 指定通知人</div></div></div>
+            <div class="layui-form-item"><label class="layui-form-label">全局通知</label><div class="layui-input-block"><input type="checkbox" name="notify_global" lay-skin="switch" lay-text="ON|OFF" checked><div class="layui-form-mid layui-word-aux">填写手机号后，是否继续 @ 系统设置中的全局通知人</div></div></div>
             <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="throttle-policy-save">保存</button></div></div>
         </form>
     </div>
@@ -77,24 +79,26 @@
         function reloadPolicies(where) { table.reloadData('throttle-policy-table', {where: where || {}, page: {curr: 1}}); }
         function reloadRecords(where) { table.reloadData('dingtalk-record-table', {where: where || {}, page: {curr: 1}}); }
         function openPolicy(row) {
-            form.val('throttle-policy-form', {domain: row ? row.domain : '', interval_minutes: row ? row.interval_minutes : 10, summary_time: row ? (row.summary_time || '00:00') : '00:00', state: row && row.state === 'on'});
+            form.val('throttle-policy-form', {domain: row ? row.domain : '', interval_minutes: row ? row.interval_minutes : 10, summary_time: row ? (row.summary_time || '00:00') : '00:00', at_mobile: row ? (row.at_mobile || '') : '', notify_global: !row || row.notify_global !== 'off', state: row && row.state === 'on'});
             form.render();
-            dialogIndex = layer.open({type: 1, title: row ? '修改封禁通报降频策略' : '新增封禁通报降频策略', area: ['620px', '400px'], content: $('#throttle-policy-dialog')});
+            dialogIndex = layer.open({type: 1, title: row ? '修改封禁通报降频策略' : '新增封禁通报降频策略', area: ['620px', '530px'], content: $('#throttle-policy-dialog')});
         }
 
         table.render({
             id: 'throttle-policy-table', elem: '#throttle-policy-table', url: '/dingtalk-notification/policies', page: true, limit: 20, limits: [10, 20, 50, 100],
             cols: [[
                 {field: 'domain', title: '域名', minWidth: 200},
+                {field: 'update_time', title: '更新时间', width: 170, templet: function(d){ return esc(d.update_time || '-'); }},
+                {title: '操作', toolbar: '#throttle-policy-toolbar', width: 120},
                 {title: '汇总状态', width: 105, templet: stateText},
                 {field: 'interval_minutes', title: '汇总周期', width: 120, templet: function (d) { return esc(d.interval_minutes) + ' 分钟'; }},
                 {field: 'summary_time', title: '发送时间', width: 120, templet: function (d) { return esc(d.summary_time || '00:00'); }},
+                {field: 'at_mobile', title: '通知人手机号', width: 140, templet: function (d) { return esc(d.at_mobile || '全局配置'); }},
+                {field: 'notify_global', title: '同时全局通知', width: 130, templet: function (d) { return d.at_mobile ? (d.notify_global === 'off' ? '否' : '是') : '默认'; }},
                 {field: 'last_success_at', title: '最近成功', width: 170, templet: function(d){ return esc(d.last_success_at || '-'); }},
                 {title: '最近结果', width: 105, templet: resultText},
                 {field: 'last_failure_at', title: '最近失败', width: 170, templet: function(d){ return esc(d.last_failure_at || '-'); }},
-                {field: 'last_failure_reason', title: '最近失败原因', minWidth: 200, templet: function(d){ return '<div class="failure-message">' + esc(d.last_failure_reason || '-') + '</div>'; }},
-                {field: 'update_time', title: '更新时间', width: 170, templet: function(d){ return esc(d.update_time || '-'); }},
-                {title: '操作', toolbar: '#throttle-policy-toolbar', width: 120}
+                {field: 'last_failure_reason', title: '最近失败原因', minWidth: 200, templet: function(d){ return '<div class="failure-message">' + esc(d.last_failure_reason || '-') + '</div>'; }}
             ]]
         });
         table.render({
@@ -120,6 +124,7 @@
         form.on('submit(dingtalk-failure-search)', function (data) { reloadRecords(data.field); return false; });
         form.on('submit(throttle-policy-save)', function (data) {
             data.field.state = data.field.state ? 'on' : 'off';
+            data.field.notify_global = data.field.notify_global ? 'on' : 'off';
             $.post('/dingtalk-notification/policy/save', data.field, function (res) {
                 if (res && res.code === 0) { layer.close(dialogIndex); reloadPolicies(); popup.success('保存成功'); }
                 else { popup.failure((res && res.msg) || '保存失败'); }

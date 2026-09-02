@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS waf_dingtalk_throttle_policy (
     state VARCHAR(16) NOT NULL DEFAULT 'on',
     interval_minutes INT UNSIGNED NOT NULL DEFAULT 10,
     summary_time CHAR(5) NOT NULL DEFAULT '00:00',
+    at_mobile VARCHAR(32) NOT NULL DEFAULT '',
+    notify_global VARCHAR(16) NOT NULL DEFAULT 'on',
     last_success_at DATETIME NULL,
     last_failure_at DATETIME NULL,
     last_failure_reason VARCHAR(1024) NULL,
@@ -82,6 +84,13 @@ local function normalize_summary_time(value)
     return format("%02d:%02d", hour, minute)
 end
 
+local function normalize_at_mobile(value)
+    local mobile = tostring(value or ""):gsub("%s+", "")
+    if mobile == "" then return "" end
+    if not mobile:match("^1[3-9]%d%d%d%d%d%d%d%d%d$") then return nil end
+    return mobile
+end
+
 -- Anchor rolling windows to a local clock time. A 1440-minute policy with
 -- 12:00 therefore groups events from one noon to the next noon.
 local function summary_bucket(seconds, summary_time)
@@ -124,6 +133,22 @@ function _M.ensure_schema()
         return nil, "upgrade throttle policy schema failed"
     end
 
+    local policy_mobile_column = mysql.query([[SELECT COUNT(*) AS total FROM information_schema.columns
+        WHERE table_schema=DATABASE() AND table_name='waf_dingtalk_throttle_policy' AND column_name='at_mobile']])
+    if not policy_mobile_column or not policy_mobile_column[1] then return nil, "check throttle policy phone schema failed" end
+    if tonumber(policy_mobile_column[1].total) == 0
+        and not mysql.query("ALTER TABLE waf_dingtalk_throttle_policy ADD COLUMN at_mobile VARCHAR(32) NOT NULL DEFAULT '' AFTER summary_time") then
+        return nil, "upgrade throttle policy phone schema failed"
+    end
+
+    local policy_global_column = mysql.query([[SELECT COUNT(*) AS total FROM information_schema.columns
+        WHERE table_schema=DATABASE() AND table_name='waf_dingtalk_throttle_policy' AND column_name='notify_global']])
+    if not policy_global_column or not policy_global_column[1] then return nil, "check throttle policy global notification schema failed" end
+    if tonumber(policy_global_column[1].total) == 0
+        and not mysql.query("ALTER TABLE waf_dingtalk_throttle_policy ADD COLUMN notify_global VARCHAR(16) NOT NULL DEFAULT 'on' AFTER at_mobile") then
+        return nil, "upgrade throttle policy global notification schema failed"
+    end
+
     local pending_time_column = mysql.query([[SELECT COUNT(*) AS total FROM information_schema.columns
         WHERE table_schema=DATABASE() AND table_name='waf_dingtalk_summary_pending' AND column_name='summary_time']])
     if not pending_time_column or not pending_time_column[1] then return nil, "check summary pending schema failed" end
@@ -148,7 +173,7 @@ end
 function _M.publish_policies()
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
-    local rows = mysql.query("SELECT domain,state,interval_minutes,summary_time FROM waf_dingtalk_throttle_policy")
+    local rows = mysql.query("SELECT domain,state,interval_minutes,summary_time,at_mobile,notify_global FROM waf_dingtalk_throttle_policy")
     if not rows then return nil, "query throttle policies failed" end
     local policies = {}
     for _, row in ipairs(rows) do
@@ -157,7 +182,9 @@ function _M.publish_policies()
             policies[domain] = {
                 state = tostring(row.state or "off"),
                 interval_minutes = tonumber(row.interval_minutes) or 10,
-                summary_time = normalize_summary_time(row.summary_time) or "00:00"
+                summary_time = normalize_summary_time(row.summary_time) or "00:00",
+                at_mobile = normalize_at_mobile(row.at_mobile) or "",
+                notify_global = tostring(row.notify_global or "on") == "off" and "off" or "on"
             }
         end
     end
@@ -186,7 +213,7 @@ function _M.get_policy(domain)
         if type(policies) == "table" then return policies[domain] end
     end
     if not _M.ensure_schema() then return nil end
-    local rows = mysql.query("SELECT state,interval_minutes,summary_time FROM waf_dingtalk_throttle_policy WHERE domain=" .. quote(domain) .. " LIMIT 1")
+    local rows = mysql.query("SELECT state,interval_minutes,summary_time,at_mobile,notify_global FROM waf_dingtalk_throttle_policy WHERE domain=" .. quote(domain) .. " LIMIT 1")
     return rows and rows[1] or nil
 end
 
@@ -278,7 +305,7 @@ end
 function _M.list_enabled_policies()
     local ok, err = _M.ensure_schema()
     if not ok then return nil, err end
-    return mysql.query("SELECT domain,interval_minutes,summary_time FROM waf_dingtalk_throttle_policy WHERE state='on'")
+    return mysql.query("SELECT domain,interval_minutes,summary_time,at_mobile,notify_global FROM waf_dingtalk_throttle_policy WHERE state='on'")
 end
 
 local function record_delivery(block_info, send_status, err)
@@ -339,10 +366,13 @@ function _M.save_policy(values)
     if interval < 1 or interval > 10080 then return nil, "降频时间必须为 1-10080 分钟" end
     local summary_time = normalize_summary_time(values.summary_time or values.summaryTime)
     if not summary_time then return nil, "invalid summary time, use HH:mm" end
-    local sql = format([[INSERT INTO waf_dingtalk_throttle_policy (domain,state,interval_minutes,summary_time)
-        VALUES (%s,%s,%d,%s) ON DUPLICATE KEY UPDATE state=VALUES(state),
-        interval_minutes=VALUES(interval_minutes),summary_time=VALUES(summary_time),update_time=NOW()]],
-        quote(domain), quote(state), interval, quote(summary_time))
+    local at_mobile = normalize_at_mobile(values.at_mobile or values.atMobile)
+    if at_mobile == nil then return nil, "通知人手机号格式错误，请填写 11 位中国大陆手机号" end
+    local notify_global = tostring(values.notify_global or values.notifyGlobal or "on") == "off" and "off" or "on"
+    local sql = format([[INSERT INTO waf_dingtalk_throttle_policy (domain,state,interval_minutes,summary_time,at_mobile,notify_global)
+        VALUES (%s,%s,%d,%s,%s,%s) ON DUPLICATE KEY UPDATE state=VALUES(state),
+        interval_minutes=VALUES(interval_minutes),summary_time=VALUES(summary_time),at_mobile=VALUES(at_mobile),notify_global=VALUES(notify_global),update_time=NOW()]],
+        quote(domain), quote(state), interval, quote(summary_time), quote(at_mobile), quote(notify_global))
     if not mysql.query(sql) then return nil, "保存降频策略失败" end
     local published, publish_err = _M.publish_policies()
     if not published then return nil, publish_err or "发布降频策略失败" end
@@ -387,7 +417,7 @@ function _M.list_policies(filters)
     if not count_rows or not count_rows[1] then return nil, "查询策略数量失败" end
     local total = tonumber(count_rows[1].total) or 0
     local page, limit, offset = page_values(filters)
-    local rows = mysql.query([[SELECT id,domain,state,interval_minutes,summary_time,last_success_at,last_failure_at,
+    local rows = mysql.query([[SELECT id,domain,state,interval_minutes,summary_time,at_mobile,notify_global,last_success_at,last_failure_at,
         last_failure_reason,create_time,update_time,
         CASE WHEN last_failure_at IS NOT NULL AND (last_success_at IS NULL OR last_failure_at>last_success_at)
             THEN 'failure' WHEN last_success_at IS NOT NULL THEN 'success' ELSE 'none' END AS last_result
