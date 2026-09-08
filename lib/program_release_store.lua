@@ -113,6 +113,24 @@ function _M.list_deployments()
         ORDER BY d.created_at DESC LIMIT 500]])
 end
 
+function _M.get_deployment(task_id)
+    local rows, err = mysql.query("SELECT task_id,plan_id,release_version,node_ip,status FROM waf_program_deployment"
+        .. " WHERE task_id=" .. quote(task_id) .. " LIMIT 1")
+    return rows and rows[1] or nil, err
+end
+
+function _M.retry_deployment(task_id)
+    return mysql.query("UPDATE waf_program_deployment SET status='scheduled',message="
+        .. quote("已重新下发，等待发布调度") .. ",queued_at=NULL,finished_at=NULL"
+        .. " WHERE task_id=" .. quote(task_id) .. " AND status IN ('failed','rolled_back')")
+end
+
+function _M.skip_deployment(task_id)
+    return mysql.query("UPDATE waf_program_deployment SET status='cancelled',message="
+        .. quote("已由管理员跳过，后续批次可继续发布") .. ",finished_at=NOW()"
+        .. " WHERE task_id=" .. quote(task_id) .. " AND status NOT IN ('success','cancelled')")
+end
+
 function _M.reconcile_deployments()
     local ok, err = mysql.query([[UPDATE waf_program_deployment d JOIN waf_cluster_node n ON n.ip=d.node_ip
         SET d.status=CASE
@@ -125,7 +143,10 @@ function _M.reconcile_deployments()
                 WHEN n.program_update_target=d.release_version
                     AND n.program_update_status IN ('failed','rolled_back')
                 THEN COALESCE(d.finished_at,NOW()) ELSE d.finished_at END
-        WHERE d.status NOT IN ('success','cancelled','scheduled','waiting_canary')]])
+        -- A Node reports its current version, not the outcome of every historical
+        -- deployment. Only reconcile tasks that are still actively progressing;
+        -- an administrator-initiated retry is handled separately.
+        WHERE d.status IN ('queued','downloading','switching')]])
     if not ok then return nil, err end
     return scheduler.dispatch("program")
 end

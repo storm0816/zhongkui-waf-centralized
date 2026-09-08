@@ -5,6 +5,7 @@ local redis = require "redis_cli"
 
 local _M = {}
 local quote = ngx.quote_sql_str
+local TASK_CLAIM_TIMEOUT_SECONDS = 600
 
 local kinds = {
     program = {
@@ -32,6 +33,30 @@ end
 
 local function terminal(status)
     return status == "success" or status == "failed" or status == "rolled_back" or status == "cancelled"
+end
+
+local function clear_matching_task(cfg, row)
+    local raw = redis.get(cfg.task_prefix .. row.node_ip)
+    local task = raw and cjson.decode(raw) or nil
+    if type(task) == "table" and tostring(task.task_id or "") == tostring(row.task_id or "") then
+        redis.del(cfg.task_prefix .. row.node_ip)
+    end
+end
+
+-- A queued task must be claimed by the Node updater.  Do not leave a plan in
+-- "releasing" forever when a Node goes offline after the task is dispatched.
+local function expire_unclaimed_tasks(cfg)
+    local rows, err = mysql.query("SELECT task_id,node_ip FROM " .. cfg.deployment_table
+        .. " WHERE status='queued' AND queued_at IS NOT NULL"
+        .. " AND queued_at<=DATE_SUB(NOW(),INTERVAL " .. TASK_CLAIM_TIMEOUT_SECONDS .. " SECOND)")
+    if not rows then return nil, err end
+    for _, row in ipairs(rows) do
+        local updated = mysql.query("UPDATE " .. cfg.deployment_table
+            .. " SET status='failed',message=" .. quote("Node 未在 10 分钟内领取发布任务，发布已暂停")
+            .. ",finished_at=NOW() WHERE task_id=" .. quote(row.task_id) .. " AND status='queued'")
+        if updated then clear_matching_task(cfg, row) end
+    end
+    return true
 end
 
 local function update_waiting(cfg, rows, status, message)
@@ -93,6 +118,18 @@ local function dispatch_batch(kind, cfg, rows)
 end
 
 local function dispatch_plan(kind, cfg, rows)
+    local has_failure = false
+    for _, row in ipairs(rows) do
+        if row.status == "failed" or row.status == "rolled_back" then
+            has_failure = true
+            break
+        end
+    end
+    if has_failure then
+        update_waiting(cfg, rows, "waiting_canary", "存在失败或回滚节点，发布已暂停，请重试或跳过失败节点")
+        return true
+    end
+
     local pending_batch
     local batches = {}
     local canary = {}
@@ -109,15 +146,17 @@ local function dispatch_plan(kind, cfg, rows)
 
     local current = batches[pending_batch] or {}
     if #canary > 0 and pending_batch > 0 then
-        local all_success, has_failure = true, false
+        local all_success, canary_failure = true, false
         for _, row in ipairs(canary) do
-            if row.status ~= "success" then all_success = false end
+            -- An administrator may explicitly skip a failed canary.  Treat
+            -- that decision as an approved bypass so later batches can run.
+            if row.status ~= "success" and row.status ~= "cancelled" then all_success = false end
             if row.status == "failed" or row.status == "rolled_back" or row.status == "cancelled" then
-                has_failure = true
+                canary_failure = true
             end
         end
         if not all_success then
-            update_waiting(cfg, current, "waiting_canary", has_failure
+            update_waiting(cfg, current, "waiting_canary", canary_failure
                 and "灰度节点失败，后续批次已暂停" or "等待灰度节点验证成功")
             return true
         end
@@ -146,6 +185,8 @@ local function dispatch_plan(kind, cfg, rows)
 end
 
 local function dispatch_locked(kind, cfg)
+    local expired, expire_err = expire_unclaimed_tasks(cfg)
+    if not expired then return nil, expire_err end
     local sql = "SELECT d.task_id,d.release_version,d.node_ip,d.status,d.plan_id,d.batch_no,"
         .. "d.is_canary,d.batch_interval_seconds,d.queued_at,d.finished_at,r."
         .. cfg.release_checksum .. " release_checksum FROM " .. cfg.deployment_table

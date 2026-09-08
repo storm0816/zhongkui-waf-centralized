@@ -2,7 +2,11 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 2.2.0`
+当前版本：`Version 2.2.1`
+
+### 2.2.1 发布说明
+
+- 发布中心的程序版本与 GeoIP 版本对账仅更新进行中的任务；成功、失败、回滚和跳过任务不会因节点后续上报当前版本而被覆盖。管理员显式执行重新下发时，才会重新激活对应任务。
 
 ### 2.2.0 发布说明
 
@@ -135,16 +139,16 @@
 推荐直接使用安装命令：
 
 ```bash
-tar -xzf zhongkui-waf-node-2.1.9.tar.gz
-cd zhongkui-waf-node-2.1.9
+tar -xzf zhongkui-waf-node-2.2.1.tar.gz
+cd zhongkui-waf-node-2.2.1
 sudo ./install.sh --role node
 ```
 
 master 节点：
 
 ```bash
-tar -xzf zhongkui-waf-master-2.1.9.tar.gz
-cd zhongkui-waf-master-2.1.9
+tar -xzf zhongkui-waf-master-2.2.1.tar.gz
+cd zhongkui-waf-master-2.2.1
 sudo ./install.sh --role master
 ```
 
@@ -162,7 +166,7 @@ sudo ./upgrade.sh --role master
 “集群与大屏 → 发布中心”完成：
 
 1. 先把新版本代码升级到 Master 并完成验证。
-2. 在“程序版本”创建当前版本的不可变快照，例如 `2.1.9`。已存在的版本快照不能覆盖。
+2. 在“程序版本”创建当前版本的不可变快照，例如 `2.2.1`。已存在的版本快照不能覆盖。
 3. 点击“发布”，选择参与范围：`发布所选`只处理勾选的 Node；`发布全部`处理列表内全部版本不同的在线 Node。
 4. 选择发布方式：关闭灰度时按批次大小直接发布；开启灰度时，先发布指定的 1 台 Node，成功后再按批次大小和批次间隔继续其余节点。
 5. 在任务列表确认每台 Node 的下载、校验、重载和版本上报均成功。
@@ -203,7 +207,14 @@ Windows 构建机可执行：
 powershell -ExecutionPolicy Bypass -File .\scripts\build_release_windows.ps1
 ```
 
-安装包会生成到 `dist/`：`zhongkui-waf-master-2.1.9.tar.gz` 与 `zhongkui-waf-node-2.1.9.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Node 包不包含 LDAP 配置。Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据；`scripts/`、Git 和私有环境文件不会进入压缩包。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+安装包会生成到 `dist/`：`zhongkui-waf-master-2.2.1.tar.gz` 与 `zhongkui-waf-node-2.2.1.tar.gz`。构建使用本机忽略的 `.zhongkui.release.env` 注入生产 MySQL/Redis、LDAP 与钉钉配置；Node 包不包含 LDAP 配置。Git 模板始终使用 `10.10.10.10` 占位，不包含这些凭据；`scripts/`、Git 和私有环境文件不会进入压缩包。构建后应验证 SHA-256、`install.sh`/`upgrade.sh` 的 `755` 权限、角色 JSON 合法性与 Node 配置未包含 LDAP 字段。完整说明见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
+
+### 发布记录与重试说明
+
+- Node 心跳只反映当前版本，不能代表过去任意一次发布的执行结果。因此程序版本和 GeoIP 的被动对账只会推进 `queued`、`downloading`、`switching` 三种进行中状态。
+- 已成功、失败、回滚、取消或跳过的历史任务保持原结果；节点之后升级成功不会改写旧失败记录。
+- 管理员在发布中心显式执行“重新下发”时，属于一次主动重试，会重新激活所选任务。需要保留完整审计时，应在发布记录中以新的发布计划重新发起。
+- `2.2.1` 是 Master 侧发布记录修复；部署 Master 后立即生效，Node 不需要为此功能单独升级。一键发布仅在需要将 Node 程序版本同步到新快照时使用。
 
 常用参数：
 

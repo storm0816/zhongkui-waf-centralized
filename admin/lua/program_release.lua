@@ -148,6 +148,43 @@ local function deploy_release()
     }
 end
 
+local function ensure_release_token(version)
+    local key = constants.KEY_REDIS_PROGRAM_RELEASE_PREFIX .. version .. ":token"
+    local current, get_err = redis_cli.get(key)
+    if current and current ~= ngx.null and current ~= "" then return true end
+    local saved, save_err = redis_cli.set(key, secure_id("release:" .. version), 604800)
+    return saved, save_err or get_err
+end
+
+local function update_deployment(action)
+    if not user.has_permission("release.manage") then return {code=403,msg="permission denied"} end
+    local args = post_args()
+    local task_id = tostring(args.task_id or "")
+    if not task_id:match("^[%w%-]+$") then return {code=400,msg="任务标识无效"} end
+    local deployment, lookup_err = store.get_deployment(task_id)
+    if not deployment then return {code=404,msg="发布任务不存在: " .. tostring(lookup_err or "")} end
+
+    if action == "retry" then
+        if deployment.status ~= "failed" and deployment.status ~= "rolled_back" then
+            return {code=400,msg="仅失败或已回滚的任务可以重新下发"}
+        end
+        local token_ok, token_err = ensure_release_token(deployment.release_version)
+        if not token_ok then return {code=500,msg="准备发布令牌失败: " .. tostring(token_err or "")} end
+        local updated = store.retry_deployment(task_id)
+        if not updated or tonumber(updated.affected_rows or 0) < 1 then return {code=500,msg="重新下发任务失败或任务状态已变化"} end
+        store.reconcile_deployments()
+        return {code=0,msg="已重新下发 " .. deployment.node_ip .. "，等待 Node 领取"}
+    end
+
+    if deployment.status == "success" or deployment.status == "cancelled" then
+        return {code=400,msg="当前任务不能跳过"}
+    end
+    local updated = store.skip_deployment(task_id)
+    if not updated or tonumber(updated.affected_rows or 0) < 1 then return {code=500,msg="跳过任务失败或任务状态已变化"} end
+    store.reconcile_deployments()
+    return {code=0,msg="已跳过 " .. deployment.node_ip .. "，后续批次将继续调度"}
+end
+
 function _M.do_request()
     local ok, err = store.ensure_tables()
     local response
@@ -166,6 +203,10 @@ function _M.do_request()
         response = create_release()
     elseif ngx.var.uri == "/programrelease/deploy" and ngx.req.get_method() == "POST" then
         response = deploy_release()
+    elseif ngx.var.uri == "/programrelease/retry" and ngx.req.get_method() == "POST" then
+        response = update_deployment("retry")
+    elseif ngx.var.uri == "/programrelease/skip" and ngx.req.get_method() == "POST" then
+        response = update_deployment("skip")
     else
         response = {code=404,msg="invalid endpoint"}
     end
