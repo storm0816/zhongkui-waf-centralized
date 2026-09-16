@@ -289,6 +289,7 @@ local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
     CREATE TABLE `ip_block_log` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         `request_id` CHAR(20) NULL COMMENT '请求id',
+        `server_name` VARCHAR(255) NULL COMMENT '请求域名',
 
         `ip` varchar(39) NOT NULL COMMENT 'ip地址',
         `ip_country_code` CHAR(2) NULL COMMENT 'ip所属国家代码',
@@ -1123,8 +1124,25 @@ function _M.check_table(premature)
         "ALTER TABLE attack_log ADD COLUMN node_ip VARCHAR(39) NULL COMMENT '节点IP' AFTER ip")
     ensure_column("attack_log_archive", "node_ip",
         "ALTER TABLE attack_log_archive ADD COLUMN node_ip VARCHAR(39) NULL COMMENT '节点IP' AFTER ip")
+    ensure_column("ip_block_log", "server_name",
+        "ALTER TABLE ip_block_log ADD COLUMN server_name VARCHAR(255) NULL COMMENT '请求域名' AFTER request_id")
+    ensure_index("ip_block_log", "idx_ip_block_log_request_id",
+        "ALTER TABLE ip_block_log ADD INDEX idx_ip_block_log_request_id (request_id)")
     ensure_column("sensitive_discovery", "matched_sample",
         "ALTER TABLE sensitive_discovery ADD COLUMN matched_sample VARCHAR(512) NOT NULL DEFAULT '' COMMENT '脱敏后的命中样例' AFTER detection_type")
+
+    -- Existing weekly archives are created with LIKE ip_block_log. Bring old
+    -- archive tables forward before the next archive job uses INSERT ... SELECT *.
+    local archive_tables = mysql.query(format([[SELECT table_name FROM INFORMATION_SCHEMA.TABLES
+        WHERE table_schema=%s AND table_name REGEXP '^ip_block_log_archive_[0-9_]+$']],
+        quote_sql_str(database))) or {}
+    for _, row in ipairs(archive_tables) do
+        local table_name = tostring(row.table_name or "")
+        if table_name:match("^ip_block_log_archive_[0-9_]+$") then
+            ensure_column(table_name, "server_name",
+                "ALTER TABLE `" .. table_name .. "` ADD COLUMN server_name VARCHAR(255) NULL COMMENT '请求域名' AFTER request_id")
+        end
+    end
 
     ensure_index("sensitive_discovery", "idx_sensitive_last_seen",
         "ALTER TABLE sensitive_discovery ADD INDEX idx_sensitive_last_seen (last_seen)")
@@ -1645,6 +1663,22 @@ function _M.get_30days_china_traffic_stats()
     return mysql.query(SQL_GET_30DAYS_CHINA_TRAFFIC_STATS)
 end
 
+local function persist_ip_block_domains(metadata)
+    for _, item in ipairs(metadata or {}) do
+        local request_id = tostring(item.request_id or "")
+        local server_name = tostring(item.server_name or "")
+        if request_id ~= "" and server_name ~= "" then
+            local statement = format([[UPDATE ip_block_log SET server_name=%s
+                WHERE request_id=%s AND (server_name IS NULL OR server_name='')]],
+                quote_sql_str(server_name), quote_sql_str(request_id))
+            local ok, err = mysql.query(statement)
+            if not ok then
+                ngx.log(ngx.ERR, "failed to persist ip block log domain: ", err)
+            end
+        end
+    end
+end
+
 function _M.write_sql_queue_to_mysql(premature, key)
     if premature or not key then
         return
@@ -1680,11 +1714,14 @@ function _M.write_sql_queue_to_mysql(premature, key)
 
         if index == BATCH_SIZE or value == nil then
             local notifications = nil
+            local block_metadata = nil
             if key == constants.KEY_IP_BLOCK_LOG then
                 local normalized_values = newtab(BATCH_SIZE, 0)
                 notifications = newtab(BATCH_SIZE, 0)
+                block_metadata = newtab(BATCH_SIZE, 0)
                 local normalized_index = 1
                 local notification_index = 1
+                local metadata_index = 1
                 for _, item in ipairs(buffer) do
                     local payload = cjson.decode(item)
                     if type(payload) == "table" and type(payload.sql) == "string" then
@@ -1693,6 +1730,10 @@ function _M.write_sql_queue_to_mysql(premature, key)
                         if type(payload.notify) == "table" then
                             notifications[notification_index] = payload.notify
                             notification_index = notification_index + 1
+                        end
+                        if type(payload.ip_block_meta) == "table" then
+                            block_metadata[metadata_index] = payload.ip_block_meta
+                            metadata_index = metadata_index + 1
                         end
                     else
                         normalized_values[normalized_index] = item
@@ -1716,6 +1757,7 @@ function _M.write_sql_queue_to_mysql(premature, key)
                 if not res then
                     ngx.log(ngx.ERR, "failed to write ", key, " queue to mysql: ", err)
                 elseif notifications then
+                    persist_ip_block_domains(block_metadata)
                     for _, notification in ipairs(notifications) do
                         dingtalk.notify_ip_block(notification)
                     end
@@ -1789,8 +1831,10 @@ function _M.write_ip_block_log_redis_to_mysql()
     if queue_values and queue_values[1] then
         local sql_values = newtab(BATCH_SIZE, 0)
         local notifications = newtab(BATCH_SIZE, 0)
+        local block_metadata = newtab(BATCH_SIZE, 0)
         local index = 1
         local notification_index = 1
+        local metadata_index = 1
         for _, value in ipairs(queue_values) do
             local payload = cjson.decode(value)
             if type(payload) == "table" and type(payload.sql) == "string" then
@@ -1799,6 +1843,10 @@ function _M.write_ip_block_log_redis_to_mysql()
                 if type(payload.notify) == "table" then
                     notifications[notification_index] = payload.notify
                     notification_index = notification_index + 1
+                end
+                if type(payload.ip_block_meta) == "table" then
+                    block_metadata[metadata_index] = payload.ip_block_meta
+                    metadata_index = metadata_index + 1
                 end
             else
                 -- Compatibility with queues written before notification payloads.
@@ -1817,6 +1865,7 @@ function _M.write_ip_block_log_redis_to_mysql()
             return
         end
 
+        persist_ip_block_domains(block_metadata)
         for _, notification in ipairs(notifications) do
             dingtalk.notify_ip_block(notification)
         end

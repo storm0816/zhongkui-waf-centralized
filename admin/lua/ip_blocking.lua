@@ -20,7 +20,7 @@ local MAX_LIMIT = 100
 local SQL_COUNT_IP_BLOCK_LOG = 'SELECT COUNT(*) AS total FROM ip_block_log '
 
 local SQL_SELECT_IP_BLOCK_LOG = [[
-    SELECT id, request_id, ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
+    SELECT id, request_id, server_name, ip, ip_country_code, ip_country_cn, ip_country_en, ip_province_code, ip_province_cn, ip_province_en, ip_city_code, ip_city_cn, ip_city_en,
     ip_longitude, ip_latitude, block_reason, start_time, block_duration, end_time, unblock_time, action, block_times FROM ip_block_log
 ]]
 

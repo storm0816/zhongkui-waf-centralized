@@ -190,7 +190,7 @@ sudo ./install.sh --role master --init-local-mysql --mysql-user zhongkui --mysql
 高级安装和无人值守参数见：[安装包与发布流程](./docs/INSTALL_PACKAGING.md)。
 首次部署、现网站点 `nginx.conf` / `conf.d` / `html` 保留方式见：[简明部署文档](./docs/QUICK_DEPLOY.md)。
 
-账号、角色、LDAP 与 MFA 配置见：[管理台账号、LDAP 与 MFA](./docs/ACCESS_CONTROL.md)。
+账号、角色、LDAP 与 MFA 的当前配置说明见：[管理台账号、LDAP 与 MFA](./docs/ACCESS_CONTROL.md)；面向其他项目复用的需求与技术设计见：[LDAP、用户与角色权限设计](./docs/IDENTITY_ACCESS_CONTROL_DESIGN.md)。
 
 项目架构、数据权威边界、维护规范与长期风险见：[项目基线与维护标准](./docs/PROJECT_BASELINE.md)。
 

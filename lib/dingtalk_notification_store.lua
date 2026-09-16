@@ -311,7 +311,7 @@ end
 local function record_delivery(block_info, send_status, err)
     if not _M.ensure_schema() then return nil, "schema unavailable" end
     block_info = block_info or {}
-    local domain = _M.normalize_domain(block_info.server)
+    local domain = _M.normalize_domain(block_info.domain or block_info.server)
     local message = tostring(err or "")
     if tostring(block_info.attack_type or "") == "block_summary" and send_status == "failure" then
         local existing = mysql.query("SELECT id FROM waf_dingtalk_failure_log WHERE domain=" .. quote(domain)

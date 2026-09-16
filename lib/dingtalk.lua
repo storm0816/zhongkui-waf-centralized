@@ -98,6 +98,9 @@ function _M.notify_ip_block(block_info)
     if block_info and block_info.ip and block_info.ip ~= "" then
         msg = msg .. "\n来源IP: " .. block_info.ip
     end
+    if block_info and block_info.domain and block_info.domain ~= "" then
+        msg = msg .. "\n域名: " .. block_info.domain
+    end
     if block_info and block_info.attack_type and block_info.attack_type ~= "" then
         msg = msg .. "\n封禁原因: " .. block_info.attack_type
     end
@@ -125,7 +128,7 @@ function _M.notify_ip_block(block_info)
         return false, "json encode failed", "failed"
     end
 
-    local domain = notification_store.normalize_domain(block_info and block_info.server)
+    local domain = notification_store.normalize_domain(block_info and (block_info.domain or block_info.server))
     local policy = notification_store.get_policy(domain)
     if policy and tostring(policy.state) == "on" then
         local add_summary = config.is_centralized_mode()

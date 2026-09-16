@@ -70,6 +70,9 @@
 								return '<div>' + d.ip + '(' + d.ip_country_cn + ')' + '</div>';
 							}
 						}},
+						{field: 'server_name', title: '域名', minWidth: 180, templet: function(d) {
+							return '<div>' + (d.server_name || '-') + '</div>';
+						}},
 						{field: 'block_reason', title: '封禁原因'},
 						{field: 'action', title: '处置动作', templet: function(d) {
 							return '<div>' + getActionText(d.action) + '</div>';

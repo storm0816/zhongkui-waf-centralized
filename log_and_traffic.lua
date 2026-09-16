@@ -227,6 +227,7 @@ local function write_ip_block_log()
     local ip_block_expire_in_seconds = rule_table.ipBlockExpireInSeconds
     local ip = ctx.ip
     local action = ctx.action
+    local server_name = ctx.server_name or ngx.var.server_name or ""
 
     if ip_block_expire_in_seconds == 0 then
         local ipBlackLogger = logger_factory.get_logger(config.CONF_PATH .. "/global_rules/ipBlackList", 'ipBlack', false)
@@ -249,6 +250,8 @@ local function write_ip_block_log()
             endTime = 'DATE_ADD(\'' .. start_time .. '\', INTERVAL ' .. ip_block_expire_in_seconds .. ' SECOND)'
         end
 
+        -- Keep the SQL tuple unchanged so old and new Masters can consume the
+        -- same queue during a rolling upgrade. The domain is carried as metadata.
         local sql_str = '(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %.7f, %.7f, %s, %s, %u, %s, %s)'
 
         sql_str = format(sql_str, quote_sql_str(request_id), quote_sql_str(ip),
@@ -266,11 +269,18 @@ local function write_ip_block_log()
         -- only after the matching ip_block_log record is committed to MySQL.
         local queue_value = cjson_encode({
             sql = sql_str,
+            ip_block_meta = {
+                request_id = request_id,
+                server_name = server_name
+            },
             notify = {
                 ip = ip,
                 attack_type = attack_type,
                 duration = ip_block_expire_in_seconds,
                 action = action,
+                -- Keep the configured server name separate from the request
+                -- host/target so notifications can identify the business domain.
+                domain = server_name,
                 server = ngx.var.host or "",
                 uri = ngx.var.uri or ""
             }
