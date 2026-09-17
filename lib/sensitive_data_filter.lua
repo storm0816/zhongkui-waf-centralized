@@ -211,7 +211,7 @@ function _M.report(detections, content_type)
 
     local ctx = ngx.ctx
     ctx.sensitive_discovery_seen = ctx.sensitive_discovery_seen or {}
-    local server_name = ctx.server_name or ngx.var.server_name or ''
+    local server_name = ctx.request_host or ngx.var.host or ctx.server_name or ngx.var.server_name or ''
     local request_uri = ngx.var.uri or ''
     local hour = os.date('%Y%m%d%H')
 

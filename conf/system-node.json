@@ -62,6 +62,7 @@
     "dingtalk": {
         "state": "off",
         "webhook": "",
+        "secret": "",
         "at_mobiles": ""
     }
 }

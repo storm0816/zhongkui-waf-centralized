@@ -276,7 +276,8 @@ function _M.is_cc()
                     local duration = rule_table.duration
                     local threshold = rule_table.threshold
                     if is_system_option_on("centralized") then
-                        local policy = cc_cluster.resolve(ngx.ctx.server_name or ngx.var.server_name, rule_table)
+                        local request_host = ngx.ctx.request_host or ngx.var.host or ngx.ctx.server_name or ngx.var.server_name
+                        local policy = cc_cluster.resolve(request_host, rule_table)
                         duration = policy.duration
                         threshold = policy.threshold
                         key = cc_cluster.counter_key(policy.host, ip, rule_table)
@@ -289,7 +290,7 @@ function _M.is_cc()
                             return false
                         end
                         ngx.ctx.is_cc = true
-                        cc_cluster.count_hit(ngx.ctx.server_name or ngx.var.server_name)
+                        cc_cluster.count_hit(ngx.ctx.request_host or ngx.var.host or ngx.ctx.server_name or ngx.var.server_name)
                         block_ip(ip, rule_table)
                         do_action(module.moduleName, rule_table, nil, rule_table.rule, 503)
 

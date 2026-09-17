@@ -22,9 +22,12 @@ local function init()
 
     ctx.ua = default_if_blank(ngx.var.http_user_agent, '')
 
+    -- Keep the selected Nginx server for rule lookup, but retain the actual
+    -- request Host for operational metrics when one server has multiple aliases.
     ctx.server_name = default_if_blank(ngx.var.server_name, 'unknown')
+    ctx.request_host = default_if_blank(ngx.var.host, ctx.server_name)
     ctx.geoip = geoip.lookup(ip)
-    cc_cluster.count_request(ctx.server_name)
+    cc_cluster.count_request(ctx.request_host)
 
     ctx.request_id = generate_id()
 

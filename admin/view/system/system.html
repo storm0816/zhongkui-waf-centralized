@@ -255,6 +255,14 @@
 							</div>
 						</div>
 						<div class="layui-form-item">
+							<label class="layui-form-label" style="width: auto;">加签密钥</label>
+							<div class="layui-input-block" style="margin-left: 120px;">
+								<div id="dingtalk-secret-status" class="layui-form-mid layui-word-aux">未启用加签</div>
+								<input type="password" name="secret" autocomplete="new-password" placeholder="留空保持当前设置；填写 SEC 开头密钥可启用或替换加签" class="layui-input" style="margin-top: 34px;" />
+								<input type="checkbox" name="clear_secret" lay-skin="primary" title="移除加签并改为普通 Webhook 发送" />
+							</div>
+						</div>
+						<div class="layui-form-item">
 							<label class="layui-form-label" style="width: auto;">@ 手机号</label>
 							<div class="layui-input-block" style="margin-left: 120px;">
 								<input type="text" name="at_mobiles" autocomplete="off" placeholder="多个手机号用逗号分隔，如 13800138000,13900139000" class="layui-input" />
@@ -470,6 +478,13 @@
 					});
 				}
 
+				function setDingtalkSecretStatus($form, configured) {
+					$form.find('#dingtalk-secret-status')
+						.text(configured ? '已启用加签：密钥已安全保存，不会显示在页面中' : '未启用加签：将按普通 Webhook 方式发送')
+						.toggleClass('layui-font-green', configured)
+						.toggleClass('layui-font-orange', !configured);
+				}
+
 				function applyReadOnlyMode() {
 					$('body').addClass('readonly-mode');
 					$('#readonly-notice').show();
@@ -545,6 +560,8 @@
 								} else if (key == "dingtalk") {
 									var $form = $('form[lay-filter="filter-form-dingtalk"]');
 									setFormValue($form, value);
+									$form.find("[name='clear_secret']").prop('checked', false);
+									setDingtalkSecretStatus($form, value.secret_configured === true || value.secret_configured === 'on');
 								} else if (key == "ldap") {
 									var $form = $('form[lay-filter="filter-form-ldap"]');
 									setFormValue($form, value);
@@ -587,7 +604,7 @@
 						field[name] = $(el).prop('checked') ? 'on' : 'off';
 					});
 
-					formObj.find('input:text').each(function(i, el) {
+					formObj.find('input:text, input:password').each(function(i, el) {
 						var name = $(el).attr('name');
 						field[name] = $(el).val().trim();
 					});
@@ -754,7 +771,15 @@
 				var $form = $(elem).parents('form');
 
 				getFormfiled($form, field);
+				var hasNewSecret = $.trim(field.secret || '') !== '';
+				var clearSecret = field.clear_secret === 'on';
 				update({dingtalk: JSON.stringify(field)}, function() {
+					$form.find("[name='secret']").val('');
+					$form.find("[name='clear_secret']").prop('checked', false);
+					if (clearSecret || hasNewSecret) {
+						setDingtalkSecretStatus($form, !clearSecret);
+					}
+					form.render();
 					$form.find('.btn-save').hide();
 				});
 

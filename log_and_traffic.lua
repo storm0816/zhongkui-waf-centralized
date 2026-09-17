@@ -99,7 +99,7 @@ local function write_attack_log()
     local method = ngx.req.get_method()
     local url = ngx.var.request_uri
     local ua = ctx.ua
-    local host = default_if_blank(ngx.var.server_name, 'unknown')
+    local host = default_if_blank(ctx.request_host or ngx.var.host, ngx.var.server_name or 'unknown')
     local node_ip = default_if_blank(sql.get_node_id and sql.get_node_id() or ngx.var.server_addr, 'unknown')
     local protocol = ngx.var.server_protocol
     local referer = ngx.var.http_referer
@@ -227,7 +227,7 @@ local function write_ip_block_log()
     local ip_block_expire_in_seconds = rule_table.ipBlockExpireInSeconds
     local ip = ctx.ip
     local action = ctx.action
-    local server_name = ctx.server_name or ngx.var.server_name or ""
+    local server_name = ctx.request_host or ngx.var.host or ctx.server_name or ngx.var.server_name or ""
 
     if ip_block_expire_in_seconds == 0 then
         local ipBlackLogger = logger_factory.get_logger(config.CONF_PATH .. "/global_rules/ipBlackList", 'ipBlack', false)

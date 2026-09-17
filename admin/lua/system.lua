@@ -122,6 +122,10 @@ function _M.do_request()
             if system.ldap then
                 system.ldap.bind_password = nil
             end
+            if system.dingtalk then
+                system.dingtalk.secret_configured = tostring(system.dingtalk.secret or "") ~= ""
+                system.dingtalk.secret = nil
+            end
             response.data = cjson_encode(system)
             response.app_version = APP_VERSION
         end
@@ -152,6 +156,18 @@ function _M.do_request()
                     if type(t) == 'table' then
                         if type(option) ~= 'table' then
                             option = {}
+                        end
+                        if key == 'dingtalk' then
+                            local clear_secret = tostring(t.clear_secret or '') == 'on'
+                            t.clear_secret = nil
+                            if clear_secret then
+                                t.secret = ''
+                            elseif t.secret == nil or tostring(t.secret) == '' then
+                                -- The secret is intentionally never returned to the browser.
+                                -- A blank form field therefore means "keep the current secret".
+                                t.secret = option.secret or ''
+                            end
+                            t.secret_configured = nil
                         end
                         for k, v in pairs(t) do
                             option[k] = v

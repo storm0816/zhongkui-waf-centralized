@@ -2,8 +2,35 @@
 local config = require "config"
 local cjson = require "cjson.safe"
 local notification_store = require "dingtalk_notification_store"
+local has_openssl_hmac, openssl_hmac = pcall(require, "openssl.hmac")
 
 local _M = {}
+
+local function hmac_sha256(key, message)
+    if not has_openssl_hmac then
+        return nil, "openssl.hmac is unavailable"
+    end
+    local context, new_err = openssl_hmac.new(key, "sha256")
+    if not context then
+        return nil, new_err or "create HMAC context failed"
+    end
+    return context:final(message)
+end
+
+local function signed_webhook(webhook, secret)
+    secret = tostring(secret or "")
+    if secret == "" then
+        return webhook
+    end
+
+    local timestamp = tostring(math.floor(ngx.now() * 1000))
+    local digest, err = hmac_sha256(secret, timestamp .. "\n" .. secret)
+    if not digest then
+        return nil, err
+    end
+    local separator = webhook:find("?", 1, true) and "&" or "?"
+    return webhook .. separator .. "timestamp=" .. timestamp .. "&sign=" .. ngx.escape_uri(ngx.encode_base64(digest))
+end
 
 local function append_at_mobiles(at_list, seen, mobiles)
     for mobile in tostring(mobiles or ""):gmatch("[%d]+") do
@@ -27,7 +54,13 @@ local function get_at_list(cfg, policy_mobile, notify_global)
     return at_list
 end
 
-local function send_request(webhook, body)
+local function send_request(webhook, body, secret)
+    local signed, sign_err = signed_webhook(webhook, secret)
+    if not signed then
+        ngx.log(ngx.ERR, "[dingtalk] sign request failed: ", sign_err or "nil")
+        return false, sign_err or "sign request failed"
+    end
+
     local sock = ngx.socket.tcp()
     sock:settimeout(10000)
 
@@ -45,7 +78,7 @@ local function send_request(webhook, body)
     end
 
     -- Extract path and query string from webhook URL
-    local path = webhook:match("https?://[^/]+(/.*)") or "/robot/send"
+    local path = signed:match("https?://[^/]+(/.*)") or "/robot/send"
 
     local req = "POST " .. path .. " HTTP/1.1\r\n"
         .. "Host: oapi.dingtalk.com\r\n"
@@ -143,7 +176,7 @@ function _M.notify_ip_block(block_info)
     end
 
     ngx.log(ngx.NOTICE, "[dingtalk] sending ip block notification")
-    local ok, err = send_request(webhook, body)
+    local ok, err = send_request(webhook, body, cfg.secret)
     if ok then
         ngx.log(ngx.NOTICE, "[dingtalk] ip block notification sent successfully")
         notification_store.record_success(block_info)
@@ -215,7 +248,7 @@ function _M.flush_block_summaries()
                     os.date("%Y-%m-%d %H:%M:%S", bucket + seconds))
                 local body = cjson.encode({msgtype="text", text={content=msg},
                     at={atMobiles=get_at_list(cfg, policy.at_mobile, policy.notify_global), isAtAll=false}})
-                local ok, send_err = send_request(cfg.webhook, body)
+                local ok, send_err = send_request(cfg.webhook, body, cfg.secret)
                 local info = {server=domain, attack_type="block_summary", action="SUMMARY", uri=event_key}
                 if ok then
                     local recorded = notification_store.record_success(info)

@@ -57,7 +57,7 @@ local function is_reportable_domain(host)
         and host:match("^[a-z0-9][a-z0-9%.%-]*[a-z0-9]$") ~= nil
 end
 
--- Keep only server names selected by Nginx, never the client supplied Host header.
+-- The request Host distinguishes configured aliases that share one Nginx server block.
 function _M.observe_domain(host)
     host = normalize_host(host)
     if not is_reportable_domain(host) then
