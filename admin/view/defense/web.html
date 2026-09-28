@@ -254,6 +254,11 @@
 			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit"><i class="layui-icon layui-icon-edit"></i></button>
 			<button class="pear-btn pear-btn-danger pear-btn-xs" lay-event="remove"><i class="layui-icon layui-icon-delete"></i></button>
 		</script>
+		<script type="text/html" id="id-template-rule-exception-bar">
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="copy" title="复制为新域名规则" aria-label="复制为新域名规则">复制</button>
+			<button class="pear-btn pear-btn-primary pear-btn-xs" lay-event="edit" title="修改规则" aria-label="修改规则"><i class="layui-icon layui-icon-edit"></i></button>
+			<button class="pear-btn pear-btn-danger pear-btn-xs" lay-event="remove" title="删除规则" aria-label="删除规则"><i class="layui-icon layui-icon-delete"></i></button>
+		</script>
 		<script type="text/html" id="id-template-rule-state">
 			<input type="checkbox" name="state" value="{{= d.id }}" rule-id="{{= d.id }}" lay-skin="switch" lay-filter="filter-rule-state" title="ON|OFF" {{= d.state == "on" ? "checked" : "" }} />
 		</script>
@@ -285,7 +290,7 @@
 							{field: 'module', title: '模块', width: 120},
 							{field: 'description', title: '说明', minWidth: 180},
 							{field: 'state', title: '状态', width: 100, templet: '#id-template-rule-state'},
-							{fixed: 'right', title:'操作', width: 110, minWidth: 110, toolbar: '#id-template-bar'}
+							{fixed: 'right', title:'操作', width: 155, minWidth: 155, toolbar: '#id-template-rule-exception-bar'}
 						]];
 					}
 					return [[
@@ -502,7 +507,20 @@
 				table.on('tool(filter-table-rules)', function(obj) {
 					var data = obj.data; // 获得当前行数据
 
-					if(obj.event === 'edit') {
+					if(obj.event === 'copy') {
+						// Clear the id so saving this form creates a new exception rule.
+						var copiedRule = {
+							serverName: data.serverName || '*',
+							method: data.method || '*',
+							uri: data.uri || '.*',
+							module: data.module || '*',
+							description: data.description || '',
+							state: data.state === 'on'
+						};
+						openLayer('复制规则');
+						form.val('filter-form-rule', copiedRule);
+						form.render();
+					} else if(obj.event === 'edit') {
 						openLayer('编辑规则');
 						var state = data.state == 'on' ? true : false;
 						data.state = state;
