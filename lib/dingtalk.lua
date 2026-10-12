@@ -5,6 +5,8 @@ local notification_store = require "dingtalk_notification_store"
 local has_openssl_hmac, openssl_hmac = pcall(require, "openssl.hmac")
 
 local _M = {}
+-- Conservative application cap for one encoded summary request, not a DingTalk API limit.
+local MAX_SUMMARY_BODY_BYTES = 3500
 
 local function hmac_sha256(key, message)
     if not has_openssl_hmac then
@@ -188,6 +190,62 @@ function _M.notify_ip_block(block_info)
     end
 end
 
+local function summary_info(item)
+    return {server=item.domain, attack_type="block_summary", action="SUMMARY", uri=item.event_key}
+end
+
+local function finish_summary_item(item, delivered, err, complete)
+    local info = summary_info(item)
+    if delivered then
+        if notification_store.record_success(info) then
+            local removed, remove_err = complete(item)
+            if not removed then
+                ngx.log(ngx.ERR, "[dingtalk] cleanup sent summary failed, domain=", item.domain,
+                    " err=", remove_err or "nil")
+            end
+            return
+        end
+        err = "record summary success failed"
+        ngx.log(ngx.ERR, "[dingtalk] ", err, ", domain=", item.domain)
+    else
+        notification_store.record_failure(info, err)
+    end
+    local retried, retry_err = notification_store.retry_summary_block(item, err)
+    if not retried then
+        ngx.log(ngx.ERR, "[dingtalk] reschedule summary failed, domain=", item.domain,
+            " err=", retry_err or "nil")
+    end
+end
+
+local function encode_summary_batch(group, items)
+    local total = 0
+    local lines = {}
+    for _, item in ipairs(items) do
+        total = total + item.block_count
+        lines[#lines + 1] = string.format("%s：%d 次", item.domain, item.block_count)
+    end
+    local content = string.format("【钟馗WAF】封禁汇总\n统计周期：%d 分钟\n统计时间：%s 至 %s\n域名数：%d，累计封禁：%d 次\n%s",
+        group.interval, os.date("%Y-%m-%d %H:%M:%S", group.bucket),
+        os.date("%Y-%m-%d %H:%M:%S", group.due_at), #items, total, table.concat(lines, "\n"))
+    return cjson.encode({msgtype="text", text={content=content},
+        at={atMobiles=group.at_mobiles, isAtAll=false}})
+end
+
+local function send_summary_batch(cfg, group, items, complete)
+    local body = encode_summary_batch(group, items)
+    local ok, err
+    if not body then
+        ok, err = false, "encode summary batch failed"
+    elseif #body > MAX_SUMMARY_BODY_BYTES then
+        ok, err = false, "summary batch exceeds byte limit"
+    else
+        ok, err = send_request(cfg.webhook, body, cfg.secret)
+    end
+    for _, item in ipairs(items) do
+        finish_summary_item(item, ok, err, complete)
+    end
+end
+
 function _M.flush_block_summaries()
     local cfg = config.get_system_config("dingtalk")
     if not cfg or cfg.state ~= "on" or not cfg.webhook or cfg.webhook == "" then return end
@@ -215,6 +273,11 @@ function _M.flush_block_summaries()
         return
     end
 
+    local groups = {}
+    local group_list = {}
+    local complete = config.is_centralized_mode()
+        and notification_store.complete_summary_block
+        or notification_store.complete_local_summary_block
     for _, item in ipairs(rows) do
         local domain = notification_store.normalize_domain(item.domain)
         local interval = tonumber(item.interval_minutes) or 0
@@ -222,10 +285,6 @@ function _M.flush_block_summaries()
         local bucket = tonumber(item.bucket) or 0
         local count = tonumber(item.block_count) or 0
         local seconds = interval * 60
-        local complete = config.is_centralized_mode()
-            and notification_store.complete_summary_block
-            or notification_store.complete_local_summary_block
-
         local policy = policy_map[domain]
         if not policy or policy.interval_minutes ~= interval or policy.summary_time ~= summary_time
             or interval <= 0 or bucket <= 0 or count <= 0 then
@@ -243,33 +302,48 @@ function _M.flush_block_summaries()
                         " err=", remove_err or "nil")
                 end
             else
-                local msg = string.format("【钟馗WAF】封禁汇总\n域名：%s\n统计周期：%d 分钟\n累计封禁：%d 次\n统计时间：%s 至 %s",
-                    domain, interval, count, os.date("%Y-%m-%d %H:%M:%S", bucket),
-                    os.date("%Y-%m-%d %H:%M:%S", bucket + seconds))
-                local body = cjson.encode({msgtype="text", text={content=msg},
-                    at={atMobiles=get_at_list(cfg, policy.at_mobile, policy.notify_global), isAtAll=false}})
-                local ok, send_err = send_request(cfg.webhook, body, cfg.secret)
-                local info = {server=domain, attack_type="block_summary", action="SUMMARY", uri=event_key}
-                if ok then
-                    local recorded = notification_store.record_success(info)
-                    if not recorded then
-                        ngx.log(ngx.ERR, "[dingtalk] record summary success failed, domain=", domain)
-                    end
-                    local removed, remove_err = complete(item)
-                    if not removed then
-                        ngx.log(ngx.ERR, "[dingtalk] cleanup sent summary failed, domain=", domain,
-                            " err=", remove_err or "nil")
-                    end
-                else
-                    notification_store.record_failure(info, send_err)
-                    local retried, retry_err = notification_store.retry_summary_block(item, send_err)
-                    if not retried then
-                        ngx.log(ngx.ERR, "[dingtalk] reschedule summary failed, domain=", domain,
-                            " err=", retry_err or "nil")
-                    end
+                local at_mobiles = get_at_list(cfg, policy.at_mobile, policy.notify_global)
+                table.sort(at_mobiles)
+                local due_at = bucket + seconds
+                local group_key = table.concat({tostring(due_at), tostring(interval),
+                    table.concat(at_mobiles, ",")}, ":")
+                local group = groups[group_key]
+                if not group then
+                    group = {key=group_key, interval=interval, bucket=bucket,
+                        due_at=due_at, at_mobiles=at_mobiles, items={}}
+                    groups[group_key] = group
+                    group_list[#group_list + 1] = group
+                end
+                item.domain = domain
+                item.block_count = count
+                item.event_key = event_key
+                group.items[#group.items + 1] = item
+            end
+        end
+    end
+
+    table.sort(group_list, function(a, b) return a.key < b.key end)
+    for _, group in ipairs(group_list) do
+        table.sort(group.items, function(a, b) return a.domain < b.domain end)
+        local batch = {}
+        for _, item in ipairs(group.items) do
+            local candidate = {}
+            for index, queued in ipairs(batch) do candidate[index] = queued end
+            candidate[#candidate + 1] = item
+            local body = encode_summary_batch(group, candidate)
+            if body and #body <= MAX_SUMMARY_BODY_BYTES then
+                batch = candidate
+            else
+                if #batch > 0 then send_summary_batch(cfg, group, batch, complete) end
+                batch = {item}
+                local single_body = encode_summary_batch(group, batch)
+                if not single_body or #single_body > MAX_SUMMARY_BODY_BYTES then
+                    send_summary_batch(cfg, group, batch, complete)
+                    batch = {}
                 end
             end
         end
+        if #batch > 0 then send_summary_batch(cfg, group, batch, complete) end
     end
 end
 
