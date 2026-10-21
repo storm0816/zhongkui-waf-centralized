@@ -27,7 +27,7 @@ local function init()
     ctx.server_name = default_if_blank(ngx.var.server_name, 'unknown')
     ctx.request_host = default_if_blank(ngx.var.host, ctx.server_name)
     ctx.geoip = geoip.lookup(ip)
-    cc_cluster.count_request(ctx.request_host)
+    cc_cluster.count_request(ctx.request_host, ctx.ip)
 
     ctx.request_id = generate_id()
 

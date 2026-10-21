@@ -2587,7 +2587,7 @@ function _M.list_cc_cluster_domains(filters)
         COALESCE(p.duration_seconds,def.duration_seconds,60) AS duration_seconds,
         CASE WHEN p.domain IS NULL THEN 'default' ELSE 'custom' END AS policy_source,
         COUNT(DISTINCT nd.node_ip) AS node_count,
-        GROUP_CONCAT(DISTINCT nd.node_ip ORDER BY nd.node_ip SEPARATOR ',') AS node_ips
+        '' AS node_ips
         FROM waf_cluster_domain d
         LEFT JOIN waf_cc_domain_policy p ON p.domain=d.domain AND p.state='on'
         LEFT JOIN waf_cc_domain_policy def ON def.domain='*'
@@ -2623,18 +2623,30 @@ function _M.list_cc_cluster_domains(filters)
     end
     local cc_cluster = require "cc_cluster"
     local now = ngx.time()
+    local metric_keys = {}
+    for _, row in ipairs(rows) do
+        for offset = 0, 4 do
+            local minute = os.date("%Y%m%d%H%M", now - offset * 60)
+            metric_keys[#metric_keys + 1] = cc_cluster.get_metric_key("requests", row.domain, minute)
+            metric_keys[#metric_keys + 1] = cc_cluster.get_metric_key("hits", row.domain, minute)
+        end
+        for offset = 0, 23 do
+            metric_keys[#metric_keys + 1] = cc_cluster.get_hourly_request_metric_key(row.domain, os.date("%Y%m%d%H", now - offset * 3600))
+        end
+    end
+    local metric_values = cc_cluster.read_metrics(metric_keys) or {}
     for _, row in ipairs(rows) do
         local requests, hits, requests_24h = 0, 0, 0
         for offset = 0, 4 do
             local minute = os.date("%Y%m%d%H%M", now - offset * 60)
-            local value = tonumber(redis_cli.get(cc_cluster.get_metric_key("requests", row.domain, minute))) or 0
+            local value = metric_values[cc_cluster.get_metric_key("requests", row.domain, minute)] or 0
             requests = requests + value
-            hits = hits + (tonumber(redis_cli.get(cc_cluster.get_metric_key("hits", row.domain, minute))) or 0)
+            hits = hits + (metric_values[cc_cluster.get_metric_key("hits", row.domain, minute)] or 0)
             if offset == 0 then row.requests_1m = value end
         end
         for offset = 0, 23 do
             local hour = os.date("%Y%m%d%H", now - offset * 3600)
-            requests_24h = requests_24h + (tonumber(redis_cli.get(cc_cluster.get_hourly_request_metric_key(row.domain, hour))) or 0)
+            requests_24h = requests_24h + (metric_values[cc_cluster.get_hourly_request_metric_key(row.domain, hour)] or 0)
         end
         row.requests_5m = requests
         row.cc_hits_5m = hits
@@ -2658,7 +2670,29 @@ function _M.list_cc_cluster_domains(filters)
     local offset = (page - 1) * limit
     local result = {}
     for index = offset + 1, math.min(offset + limit, total) do
+        rows[index].uv_24h = cc_cluster.get_uv_24h(rows[index].domain, now) or ngx.null
         result[#result + 1] = rows[index]
+    end
+    local page_domains = {}
+    for _, row in ipairs(result) do
+        if row.domain ~= '*' then page_domains[#page_domains + 1] = quote_sql_str(row.domain) end
+    end
+    if #page_domains > 0 then
+        local node_rows, node_err = mysql.query(
+            'SELECT DISTINCT domain,node_ip FROM waf_cluster_node_domain WHERE domain IN (' ..
+            concat(page_domains, ',') .. ') ORDER BY domain,node_ip')
+        if not node_rows then return nil, node_err end
+        local ips_by_domain = {}
+        for _, node in ipairs(node_rows) do
+            local key = tostring(node.domain or ''):lower()
+            ips_by_domain[key] = ips_by_domain[key] or {}
+            ips_by_domain[key][#ips_by_domain[key] + 1] = node.node_ip
+        end
+        for _, row in ipairs(result) do
+            if row.domain ~= '*' then
+                row.node_ips = concat(ips_by_domain[tostring(row.domain):lower()] or {}, ',')
+            end
+        end
     end
     return result, nil, total
 end

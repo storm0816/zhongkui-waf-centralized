@@ -5,6 +5,7 @@
 		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
 		<title>CC防护</title>
 		<link href="../../component/pear/css/pear.css" rel="stylesheet">
+		<link href="../../css/cluster-domain-table.css?v=copy1" rel="stylesheet">
 	</head>
 	<body class="pear-container">
 		<div id="id-standalone-cc-section">
@@ -206,6 +207,7 @@
 		<script src="../../component/layui/layui.js"></script>
 		<script src="../../component/pear/pear.js"></script>
 		<script src="../../js/action.js"></script>
+		<script src="../../js/cluster-domain-table.js?v=copy1"></script>
 		<script>
 			layui.use(['form','table','util','jquery','popup'], function() {
 				var table = layui.table;
@@ -482,21 +484,10 @@
 						]]
 					});
 
+					$('<div class="layui-word-aux"></div>').text(ClusterDomainTable.note).insertBefore('#id-table-cluster-domains');
 					table.render({
 						id: 'id-table-cluster-domains', elem: '#id-table-cluster-domains', url: '/clusternode/domains', page: true, limit: 20, limits: [10, 20, 50, 100],
-						cols: [[
-							{field:'domain', title:'域名', minWidth:220},
-							{field:'node_ips', title:'来源节点', minWidth:180, templet:function(d){ return d.node_ips || '-'; }},
-							{field:'node_count', title:'节点数', width:85},
-							{field:'requests_1m', title:'1分钟请求', width:110},
-							{field:'cc_hits_5m', title:'5分钟CC命中', width:125},
-							{field:'attack_count_24h', title:'24小时被攻击', width:135},
-							{field:'requests_24h', title:'24小时访问', width:115},
-							{title:'集群阈值', minWidth:165, templet:function(d){ return d.threshold_value + ' 次 / ' + d.duration_seconds + ' 秒（' + (d.policy_source === 'custom' ? '特例' : '默认') + '）'; }},
-							{field:'status', title:'状态', width:90, templet:function(d){ return d.domain === '*' ? '默认' : (d.status === 'active' ? '活跃' : '已停用'); }},
-							{field:'last_seen', title:'最后发现', width:170},
-							{title:'操作', toolbar:'#id-template-domain-bar', width:140}
-						]]
+						cols: [ClusterDomainTable.columns(true)]
 					});
 
 					form.on('submit(filter-cluster-domain-search)', function(data) {
@@ -511,6 +502,7 @@
 					});
 
 					table.on('tool(filter-table-cluster-domains)', function(obj) {
+						if (ClusterDomainTable.handleEvent(obj, layer)) return;
 						var d = obj.data;
 						if (obj.event === 'delete') {
 							layer.confirm('确认删除已停用域名「' + d.domain + '」？其集群 CC 特例阈值也会一并删除。', {icon: 3, title: '删除域名'}, function(index) {
