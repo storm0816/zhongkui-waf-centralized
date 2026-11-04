@@ -215,6 +215,11 @@ function _M.do_request()
         local ok, reload_err = config.reload_config_file()
         if not ok then response.code = 500; response.msg = "集群发布失败: " .. tostring(reload_err) end
     end
+    if uri == "/system/update" or uri == "/system/attacklog/archive/run"
+        or uri == "/system/security/archive/run" or uri == "/system/blocking/archive/run" then
+        require("auth_store").audit(user.get_current_user(), "system.change", uri,
+            response.code == 200 and "success" or "failed", "", require("ip_utils").get_client_ip())
+    end
     ngx.say(cjson_encode(response))
 end
 

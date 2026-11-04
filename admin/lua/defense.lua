@@ -193,6 +193,11 @@ function _M.do_request()
         local ok, reload_err = config.reload_config_file()
         if not ok then response.code = 500; response.msg = "集群发布失败: " .. tostring(reload_err) end
     end
+    if uri == "/defense/config/update" or uri == "/defense/rule/state/update"
+        or uri == "/defense/rule/save" or uri == "/defense/rule/remove" then
+        require("auth_store").audit(user.get_current_user(), "defense.change", uri,
+            response.code == 200 and "success" or "failed", "", require("ip_utils").get_client_ip())
+    end
     ngx.say(cjson_encode(response))
 end
 

@@ -695,131 +695,6 @@ local SQL_DELETE_STALE_CLUSTER_NODES = [[
     WHERE last_seen < NOW() - INTERVAL %d SECOND
 ]]
 
-local SQL_INSERT_ATTACK_LOG_ARCHIVE = [[
-    INSERT IGNORE INTO attack_log_archive
-    SELECT *
-    FROM attack_log
-    WHERE request_time < NOW() - INTERVAL %d DAY
-    LIMIT %d
-]]
-
-local SQL_DELETE_ATTACK_LOG_ARCHIVE_SOURCE = [[
-    DELETE FROM attack_log
-    WHERE request_time < NOW() - INTERVAL %d DAY
-    LIMIT %d
-]]
-
-local function get_attack_log_archive_range_table_name(range_start, range_end)
-    local start_dt = tostring(range_start or "")
-    local end_dt = tostring(range_end or "")
-
-    local start_year, start_month, start_day = start_dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
-    local end_year, end_month, end_day = end_dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
-    if not start_year or not start_month or not start_day or not end_year or not end_month or not end_day then
-        return nil
-    end
-
-    local start_label = string.format("%s%s%s", start_year, start_month, start_day)
-    local end_ts = os.time({
-        year = tonumber(end_year),
-        month = tonumber(end_month),
-        day = tonumber(end_day),
-        hour = 0,
-        min = 0,
-        sec = 0
-    })
-    if not end_ts then
-        return nil
-    end
-    local end_label = os.date("%Y%m%d", end_ts - 86400)
-    return "attack_log_archive_" .. start_label .. "_" .. end_label
-end
-
-local function get_datetime_label(datetime_str)
-    local dt = tostring(datetime_str or "")
-    local year, month, day = dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
-    if not year or not month or not day then
-        return nil
-    end
-    return string.format("%s%s%s", year, month, day)
-end
-
-local function get_week_bounds_from_request_time(request_time)
-    local dt = tostring(request_time or "")
-    local year, month, day = dt:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)")
-    if not year or not month or not day then
-        return nil, nil
-    end
-
-    local t = os.time({
-        year = tonumber(year),
-        month = tonumber(month),
-        day = tonumber(day),
-        hour = 0,
-        min = 0,
-        sec = 0
-    })
-    if not t then
-        return nil, nil
-    end
-
-    local wday = tonumber(os.date("%w", t)) or 0
-    local monday_offset = (wday == 0) and 6 or (wday - 1)
-    local start_time = t - monday_offset * 86400
-    local end_time = start_time + 7 * 86400
-    return os.date("%Y-%m-%d %H:%M:%S", start_time), os.date("%Y-%m-%d %H:%M:%S", end_time)
-end
-
-local function ensure_attack_log_week_archive_table(table_name)
-    local create_sql = format(
-        "CREATE TABLE IF NOT EXISTS `%s` LIKE `attack_log`",
-        table_name
-    )
-    return mysql.query(create_sql)
-end
-
-local function get_sensitive_discovery_archive_range_table_name(range_start, range_end)
-    local attack_table = get_attack_log_archive_range_table_name(range_start, range_end)
-    if not attack_table then
-        return nil
-    end
-    return attack_table:gsub("^attack_log_archive_", "sensitive_discovery_archive_")
-end
-
-local function ensure_sensitive_discovery_week_archive_table(table_name)
-    local create_sql = format(
-        "CREATE TABLE IF NOT EXISTS `%s` LIKE `sensitive_discovery`",
-        table_name
-    )
-    return mysql.query(create_sql)
-end
-
-local function get_ip_block_log_archive_range_table_name(range_start, range_end)
-    local attack_table = get_attack_log_archive_range_table_name(range_start, range_end)
-    if not attack_table then return nil end
-    return attack_table:gsub("^attack_log_archive_", "ip_block_log_archive_")
-end
-
-local function ensure_ip_block_log_week_archive_table(table_name)
-    return mysql.query(format("CREATE TABLE IF NOT EXISTS `%s` LIKE `ip_block_log`", table_name))
-end
-
-local function get_oldest_archive_request_time(days)
-    local sql = format([[
-        SELECT MIN(request_time) AS request_time
-        FROM attack_log
-        WHERE request_time < NOW() - INTERVAL %d DAY
-    ]], days)
-    local res, err = mysql.query(sql)
-    if not res then
-        return nil, err
-    end
-    if not res[1] or not res[1].request_time then
-        return nil, nil
-    end
-    return res[1].request_time, nil
-end
-
 local SQL_CREATE_TABLE_RULE_CANDIDATE = [[
     CREATE TABLE waf_rule_candidate (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -3098,257 +2973,24 @@ function _M.publish_rule_candidate(id, publisher)
 end
 
 function _M.archive_attack_log_once(force)
-    if not is_system_option_on("mysql") then
-        return { code = 0, msg = "mysql is off, skip", skipped = true }
-    end
-
+    if not is_system_option_on("mysql") then return {code=0, msg="mysql is off, skip", skipped=true} end
     local enabled, days, batch = get_attack_log_retention_config()
-    if not force and not enabled then
-        return { code = 0, msg = "attackLogRetention is off, skip", skipped = true }
-    end
-
-    local range_sql = format([[
-        SELECT
-            DATE_FORMAT(
-                DATE_SUB(DATE(MIN(request_time)), INTERVAL WEEKDAY(MIN(request_time)) DAY),
-                '%%Y-%%m-%%d 00:00:00'
-            ) AS week_start,
-            DATE_FORMAT(
-                DATE_ADD(
-                    DATE_SUB(DATE(MIN(request_time)), INTERVAL WEEKDAY(MIN(request_time)) DAY),
-                    INTERVAL 7 DAY
-                ),
-                '%%Y-%%m-%%d 00:00:00'
-            ) AS week_end
-        FROM attack_log
-        WHERE request_time < NOW() - INTERVAL %d DAY
-    ]], days)
-    local range_res, range_err = mysql.query(range_sql)
-    if not range_res then
-        ngx.log(ngx.ERR, "failed to query attack_log archive range: ", range_err)
-        return { code = 500, msg = "query archive range failed", error = range_err }
-    end
-    if not range_res[1] or not range_res[1].week_start or range_res[1].week_start == ngx.null
-        or not range_res[1].week_end or range_res[1].week_end == ngx.null then
-        return {
-            code = 0,
-            msg = "no archive rows",
-            inserted = 0,
-            deleted = 0,
-            days = days,
-            batch = batch
-        }
-    end
-
-    local week_start = tostring(range_res[1].week_start)
-    local week_end = tostring(range_res[1].week_end)
-
-    local table_name = get_attack_log_archive_range_table_name(week_start, week_end)
-    if not table_name then
-        return { code = 500, msg = "invalid archive table name", error = week_start .. "~" .. week_end }
-    end
-
-    local create_res, create_err = ensure_attack_log_week_archive_table(table_name)
-    if not create_res then
-        ngx.log(ngx.ERR, "failed to ensure attack log archive table: ", table_name, ", err=", create_err)
-        return { code = 500, msg = "ensure archive table failed", error = create_err }
-    end
-
-    local insert_sql = format(
-        "INSERT IGNORE INTO `%s` SELECT * FROM attack_log WHERE request_time < NOW() - INTERVAL %d DAY AND request_time >= %s AND request_time < %s LIMIT %d",
-        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch
-    )
-    local insert_res, insert_err = mysql.query(insert_sql)
-    if not insert_res then
-        ngx.log(ngx.ERR, "failed to archive attack_log to ", table_name, ": ", insert_err)
-        return { code = 500, msg = "archive insert failed", error = insert_err }
-    end
-
-    local delete_sql = format(
-        "DELETE FROM attack_log WHERE request_time < NOW() - INTERVAL %d DAY AND request_time >= %s AND request_time < %s LIMIT %d",
-        days, quote_sql_str(week_start), quote_sql_str(week_end), batch
-    )
-    local delete_res, delete_err = mysql.query(delete_sql)
-    if not delete_res then
-        ngx.log(ngx.ERR, "failed to delete archived attack_log rows from source: ", delete_err)
-        return { code = 500, msg = "archive delete failed", error = delete_err }
-    end
-
-    local inserted = insert_res.affected_rows or 0
-    local deleted = delete_res.affected_rows or 0
-    if inserted > 0 or deleted > 0 then
-        ngx.log(ngx.INFO, "attack_log retention run success, table=", table_name, ", days=", days, ", batch=", batch,
-            ", inserted=", inserted, ", deleted=", deleted)
-    end
-
-    local archive_start = get_datetime_label(week_start)
-    local archive_end = get_datetime_label(os.date("%Y-%m-%d %H:%M:%S", os.time({
-        year = tonumber(week_end:sub(1, 4)),
-        month = tonumber(week_end:sub(6, 7)),
-        day = tonumber(week_end:sub(9, 10)),
-        hour = tonumber(week_end:sub(12, 13)),
-        min = tonumber(week_end:sub(15, 16)),
-        sec = tonumber(week_end:sub(18, 19))
-    }) - 86400))
-
-    return {
-        code = 0,
-        msg = "ok",
-        inserted = inserted,
-        deleted = deleted,
-        days = days,
-        batch = batch,
-        archive_table = table_name,
-        archive_range = string.format("%s_%s", archive_start, archive_end)
-    }
+    if not force and not enabled then return {code=0, msg="attackLogRetention is off, skip", skipped=true} end
+    return require("archive_batch").run("attack", days, batch)
 end
 
 function _M.archive_sensitive_discovery_once(force)
-    if not is_system_option_on("mysql") then
-        return { code = 0, msg = "mysql is off, skip", skipped = true }
-    end
-
+    if not is_system_option_on("mysql") then return {code=0, msg="mysql is off, skip", skipped=true} end
     local enabled, days, batch = get_attack_log_retention_config()
-    if not force and not enabled then
-        return { code = 0, msg = "attackLogRetention is off, skip", skipped = true }
-    end
-
-    local range_sql = format([[
-        SELECT
-            DATE_FORMAT(
-                DATE_SUB(DATE(MIN(last_seen)), INTERVAL WEEKDAY(MIN(last_seen)) DAY),
-                '%%Y-%%m-%%d 00:00:00'
-            ) AS week_start,
-            DATE_FORMAT(
-                DATE_ADD(
-                    DATE_SUB(DATE(MIN(last_seen)), INTERVAL WEEKDAY(MIN(last_seen)) DAY),
-                    INTERVAL 7 DAY
-                ),
-                '%%Y-%%m-%%d 00:00:00'
-            ) AS week_end
-        FROM sensitive_discovery
-        WHERE last_seen < NOW() - INTERVAL %d DAY
-    ]], days)
-    local range_res, range_err = mysql.query(range_sql)
-    if not range_res then
-        ngx.log(ngx.ERR, "failed to query sensitive discovery archive range: ", range_err)
-        return { code = 500, msg = "query sensitive archive range failed", error = range_err }
-    end
-    if not range_res[1] or not range_res[1].week_start or range_res[1].week_start == ngx.null
-        or not range_res[1].week_end or range_res[1].week_end == ngx.null then
-        return {
-            code = 0,
-            msg = "no archive rows",
-            inserted = 0,
-            deleted = 0,
-            days = days,
-            batch = batch
-        }
-    end
-
-    local week_start = tostring(range_res[1].week_start)
-    local week_end = tostring(range_res[1].week_end)
-    local table_name = get_sensitive_discovery_archive_range_table_name(week_start, week_end)
-    if not table_name then
-        return { code = 500, msg = "invalid sensitive archive table name", error = week_start .. "~" .. week_end }
-    end
-
-    local create_res, create_err = ensure_sensitive_discovery_week_archive_table(table_name)
-    if not create_res then
-        ngx.log(ngx.ERR, "failed to ensure sensitive discovery archive table: ", table_name, ", err=", create_err)
-        return { code = 500, msg = "ensure sensitive archive table failed", error = create_err }
-    end
-
-    local insert_sql = format(
-        "INSERT IGNORE INTO `%s` SELECT * FROM sensitive_discovery WHERE last_seen < NOW() - INTERVAL %d DAY AND last_seen >= %s AND last_seen < %s ORDER BY id ASC LIMIT %d",
-        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch
-    )
-    local insert_res, insert_err = mysql.query(insert_sql)
-    if not insert_res then
-        ngx.log(ngx.ERR, "failed to archive sensitive discovery to ", table_name, ": ", insert_err)
-        return { code = 500, msg = "sensitive archive insert failed", error = insert_err }
-    end
-
-    -- Only remove records that are already present in the archive table.
-    local delete_sql = format([[
-        DELETE FROM sensitive_discovery
-        WHERE event_key IN (
-            SELECT event_key FROM (
-                SELECT source.event_key
-                FROM sensitive_discovery AS source
-                INNER JOIN `%s` AS archive ON archive.event_key = source.event_key
-                WHERE source.last_seen < NOW() - INTERVAL %d DAY
-                  AND source.last_seen >= %s
-                  AND source.last_seen < %s
-                ORDER BY source.id ASC
-                LIMIT %d
-            ) AS copied_rows
-        )
-    ]], table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch)
-    local delete_res, delete_err = mysql.query(delete_sql)
-    if not delete_res then
-        ngx.log(ngx.ERR, "failed to delete archived sensitive discovery rows from source: ", delete_err)
-        return { code = 500, msg = "sensitive archive delete failed", error = delete_err }
-    end
-
-    local inserted = insert_res.affected_rows or 0
-    local deleted = delete_res.affected_rows or 0
-    if inserted > 0 or deleted > 0 then
-        ngx.log(ngx.INFO, "sensitive discovery retention run success, table=", table_name, ", days=", days,
-            ", batch=", batch, ", inserted=", inserted, ", deleted=", deleted)
-    end
-
-    return {
-        code = 0,
-        msg = "ok",
-        inserted = inserted,
-        deleted = deleted,
-        days = days,
-        batch = batch,
-        archive_table = table_name,
-        archive_range = string.format("%s_%s", get_datetime_label(week_start), get_datetime_label(week_end))
-    }
+    if not force and not enabled then return {code=0, msg="attackLogRetention is off, skip", skipped=true} end
+    return require("archive_batch").run("sensitive", days, batch)
 end
 
 function _M.archive_ip_block_log_once(force)
-    if not is_system_option_on("mysql") then
-        return { code = 0, msg = "mysql is off, skip", skipped = true }
-    end
-
+    if not is_system_option_on("mysql") then return {code=0, msg="mysql is off, skip", skipped=true} end
     local enabled, days, batch = get_block_log_retention_config()
-    if not force and not enabled then
-        return { code = 0, msg = "blockLogRetention is off, skip", skipped = true }
-    end
-
-    local range_res, range_err = mysql.query(format([[SELECT
-        DATE_FORMAT(DATE_SUB(DATE(MIN(start_time)), INTERVAL WEEKDAY(MIN(start_time)) DAY),'%%Y-%%m-%%d 00:00:00') AS week_start,
-        DATE_FORMAT(DATE_ADD(DATE_SUB(DATE(MIN(start_time)), INTERVAL WEEKDAY(MIN(start_time)) DAY),INTERVAL 7 DAY),'%%Y-%%m-%%d 00:00:00') AS week_end
-        FROM ip_block_log WHERE start_time<NOW()-INTERVAL %d DAY]], days))
-    if not range_res then return { code = 500, msg = "query ip block archive range failed", error = range_err } end
-    if not range_res[1] or not range_res[1].week_start or range_res[1].week_start == ngx.null
-        or not range_res[1].week_end or range_res[1].week_end == ngx.null then
-        return { code = 0, msg = "no archive rows", inserted = 0, deleted = 0, days = days, batch = batch }
-    end
-
-    local week_start, week_end = tostring(range_res[1].week_start), tostring(range_res[1].week_end)
-    local table_name = get_ip_block_log_archive_range_table_name(week_start, week_end)
-    if not table_name then return { code = 500, msg = "invalid ip block archive table name" } end
-    if not ensure_ip_block_log_week_archive_table(table_name) then
-        return { code = 500, msg = "ensure ip block archive table failed" }
-    end
-
-    local inserted = mysql.query(format([[INSERT IGNORE INTO `%s` SELECT * FROM ip_block_log
-        WHERE start_time<NOW()-INTERVAL %d DAY AND start_time>=%s AND start_time<%s ORDER BY id ASC LIMIT %d]],
-        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch))
-    if not inserted then return { code = 500, msg = "archive ip block log failed" } end
-    local deleted = mysql.query(format([[DELETE FROM ip_block_log WHERE id IN
-        (SELECT id FROM (SELECT source.id FROM ip_block_log source INNER JOIN `%s` archive ON archive.id=source.id
-        WHERE source.start_time<NOW()-INTERVAL %d DAY AND source.start_time>=%s AND source.start_time<%s
-        ORDER BY source.id ASC LIMIT %d) copied)]],
-        table_name, days, quote_sql_str(week_start), quote_sql_str(week_end), batch))
-    if not deleted then return { code = 500, msg = "delete archived ip block log failed" } end
-    return { code = 0, msg = "ok", inserted = inserted.affected_rows or 0, deleted = deleted.affected_rows or 0,
-        days = days, batch = batch, archive_table = table_name }
+    if not force and not enabled then return {code=0, msg="blockLogRetention is off, skip", skipped=true} end
+    return require("archive_batch").run("blocking", days, batch)
 end
 
 function _M.archive_dingtalk_failure_once(force)
@@ -3366,14 +3008,19 @@ end
 function _M.archive_security_records_once(force)
     local attack_log = _M.archive_attack_log_once(force)
     local sensitive_discovery = _M.archive_sensitive_discovery_once(force)
+    local enabled, days, batch = get_attack_log_retention_config()
+    local audit = (is_system_option_on("mysql") and (enabled or force))
+        and require("auth_store").archive_audit(days, batch) or {code=0, skipped=true}
     local failed = (attack_log and attack_log.code ~= 0)
         or (sensitive_discovery and sensitive_discovery.code ~= 0)
+        or (audit and audit.code ~= 0)
 
     return {
         code = failed and 500 or 0,
         msg = failed and "security record archive failed" or "ok",
         attack_log = attack_log or {},
-        sensitive_discovery = sensitive_discovery or {}
+        sensitive_discovery = sensitive_discovery or {},
+        audit = audit or {}
     }
 end
 

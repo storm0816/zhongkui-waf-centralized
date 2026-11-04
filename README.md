@@ -2,7 +2,15 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 2.2.4`
+当前版本：`Version 2.2.5`
+
+### 2.2.5 发布说明
+
+- 用户与权限页面新增本地用户创建，支持初始角色和独立密码；本地账号可由 admin 超级管理员重置密码，LDAP 账号仍由 LDAP 管理密码。
+- 本地密码设置统一要求至少 8 位，并包含字母、数字和特殊字符；前端提供实时规则提示，后端强制校验。
+- 新本地用户使用独立的加盐密码摘要存储；保留既有 admin 密码和登录方式，并防止同名 LDAP 用户映射到本地身份。
+- 新建本地用户首次登录及管理员重置密码后必须改密；新密码不能与当前密码相同，用户菜单提供自行改密入口。
+- Master 和单机启动时初始化账号与本地密码表，并自动补齐 `must_change_password` 字段；升级时已登录过的本地用户保持现状，未登录过的用户需首次改密。Node 不初始化管理账号表。
 
 ### 2.2.4 发布说明
 
@@ -309,8 +317,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_release_windows.ps1
 统计、封禁与落库策略：
 - 攻击日志/封禁日志：Redis List 队列（`waf:queue:attack_log`、`waf:queue:ip_block_log`）
 - 敏感数据发现：Node/单机写入队列，Master/单机落库；仅保留脱敏后的命中样例
-- 安全记录归档：攻击日志按 `request_time`、敏感数据发现按 `last_seen` 共用一套策略，按周落表到 `attack_log_archive_YYYYMMDD_YYYYMMDD` 与 `sensitive_discovery_archive_YYYYMMDD_YYYYMMDD`
+- 安全记录归档：攻击日志按 `request_time`、敏感数据发现按 `last_seen` 判断保留期限，符合条件的记录按 ID 升序分批写入执行当周的归档表，表名中的日期表示归档执行周期。
+- 账号审计日志按 `created_at` 使用安全记录归档配置，按周落表到 `waf_admin_audit_archive_YYYYMMDD_YYYYMMDD`；单机和集群 Master 均执行自动归档。
 - 封禁记录归档：IP 封禁日志按 `start_time`、钉钉发送记录按 `occurred_at` 共用另一套策略，按周落表到 `ip_block_log_archive_YYYYMMDD_YYYYMMDD` 与 `dingtalk_notification_archive_YYYYMMDD_YYYYMMDD`
+- 每批归档使用 InnoDB 事务锁定源记录，复制并核对数量成功后删除相同 ID；任一环节失败回滚。既有归档表不迁移或改名，唯一键冲突会停止当前批次并记录错误。
+- “基础配置 → 归档日志管理”支持按类型查看历史表及分页查看内容；只有本地 admin 超级管理员可输入完整表名删除历史表，当前和未来周期受保护。归档与删除通过 MySQL 同类型连接锁互斥，删除前后记录审计；删除前应确认数据库备份。
 - 所有归档均先 `INSERT IGNORE` 到归档表，确认写入后才删除源表；自动任务仅由集群 Master 执行，单机环境可通过系统设置的手动入口执行
 - 流量/攻击类型：dirty set 增量同步（`waf:dirty:traffic_stats`、`waf:dirty:attack_type_dates`）
 - MySQL 异常时：retry set 回放补写（`waf:retry:*`）

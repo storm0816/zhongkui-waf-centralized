@@ -477,6 +477,11 @@ if is_global_option_on("waf") then
     if is_timer_owner then
         if is_system_option_on("mysql") and (master_node or standalone_mode) then
             utils.start_timer(0, sql.check_table)
+            utils.start_timer(1, function(premature)
+                if premature then return end
+                local ok, err = require("auth_store").ensure_schema()
+                if not ok then ngx.log(ngx.ERR, "access-control initialization failed: ", err or "unknown") end
+            end)
 
             if master_node then
                 utils.start_timer(0, program_release_store.ensure_tables)
@@ -508,6 +513,8 @@ if is_global_option_on("waf") then
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_ATTACK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_IP_BLOCK_LOG)
                 utils.start_timer_every(2, sql.write_sql_queue_to_mysql, constants.KEY_SENSITIVE_DISCOVERY)
+                utils.start_timer_every(60, sql.archive_security_records_auto)
+                utils.start_timer_every(60, sql.archive_blocking_records_auto)
                 utils.start_timer_every(60, dingtalk.flush_block_summaries)
             end
         end

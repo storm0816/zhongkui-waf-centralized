@@ -162,6 +162,7 @@
 						<a href="javascript:;"><i class="layui-icon layui-icon-username"></i> <span id="currentUserName"></span></a>
 						<!-- 功 能 菜 单 -->
 						<dl class="layui-nav-child">
+							<dd id="changeLocalPassword" style="display:none"><a href="view/system/password.html">修改密码</a></dd>
 							<dd><a href="javascript:void(0);" class="logout">退出登录</a></dd>
 						</dl>
 					</li>
@@ -228,10 +229,12 @@
 				$.get('/user/me', function(res) {
 					if (res && res.code === 200 && res.data) {
 						$('#currentUserName').text(res.data.display_name || res.data.username || '');
+						if (res.data.auth_source === 'local' || res.data.auth_source === 'local_legacy') $('#changeLocalPassword').show();
 						var permissions = res.data.permissions || [];
 						if (permissions.indexOf('user.manage') < 0) {
 							setTimeout(function() {
 								$("#sideMenu a[menu-id='65']").closest('dd,li').remove();
+								$("#sideMenu a[menu-id='66']").closest('dd,li').remove();
 							}, 800);
 						}
 					}

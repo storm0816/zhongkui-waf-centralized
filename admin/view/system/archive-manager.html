@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>归档日志管理</title>
+    <link href="../../component/pear/css/pear.css" rel="stylesheet">
+    <style>
+        .archive-page { padding:14px; }
+        .archive-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:12px; }
+        .archive-toolbar select { width:180px; height:36px; border:1px solid #ddd; padding:0 8px; background:#fff; }
+        .archive-note { color:#667085; font-size:13px; margin-bottom:12px; }
+        .archive-table { overflow-x:auto; }
+        .archive-table table { min-width:900px; }
+        .archive-table td { word-break:break-all; }
+        .archive-preview { padding:15px; }
+        .archive-preview .layui-table { min-width:750px; }
+    </style>
+</head>
+<body class="pear-container">
+<div class="archive-page"><div class="layui-card"><div class="layui-card-body">
+    <div class="archive-toolbar"><select id="archive-kind" aria-label="日志类型"><option value="">全部日志类型</option><option value="attack">攻击事件</option><option value="sensitive">敏感数据发现</option><option value="blocking">IP封禁日志</option><option value="dingtalk">钉钉发送记录</option><option value="audit">账号审计</option></select><button id="archive-search" type="button" class="pear-btn pear-btn-primary">查询</button><button id="archive-refresh" type="button" class="pear-btn">刷新</button></div>
+    <div class="archive-note">记录数为数据库估算值。新表日期代表归档周期，旧表按日志日期命名，旧钉钉和审计表的结束日期是下一周起始边界。当前或未来归档周期不可删除；删除前请确认已有数据库备份。</div>
+    <div class="archive-table"><table class="layui-table"><thead><tr><th>日志类型</th><th>归档表名</th><th>表名日期范围</th><th>记录数（约）</th><th>占用空间</th><th>创建时间</th><th>状态</th><th>操作</th></tr></thead><tbody id="archive-rows"></tbody></table></div><div id="archive-pages"></div>
+</div></div></div>
+<script src="../../component/layui/layui.js"></script><script src="../../component/pear/pear.js"></script>
+<script>
+layui.use(['jquery','layer','laypage'], function () {
+    var $=layui.$, layer=layui.layer, laypage=layui.laypage, current=1, limit=20, canDelete=false;
+    var labels={id:'ID',request_time:'请求时间',last_seen:'最后发现',start_time:'封禁时间',occurred_at:'发送时间',created_at:'时间',server_name:'域名',domain:'域名',ip:'来源 IP',node_ip:'来源节点',attack_type:'攻击类型',block_reason:'封禁原因',action:'动作',request_uri:'请求地址',rule_name:'命中规则',matched_sample:'命中内容',match_count:'命中次数',status:'状态',block_duration:'封禁时长（秒）',end_time:'封禁结束',send_status:'发送结果',error_message:'失败原因',username:'操作人',target:'对象',client_ip:'来源 IP',result:'结果',detail:'详情'};
+    function esc(v) { return $('<div>').text(v == null ? '' : String(v)).html(); }
+    function api(url, data, done, method) {
+        $.ajax({url:url, type:method || 'GET', data:data, dataType:'json', cache:false}).done(function(r) {
+            if (r && r.code===200) done(r.data); else layer.msg((r && r.msg) || '操作失败', {icon:2});
+        }).fail(function(xhr) {
+            if (xhr.status===401) return top.location.href='/login.html';
+            var r=xhr.responseJSON; layer.msg((r && r.msg) || '请求失败，请稍后重试', {icon:2});
+        });
+    }
+    function pages(elem, data, callback) {
+        laypage.render({elem:elem, count:data.total, curr:data.page, limit:data.limit, limits:[10,20,50,100], layout:['prev','page','next','count','limit','skip'],
+            jump:function(obj, first) { if (!first) callback(obj.curr,obj.limit); }});
+    }
+    function load() {
+        api('/access/archive/list', {page:current,limit:limit,kind:$('#archive-kind').val()}, function(data) {
+            var html=data.items.map(function(r) {
+                var action='<button type="button" class="pear-btn pear-btn-primary pear-btn-xs archive-view" data-name="'+esc(r.name)+'">查看</button>';
+                if (canDelete && !r.protected) action+=' <button type="button" class="pear-btn pear-btn-danger pear-btn-xs archive-delete" data-name="'+esc(r.name)+'">删除</button>';
+                return '<tr><td>'+esc(r.title)+'</td><td>'+esc(r.name)+'</td><td>'+(r.legacy ? '-' : esc(r.start_date)+' - '+esc(r.end_date))+'</td><td>'+esc(r.estimated_rows)+'</td><td>'+esc((r.bytes/1048576).toFixed(2))+' MB</td><td>'+esc(r.created_at || '-')+'</td><td>'+(r.legacy?'基础表（受保护）':(r.protected?'受保护':'历史归档'))+'</td><td>'+action+'</td></tr>';
+            }).join('');
+            $('#archive-rows').html(html || '<tr><td colspan="8">暂无归档记录</td></tr>');
+            pages('archive-pages',data,function(p,l){current=p;limit=l;load();});
+        });
+    }
+    function showPreview(name) {
+        layer.open({type:1,title:'查看归档：'+esc(name),area:['90%','80%'],content:'<div class="archive-preview"><div class="archive-table"><table class="layui-table"><thead></thead><tbody></tbody></table></div><div id="preview-pages"></div></div>',success:function(box) {
+            function fetchPage(page,size) { api('/access/archive/preview',{name:name,page:page,limit:size},function(data) {
+                box.find('thead').html('<tr>'+data.columns.map(function(c){return '<th>'+esc(labels[c] || c)+'</th>';}).join('')+'</tr>');
+                box.find('tbody').html(data.items.map(function(row){return '<tr>'+data.columns.map(function(c){return '<td>'+esc(row[c])+'</td>';}).join('')+'</tr>';}).join('') || '<tr><td>暂无记录</td></tr>');
+                pages('preview-pages',data,fetchPage);
+            }); }
+            fetchPage(1,20);
+        }});
+    }
+    $('#archive-search,#archive-refresh').on('click',function(){current=1;load();});
+    $(document).on('click','.archive-view',function(){showPreview($(this).attr('data-name'));});
+    $(document).on('click','.archive-delete',function(){var name=$(this).attr('data-name');
+        api('/access/archive/preview',{name:name,page:1,limit:1},function(data){
+            layer.prompt({title:'删除 '+name+'（'+data.total+' 条）。删除后无法恢复，请确认备份并输入完整表名',formType:0},function(value,index){
+                if(value!==name){layer.msg('输入的表名不一致',{icon:2});return;}
+                api('/access/archive/delete',{name:name,confirmation:value},function(result){layer.close(index);layer.msg(result.audit_recorded ? '归档表已删除' : '归档表已删除，但结果审计写入失败，请检查日志',{icon:result.audit_recorded ? 1 : 2});load();},'POST');
+            });
+        });
+    });
+    api('/user/me',{},function(identity){canDelete=identity.username==='admin' && (identity.roles || []).some(function(r){return r.name==='super_admin';});load();});
+});
+</script>
+</body>
+</html>

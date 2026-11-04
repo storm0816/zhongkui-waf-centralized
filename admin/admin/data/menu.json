@@ -159,6 +159,14 @@
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/system/access-control.html"
+			},
+			{
+				"id": 66,
+				"title": "归档日志管理",
+				"icon": "layui-icon layui-icon-file",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/system/archive-manager.html"
 			}
 		]
 	},

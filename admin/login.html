@@ -88,14 +88,14 @@
           .then(function (response) { return response.json(); });
       }
       function busy(button, state) { button.disabled = state; }
-      function finish() { location.href = 'index.html'; }
+      function finish(result) { location.href = result.data && result.data.must_change_password ? 'view/system/password.html?first=1' : 'index.html'; }
 
       document.getElementById('login-form').addEventListener('submit', function (event) {
         event.preventDefault(); message.textContent = '';
         var button = document.getElementById('login-button'); busy(button, true);
         post('/user/login', { username:document.getElementById('username').value, password:document.getElementById('password').value, auth_type:authType })
           .then(function (result) {
-            if (result.code === 200) return finish();
+            if (result.code === 200) return finish(result);
             if (result.code === 202) {
               pendingToken = result.data.pending_token;
               document.getElementById('primary-step').classList.add('hidden');
@@ -135,7 +135,7 @@
         event.preventDefault(); message.textContent = '';
         var button = document.getElementById('mfa-button'); busy(button, true);
         post('/user/mfa/verify', { pending_token:pendingToken, code:document.getElementById('mfa-code').value })
-          .then(function (result) { if (result.code === 200) return finish(); message.textContent = result.msg || '验证失败'; })
+          .then(function (result) { if (result.code === 200) return finish(result); message.textContent = result.msg || '验证失败'; })
           .catch(function () { message.textContent = '认证服务暂时不可用'; }).finally(function () { busy(button, false); });
       });
     }());

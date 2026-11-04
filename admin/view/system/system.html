@@ -84,10 +84,10 @@
 			<div class="layui-col-md12">
 				<form class="layui-form" lay-filter="filter-form-attack-log-retention">
 					<div class="layui-card" lay-filter="component-form-element">
-						<div class="layui-card-header">攻击日志与敏感数据归档清理（共享策略）</div>
+						<div class="layui-card-header">攻击日志、敏感数据与审计日志归档（共享策略）</div>
 						<div class="layui-card-body">
 							<div class="layui-row layui-col-space10">
-								<div class="layui-col-md10" style="padding-left: 20px;">仅在 master 自动执行：攻击日志按 request_time、敏感数据发现按 last_seen 使用同一保留天数、批次大小和执行间隔，分别按周归档后再清理主表。</div>
+								<div class="layui-col-md10" style="padding-left: 20px;">集群 Master 或单机自动执行：攻击日志、敏感数据发现和账号审计日志共用保留天数、批次大小和执行间隔，超过保留期限的记录按 ID 顺序归档到执行当周的表。</div>
 							</div>
 							<div class="layui-row layui-col-space10">
 								<div class="layui-col-md2">
@@ -804,18 +804,21 @@
 							var detail = data.data || {};
 							var attackLog = detail.attack_log || detail;
 							var sensitiveDiscovery = detail.sensitive_discovery || {};
+							var audit = detail.audit || {};
 							if (attackLog.skipped && (!detail.sensitive_discovery || sensitiveDiscovery.skipped)) {
 								popup.warning("已跳过执行：" + (data.msg || attackLog.msg || "当前节点未启用 MySQL 或不满足执行条件"));
 								return;
 							}
 							var msg = "攻击日志：inserted=" + (attackLog.inserted || 0) + ", deleted=" + (attackLog.deleted || 0)
-								+ "；敏感发现：inserted=" + (sensitiveDiscovery.inserted || 0) + ", deleted=" + (sensitiveDiscovery.deleted || 0);
+								+ "；敏感发现：inserted=" + (sensitiveDiscovery.inserted || 0) + ", deleted=" + (sensitiveDiscovery.deleted || 0)
+								+ "；账号审计：inserted=" + (audit.inserted || 0) + ", deleted=" + (audit.deleted || 0);
 							if (data.msg) {
 								msg += "，" + data.msg;
 							}
 							popup.success(msg);
 						} else {
-							popup.failure((data && data.msg) ? data.msg : '执行失败');
+							var auditError = data && data.data && data.data.audit && data.data.audit.code ? data.data.audit.msg : '';
+							popup.failure(auditError || ((data && data.msg) ? data.msg : '执行失败'));
 						}
 					}, 'json');
 				});

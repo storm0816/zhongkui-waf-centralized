@@ -58,7 +58,7 @@ local function handle()
     local read_only_uri = uri == "/access/users"
         or uri == "/access/roles"
         or uri == "/access/permissions"
-        or uri == "/access/audit"
+        or uri == "/access/audit" or uri == "/access/archive/list" or uri == "/access/archive/preview"
 
     -- user.manage permits access-control viewing only. Mutations are limited to
     -- the local break-glass admin, even if a custom role gains user.manage.
@@ -71,7 +71,22 @@ local function handle()
     elseif uri == "/access/permissions" then
         return respond(200, "", auth_store.list_permissions())
     elseif uri == "/access/audit" then
-        return respond(200, "", auth_store.list_audit(values.limit))
+        local result, err = auth_store.list_audit(values.limit, values.page)
+        if not result then return respond(500, err) end
+        return respond(200, "", result)
+    elseif uri == "/access/archive/list" then
+        local result, err = require("archive_manager").list(values.page, values.limit, values.kind)
+        if not result then return respond(500, err) end
+        return respond(200, "", result)
+    elseif uri == "/access/archive/preview" then
+        local result, err = require("archive_manager").preview(values.name, values.page, values.limit)
+        if not result then return respond(400, err) end
+        return respond(200, "", result)
+    elseif uri == "/access/archive/delete" then
+        if ngx.req.get_method() ~= "POST" or not has_role(user.get_current_user(), "super_admin") then return respond(403, "仅超级管理员可以删除归档") end
+        local result, err = require("archive_manager").delete(values.name, values.confirmation, user.get_current_user())
+        if not result then return respond(400, err) end
+        return respond(200, "归档表已删除", result)
     elseif uri == "/access/user/create" then
         local username = tostring(values.username or ""):match("^%s*(.-)%s*$")
         local role_id = tonumber(values.role_id)
@@ -84,6 +99,18 @@ local function handle()
         if not created then return respond(500, err) end
         audit("user.create", username, "source=ldap")
         return respond(200, "用户已创建", created)
+    elseif uri == "/access/user/local/create" then
+        local username = tostring(values.username or ""):match("^%s*(.-)%s*$")
+        local role_id = tonumber(values.role_id)
+        if username == "" or not role_id then return respond(400, "用户名和角色不能为空") end
+        if #username > 128 or not username:match("^[%w%._@%-]+$") then
+            return respond(400, "用户名仅允许字母、数字、点、下划线、@ 和短横线")
+        end
+        if auth_store.get_user(username) then return respond(409, "用户已存在") end
+        local created, err = auth_store.create_local_account(username, values.display_name, role_id, values.password)
+        if not created then return respond(400, err) end
+        audit("user.create", username, "source=local")
+        return respond(200, "本地用户已创建", created)
     elseif uri == "/access/user/roles" then
         local identity = user.get_current_user()
         local user_id = tonumber(values.user_id)

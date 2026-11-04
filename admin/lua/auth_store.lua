@@ -3,6 +3,7 @@ local config = require "config"
 local mysql = require "mysql_cli"
 local redis = require "redis_cli"
 local aes = require "lib.aes"
+local local_credentials = require "local_credentials"
 
 local _M = {}
 
@@ -182,6 +183,9 @@ function _M.ensure_schema()
             return nil, "failed to initialize access-control tables"
         end
     end
+    if not local_credentials.ensure_schema() then
+        return nil, "failed to initialize local password schema"
+    end
     -- Existing installations predate the per-user MFA policy column.
     local mfa_columns = mysql.query([[SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='waf_admin_user'
@@ -233,6 +237,7 @@ end
 function _M.ensure_ldap_user(username, external_id, display_name)
     _M.ensure_schema()
     local user = _M.get_user(username)
+    if user and user.auth_source ~= "ldap" then return nil end
     if not user then
         mysql.query("INSERT IGNORE INTO waf_admin_user (username, display_name, auth_source, external_id, status) VALUES ("
             .. quote(username) .. "," .. quote(display_name or username) .. ",'ldap'," .. quote(external_id or username) .. ",'enabled')")
@@ -326,6 +331,11 @@ function _M.get_session(session_id)
     end
     identity.display_name = current_user.display_name
     identity.auth_source = current_user.auth_source
+    if current_user.auth_source == "local" then
+        local required = local_credentials.must_change(current_user.id)
+        if required == nil then return nil end
+        identity.must_change_password = required
+    end
     identity.permissions = _M.get_permissions(current_user.id)
     identity.roles = _M.get_roles(current_user.id)
     redis.set(SESSION_PREFIX .. session_id, cjson.encode(identity), SESSION_TTL)
@@ -408,7 +418,7 @@ end
 
 function _M.audit(identity, action, target, result, detail, client_ip)
     _M.ensure_schema()
-    mysql.query("INSERT INTO waf_admin_audit_log (user_id,username,action,target,result,client_ip,detail) VALUES ("
+    return mysql.query("INSERT INTO waf_admin_audit_log (user_id,username,action,target,result,client_ip,detail) VALUES ("
         .. (identity and tonumber(identity.user_id) or "NULL") .. ","
         .. quote(identity and identity.username or "") .. "," .. quote(action) .. "," .. quote(target)
         .. "," .. quote(result or "success") .. "," .. quote(client_ip) .. "," .. quote(detail) .. ")")
@@ -445,6 +455,31 @@ function _M.create_ldap_account(username, display_name, role_id)
     local user = _M.get_user(username)
     mysql.query("INSERT IGNORE INTO waf_admin_user_role (user_id,role_id) VALUES (" .. tonumber(user.id) .. "," .. tonumber(role_id) .. ")")
     return user
+end
+
+function _M.create_local_account(username, display_name, role_id, password)
+    _M.ensure_schema()
+    local role_rows = mysql.query("SELECT id FROM waf_admin_role WHERE id=" .. tonumber(role_id) .. " LIMIT 1") or {}
+    if not role_rows[1] then return nil, "角色不存在" end
+    local valid, err = require("password_policy").validate(password)
+    if not valid then return nil, err end
+    local inserted = mysql.query("INSERT INTO waf_admin_user (username,display_name,auth_source,external_id,status) VALUES ("
+        .. quote(username) .. "," .. quote(display_name or username) .. ",'local',NULL,'disabled')")
+    if not inserted then return nil, "创建本地用户失败" end
+    local account = _M.get_user(username)
+    if not account then return nil, "读取本地用户失败" end
+    local called, saved, save_err = pcall(local_credentials.set_password, account.id, password, true)
+    if not called or not saved then
+        mysql.query("DELETE FROM waf_admin_user WHERE id=" .. tonumber(account.id) .. " AND status='disabled'")
+        return nil, called and save_err or "本地密码处理失败，请查看服务日志"
+    end
+    local assigned = mysql.query("INSERT INTO waf_admin_user_role (user_id,role_id) VALUES ("
+        .. tonumber(account.id) .. "," .. tonumber(role_id) .. ")")
+    if not assigned then return nil, "本地用户已创建但角色分配失败，请在用户列表处理" end
+    if not mysql.query("UPDATE waf_admin_user SET status='enabled' WHERE id=" .. tonumber(account.id)) then
+        return nil, "本地用户已创建但未启用，请在用户列表处理"
+    end
+    return _M.get_user(username)
 end
 
 local function is_last_super_admin(user_id)
@@ -517,6 +552,9 @@ function _M.delete_user(user_id, actor_user_id)
         return nil, "不能删除最后一个超级管理员"
     end
     mysql.query("DELETE FROM waf_admin_user_role WHERE user_id=" .. user_id)
+    if target.auth_source == "local" then
+        mysql.query("DELETE FROM waf_admin_local_credential WHERE user_id=" .. user_id)
+    end
     local deleted = mysql.query("DELETE FROM waf_admin_user WHERE id=" .. user_id .. " LIMIT 1")
     if not deleted then return nil, "删除用户失败" end
     return true, target
@@ -551,9 +589,19 @@ function _M.set_role_permissions(role_id, permission_ids)
     return true
 end
 
-function _M.list_audit(limit)
-    limit = math.min(math.max(tonumber(limit) or 100, 1), 500)
-    return mysql.query("SELECT id,username,action,target,result,client_ip,detail,created_at FROM waf_admin_audit_log ORDER BY id DESC LIMIT " .. limit) or {}
+function _M.archive_audit(days, batch)
+    if not _M.ensure_schema() then return {code=500, msg="审计表初始化失败"} end
+    return require("archive_batch").run("audit", days, batch)
+end
+
+function _M.list_audit(limit, page)
+    limit = math.floor(math.min(math.max(tonumber(limit) or 20, 1), 100))
+    page = math.floor(math.max(tonumber(page) or 1, 1))
+    local count = mysql.query("SELECT COUNT(*) AS total FROM waf_admin_audit_log")
+    if not count then return nil, "审计日志查询失败" end
+    local rows = mysql.query("SELECT id,username,action,target,result,client_ip,detail,created_at FROM waf_admin_audit_log ORDER BY id DESC LIMIT " .. ((page - 1) * limit) .. "," .. limit)
+    if not rows then return nil, "审计日志查询失败" end
+    return {items=rows, total=tonumber(count[1].total) or 0, page=page, limit=limit}
 end
 
 return _M

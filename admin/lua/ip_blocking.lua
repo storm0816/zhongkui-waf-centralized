@@ -161,6 +161,10 @@ function _M.do_request()
         response = unblock()
     end
 
+    if uri == "/ipblocking/unblock" then
+        require("auth_store").audit(user.get_current_user(), "ip.unblock", uri,
+            response.code == 200 and "success" or "failed", "", require("ip_utils").get_client_ip())
+    end
     ngx.say(cjson_encode(response))
 end
 

@@ -3,6 +3,8 @@ local config = require "config"
 local file = require "file_utils"
 local ip_utils = require "ip_utils"
 local auth_store = require "auth_store"
+local password_policy = require "password_policy"
+local local_credentials = require "local_credentials"
 
 local _M = {}
 
@@ -97,6 +99,17 @@ function _M.enforce_request_permission()
         response_json(401, "User not logged in")
         return ngx.exit(ngx.HTTP_UNAUTHORIZED)
     end
+    local identity = _M.get_current_user()
+    if identity and identity.must_change_password then
+        local allowed = uri == "/view/system/password.html" or uri == "/user/password/update"
+            or uri == "/user/logout" or uri == "/user/me"
+            or uri == "/js/password-policy.js" or uri == "/css/password-policy.css"
+        if not allowed then
+            if uri:find("%.html$") or uri == "/" then return ngx.redirect("/view/system/password.html?first=1") end
+            response_json(403, "首次登录请先修改密码")
+            return ngx.exit(ngx.HTTP_FORBIDDEN)
+        end
+    end
     if uri:find("^/user/") then
         return true
     end
@@ -120,6 +133,11 @@ local function legacy_password(password, salt)
 end
 
 local function authenticate_local(username, password)
+    local account = auth_store.get_user(username)
+    if account and account.auth_source == "local" then
+        return local_credentials.verify(account.id, password) and account or nil
+    end
+    if not account or account.auth_source ~= "local_legacy" then return nil end
     local raw = file.read_file_to_string(PASSWORD_PATH)
     local legacy = raw and cjson.decode(raw) or nil
     if not legacy or username ~= legacy.username then
@@ -259,13 +277,18 @@ end
 local function finish_login(user)
     local client_ip = ip_utils.get_client_ip()
     local user_agent = ngx.var.http_user_agent or ""
+    local must_change = false
+    if user.auth_source == "local" then
+        must_change = local_credentials.must_change(user.id)
+        if must_change == nil then return nil, "本地密码状态不可用" end
+    end
     local session_id, err = auth_store.create_session(user, client_ip, user_agent)
     if not session_id then
         return nil, err
     end
     set_session_cookie(session_id)
     auth_store.audit({ user_id = user.id, username = user.username }, "login", user.auth_source, "success", "", client_ip)
-    return true
+    return true, nil, must_change
 end
 
 local function begin_login(args)
@@ -285,7 +308,9 @@ local function begin_login(args)
     end
 
     auth_store.ensure_schema()
-    if auth_type == "local" or (auth_type == "auto" and username == "admin") then
+    local known_user = auth_store.get_user(username)
+    if auth_type == "local" or (auth_type == "auto" and known_user
+        and (known_user.auth_source == "local" or known_user.auth_source == "local_legacy")) then
         user = authenticate_local(username, password)
     else
         user, err = authenticate_ldap(username, password)
@@ -314,9 +339,9 @@ local function begin_login(args)
         })
     end
 
-    local ok, login_err = finish_login(user)
+    local ok, login_err, must_change = finish_login(user)
     if not ok then return response_json(500, login_err) end
-    return response_json(200, "登录成功")
+    return response_json(200, "登录成功", {must_change_password=must_change})
 end
 
 local function verify_mfa(args)
@@ -341,26 +366,33 @@ local function verify_mfa(args)
         user.mfa_secret = nil
     end
     auth_store.delete_pending(token)
-    local ok, err = finish_login(user)
+    local ok, err, must_change = finish_login(user)
     if not ok then return response_json(500, err) end
-    return response_json(200, "登录成功")
+    return response_json(200, "登录成功", {must_change_password=must_change})
 end
 
 local function update_legacy_password(args)
     local identity = _M.get_current_user()
-    if not identity or identity.username ~= "admin" then
-        return response_json(403, "仅本地管理员可修改本地密码")
-    end
     local old_password = tostring(args.oldPassword or "")
     local new_password = tostring(args.newPassword or "")
+    if identity and identity.auth_source == "local" then
+        if not local_credentials.verify(identity.user_id, old_password) then return response_json(201, "旧密码错误") end
+        local ok, err = local_credentials.set_password(identity.user_id, new_password, false)
+        if not ok then return response_json(201, err) end
+        auth_store.audit(identity, "user.password.change", identity.username, "success", "local password changed", ip_utils.get_client_ip())
+        return response_json(200, "密码已更新")
+    end
+    if not identity or identity.username ~= "admin" or identity.auth_source ~= "local_legacy" then
+        return response_json(403, "仅本地用户可修改本地密码")
+    end
     local raw = file.read_file_to_string(PASSWORD_PATH)
     local legacy = raw and cjson.decode(raw) or nil
     if not legacy or legacy_password(old_password, legacy.salt) ~= legacy.password then
         return response_json(201, "旧密码错误")
     end
-    if #new_password < 12 then
-        return response_json(201, "新密码至少需要12位")
-    end
+    if legacy_password(new_password, legacy.salt) == legacy.password then return response_json(201, "新密码不能与当前密码相同") end
+    local valid, policy_err = password_policy.validate(new_password)
+    if not valid then return response_json(201, policy_err) end
     local random = io.open("/dev/urandom", "rb")
     local salt_raw = random and random:read(LEGACY_SALT_LENGTH) or nil
     if random then random:close() end
@@ -370,22 +402,30 @@ local function update_legacy_password(args)
     legacy.password = legacy_password(new_password, salt)
     local ok, err = file.write_string_to_file(PASSWORD_PATH, cjson.encode(legacy))
     if not ok then return response_json(500, err) end
+    auth_store.audit(identity, "user.password.change", identity.username, "success", "local password changed", ip_utils.get_client_ip())
     return response_json(200, "密码已更新")
 end
 
 function _M.reset_local_password(user_id, new_password)
     local target = auth_store.get_user_by_id(user_id)
-    if not target or target.auth_source ~= "local_legacy" then
+    if not target or (target.auth_source ~= "local_legacy" and target.auth_source ~= "local") then
         return nil, "仅支持重置本地用户密码"
     end
     new_password = tostring(new_password or "")
-    if #new_password < 12 then return nil, "新密码至少需要12位" end
+    local valid, policy_err = password_policy.validate(new_password)
+    if not valid then return nil, policy_err end
+    if target.auth_source == "local" then
+        local ok, err = local_credentials.set_password(target.id, new_password, true)
+        if not ok then return nil, err end
+        return true, target
+    end
 
     local raw = file.read_file_to_string(PASSWORD_PATH)
     local legacy = raw and cjson.decode(raw) or nil
     if not legacy or legacy.username ~= target.username then
         return nil, "本地用户密码配置不存在"
     end
+    if legacy_password(new_password, legacy.salt) == legacy.password then return nil, "新密码不能与当前密码相同" end
     local random = io.open("/dev/urandom", "rb")
     local salt_raw = random and random:read(LEGACY_SALT_LENGTH) or nil
     if random then random:close() end
@@ -409,6 +449,8 @@ function _M.do_request()
     elseif uri == "/user/mfa/verify" then
         return verify_mfa(args)
     elseif uri == "/user/logout" then
+        local identity = _M.get_current_user()
+        if identity then auth_store.audit(identity, "logout", identity.username, "success", "", ip_utils.get_client_ip()) end
         auth_store.delete_session(current_session_id())
         clear_session_cookie()
         return response_json(200, "已退出")

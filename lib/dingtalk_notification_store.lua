@@ -456,40 +456,9 @@ function _M.list_failures(filters)
     return _M.list_records(filters)
 end
 
-local function archive_table_name(week_start, week_end)
-    local start_label = tostring(week_start or ""):gsub("[^0-9]", ""):sub(1, 8)
-    local end_label = tostring(week_end or ""):gsub("[^0-9]", ""):sub(1, 8)
-    if #start_label ~= 8 or #end_label ~= 8 then return nil end
-    return "dingtalk_notification_archive_" .. start_label .. "_" .. end_label
-end
-
 function _M.archive_records(days, batch)
-    if not _M.ensure_schema() then return {code=500,msg="ensure dingtalk schema failed"} end
-    local range = mysql.query(format([[SELECT
-        DATE_FORMAT(DATE_SUB(DATE(MIN(occurred_at)),INTERVAL WEEKDAY(MIN(occurred_at)) DAY),'%%Y-%%m-%%d 00:00:00') AS week_start,
-        DATE_FORMAT(DATE_ADD(DATE_SUB(DATE(MIN(occurred_at)),INTERVAL WEEKDAY(MIN(occurred_at)) DAY),INTERVAL 7 DAY),'%%Y-%%m-%%d 00:00:00') AS week_end
-        FROM waf_dingtalk_failure_log WHERE occurred_at<NOW()-INTERVAL %d DAY]], days))
-    if not range then return {code=500,msg="query dingtalk failure archive range failed"} end
-    if not range[1] or not range[1].week_start or range[1].week_start == ngx.null
-        or not range[1].week_end or range[1].week_end == ngx.null then
-        return {code=0,msg="no archive rows",inserted=0,deleted=0}
-    end
-    local table_name = archive_table_name(range[1].week_start, range[1].week_end)
-    if not table_name then return {code=500,msg="invalid dingtalk archive table name"} end
-    if not mysql.query("CREATE TABLE IF NOT EXISTS `" .. table_name .. "` LIKE waf_dingtalk_failure_log") then
-        return {code=500,msg="ensure dingtalk archive table failed"}
-    end
-    local start_value, end_value = quote(tostring(range[1].week_start)), quote(tostring(range[1].week_end))
-    local inserted = mysql.query(format([[INSERT IGNORE INTO `%s` SELECT * FROM waf_dingtalk_failure_log
-        WHERE occurred_at<NOW()-INTERVAL %d DAY AND occurred_at>=%s AND occurred_at<%s ORDER BY id LIMIT %d]],
-        table_name, days, start_value, end_value, batch))
-    if not inserted then return {code=500,msg="archive dingtalk failures failed"} end
-    local deleted = mysql.query(format([[DELETE FROM waf_dingtalk_failure_log WHERE id IN
-        (SELECT id FROM (SELECT s.id FROM waf_dingtalk_failure_log s INNER JOIN `%s` a ON a.id=s.id
-        WHERE s.occurred_at<NOW()-INTERVAL %d DAY AND s.occurred_at>=%s AND s.occurred_at<%s ORDER BY s.id LIMIT %d) copied)]],
-        table_name, days, start_value, end_value, batch))
-    if not deleted then return {code=500,msg="delete archived dingtalk failures failed"} end
-    return {code=0,msg="ok",inserted=inserted.affected_rows or 0,deleted=deleted.affected_rows or 0,archive_table=table_name}
+    if not _M.ensure_schema() then return {code=500, msg="ensure dingtalk schema failed"} end
+    return require("archive_batch").run("dingtalk", days, batch)
 end
 
 function _M.archive_failures(days, batch)
