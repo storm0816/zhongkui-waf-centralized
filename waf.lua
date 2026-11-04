@@ -44,6 +44,8 @@ if is_site_option_on("waf") then
 
     lib.is_bot()
 
+    lib.is_business_block()
+
     lib.is_acl()
 
     lib.is_cc()

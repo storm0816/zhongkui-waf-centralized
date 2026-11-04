@@ -423,6 +423,22 @@ local function count_block_request_traffic()
     utils.dict_incr(dict, constants.KEY_BLOCKED_PREFIX .. hour, get_ttl)
 end
 
+local function write_business_block_log()
+    local ctx = ngx.ctx
+    local record = cjson_encode({
+        time = ngx.localtime(),
+        rule_id = ctx.business_block_rule_id,
+        request_id = ctx.request_id,
+        host = ctx.request_host or ngx.var.host,
+        ip = ctx.ip,
+        request_uri = ngx.var.request_uri,
+        status = ngx.status
+    })
+    if record then
+        logger_factory.get_logger(LOG_PATH, "businessBlock", true):log(record .. "\n")
+    end
+end
+
 if is_site_option_on("waf") then
     count_request_traffic()
 
@@ -430,6 +446,10 @@ if is_site_option_on("waf") then
     count_traffic_stats()
 
     local ctx = ngx.ctx
+
+    if ctx.business_block_rule_id then
+        write_business_block_log()
+    end
 
     if ctx.is_attack then
         write_attack_log()

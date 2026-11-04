@@ -297,6 +297,10 @@ function _M.do_request()
         return
     end
 
+    if uri:find("^/ip/business%-block/") then
+        return require("business_block_admin").handle(uri)
+    end
+
     if uri == "/ip/filter/config/get" then
         local args, err = ngx.req.get_uri_args()
         if args then

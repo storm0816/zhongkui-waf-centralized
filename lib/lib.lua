@@ -43,6 +43,26 @@ local read_file_to_table = file_utils.read_file_to_table
 
 local _M = {}
 
+local business_block = require "business_block"
+local business_module, business_index
+
+function _M.is_business_block()
+    if ngx.req.get_method() ~= "GET" or not ngx.var.args then return end
+    local module = config.get_global_security_modules("businessBlock")
+    if not module or not module.rules then return end
+    if module ~= business_module then
+        business_index = business_block.compile(module.rules)
+        business_module = module
+    end
+    local host = business_block.normalize_domain(ngx.ctx.request_host or ngx.var.host)
+    if not business_index[host] then return end
+    local args = ngx.req.get_uri_args(0)
+    local rule = business_block.match(business_index, host, args)
+    if rule then
+        return business_block.reject(rule)
+    end
+end
+
 -- whether or not the regular expression matches on the input
 local function matches(input, regex, options, ctx, nth)
     if not options then

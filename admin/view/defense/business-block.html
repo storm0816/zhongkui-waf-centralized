@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>业务屏蔽</title>
+    <link href="../../component/pear/css/pear.css" rel="stylesheet">
+    <style>
+        .policy-note { color: #666; line-height: 1.7; margin-bottom: 14px; }
+        .query-bar .layui-inline { margin: 0 8px 10px 0; }
+        .field-help { color: #777; line-height: 1.6; }
+    </style>
+</head>
+<body class="pear-container">
+<div class="layui-card"><div class="layui-card-body">
+    <p class="policy-note">仅匹配 GET 请求的实际域名及 URL 查询参数，域名、参数名和参数值均为精确匹配。命中后返回友好 403 页面并单独记录，不计为攻击、不封禁 IP；对该域名的所有路径生效。</p>
+    <form class="layui-form query-bar" lay-filter="business-query">
+        <div class="layui-inline"><input name="domain" class="layui-input" placeholder="查询域名" style="width:230px"></div>
+        <div class="layui-inline"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="business-search">查询</button><button class="pear-btn" type="button" id="reset">重置</button><button class="pear-btn pear-btn-primary" type="button" id="add">新增规则</button></div>
+    </form>
+    <table id="business-table" lay-filter="business-table"></table>
+</div></div>
+<script type="text/html" id="business-actions">
+    <a class="layui-btn layui-btn-xs" lay-event="edit">修改</a>
+    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="delete">删除</a>
+</script>
+<div id="business-dialog" style="display:none;padding:20px 24px 0">
+    <form class="layui-form" lay-filter="business-form">
+        <div class="layui-form-item"><label class="layui-form-label">域名</label><div class="layui-input-block"><input name="domain" class="layui-input" lay-verify="required" maxlength="253" placeholder="例如 detailpage.dzh.com.cn" autocomplete="off"></div></div>
+        <div class="layui-form-item"><label class="layui-form-label">参数名</label><div class="layui-input-block"><input name="key" class="layui-input" lay-verify="required" maxlength="256" placeholder="例如 id" autocomplete="off"></div></div>
+        <div class="layui-form-item"><label class="layui-form-label">参数值</label><div class="layui-input-block"><input name="value" class="layui-input" lay-verify="required" maxlength="2048" placeholder="例如 gsxw-9481806" autocomplete="off"><div class="field-help">填写解码后的完整参数值，不支持通配符或正则表达式。</div></div></div>
+        <div class="layui-form-item"><div class="layui-input-block"><button class="pear-btn pear-btn-primary" lay-submit lay-filter="business-save">保存规则</button></div></div>
+    </form>
+</div>
+<script src="../../component/layui/layui.js"></script>
+<script src="../../component/pear/pear.js"></script>
+<script>
+layui.use(['form', 'table', 'jquery'], function () {
+    var form = layui.form, table = layui.table, $ = layui.$, dialog, editing;
+    function escapeText(value) { return $('<div>').text(value == null ? '' : String(value)).html(); }
+    function showDialog(row) {
+        editing = row && row.id;
+        form.val('business-form', {domain: row ? row.domain : '', key: row ? row.key : '', value: row ? row.value : ''});
+        dialog = layer.open({type: 1, title: row ? '修改业务屏蔽规则' : '新增业务屏蔽规则', area: ['560px', '390px'], content: $('#business-dialog')});
+    }
+    function submit(url, data, done) {
+        $.ajax({url: url, type: 'POST', data: data, dataType: 'json', success: function (res) {
+            if (res.code !== 200) return layer.msg(res.msg || '操作失败', {icon: 2});
+            layer.msg(res.msg || '操作成功', {icon: 1}); done();
+        }, error: function () { layer.msg('请求失败，请检查网络或联系管理员', {icon: 2}); }});
+    }
+    table.render({elem: '#business-table', id: 'business-table', url: '/ip/business-block/list', page: true, limit: 20, limits: [10, 20, 50, 100], parseData: function (res) { if (!Array.isArray(res.data)) res.data = []; return res; }, cols: [[
+        {field: 'domain', title: '域名', minWidth: 220, templet: function (row) { return escapeText(row.domain); }},
+        {field: 'key', title: '参数名', minWidth: 160, templet: function (row) { return escapeText(row.key); }},
+        {field: 'value', title: '参数值', minWidth: 240, templet: function (row) { return escapeText(row.value); }},
+        {title: '请求方法', width: 110, templet: function () { return 'GET'; }},
+        {title: '操作', width: 140, toolbar: '#business-actions'}
+    ]]});
+    form.on('submit(business-search)', function (data) { table.reload('business-table', {where: data.field, page: {curr: 1}}); return false; });
+    $('#reset').on('click', function () { form.val('business-query', {domain: ''}); table.reload('business-table', {where: {domain: ''}, page: {curr: 1}}); });
+    $('#add').on('click', function () { showDialog(null); });
+    form.on('submit(business-save)', function (data) {
+        data.field.id = editing || '';
+        submit('/ip/business-block/save', data.field, function () { layer.close(dialog); table.reload('business-table'); });
+        return false;
+    });
+    table.on('tool(business-table)', function (event) {
+        if (event.event === 'edit') return showDialog(event.data);
+        if (event.event === 'delete') layer.confirm('删除后，该域名和参数将不再被此规则屏蔽。确定删除吗？', function (index) {
+            submit('/ip/business-block/delete', {id: event.data.id}, function () { layer.close(index); table.reload('business-table'); });
+        });
+    });
+});
+</script>
+</body>
+</html>

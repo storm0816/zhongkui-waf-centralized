@@ -2,7 +2,13 @@
 
 `Zhongkui-WAF` 基于 `lua-nginx-module`，用于在 OpenResty 层对 Web 请求做实时检测、拦截、记录与可视化管理。项目支持单机和集群两种部署模式，适合从测试到生产逐步扩展。
 
-当前版本：`Version 2.2.5`
+当前版本：`Version 2.2.6`
+
+### 2.2.6 发布说明
+
+- 防护策略新增“业务屏蔽”，按实际请求域名及 GET 查询参数的 `key=value` 精确匹配；路径、其他参数和参数顺序不影响匹配。
+- 命中时仅返回友好 HTTP 403 页面，记录到独立的 `businessBlock_YYYY-MM-DD.log`；不作为攻击事件、不计入攻击或封禁统计，也不封禁 IP。
+- 业务屏蔽规则独立保存于 `conf/global_rules/businessBlock.json`，沿用现有 Master 规则快照发布与 Node 同步机制。仅升级 Master 可管理规则，实际拦截还需升级处理请求的 Node。
 
 ### 2.2.5 发布说明
 

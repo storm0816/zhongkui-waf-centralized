@@ -118,6 +118,14 @@
 				"type": 1,
 				"openType": "_iframe",
 				"href": "view/defense/sensitive.html"
+			},
+			{
+				"id": 48,
+				"title": "业务屏蔽",
+				"icon": "pear-icon pear-icon-filter",
+				"type": 1,
+				"openType": "_iframe",
+				"href": "view/defense/business-block.html"
 			}
 		]
 	},

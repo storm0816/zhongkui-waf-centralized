@@ -1007,10 +1007,11 @@ local function load_global_config()
         global_config = cjson_decode(json)
         if global_config.waf.state == 'on' then
             security_modules = load_security_modules(_M.CONF_PATH .. '/global_rules/', global_config)
-            storage_security_modules('global', security_modules)
         end
     end
 
+    security_modules.businessBlock = file_utils.read_rule(_M.CONF_PATH .. '/global_rules/', 'businessBlock') or { rules = {} }
+    storage_security_modules('global', security_modules)
     local global_sensitive_words = read_file_to_table(_M.CONF_PATH .. '/global_rules/sensitiveWords') or {}
     config.global = { config = global_config, security_modules = security_modules, sensitive_words = global_sensitive_words }
 
