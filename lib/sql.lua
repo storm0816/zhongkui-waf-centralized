@@ -277,14 +277,6 @@ local SQL_INSERT_ATTACK_LOG = [[
     VALUES
 ]]
 
-local SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE = [[
-    CREATE TABLE IF NOT EXISTS `attack_log_archive` LIKE `attack_log`;
-]]
-
-local SQL_CREATE_TABLE_SENSITIVE_DISCOVERY_ARCHIVE = [[
-    CREATE TABLE IF NOT EXISTS `sensitive_discovery_archive` LIKE `sensitive_discovery`;
-]]
-
 local SQL_CREATE_TABLE_IP_BLOCK_LOG = [[
     CREATE TABLE `ip_block_log` (
         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -893,10 +885,8 @@ function _M.check_table(premature)
         { name = 'waf_status',          sql = SQL_CREATE_TABLE_WAF_STATUS },
         { name = 'traffic_stats',       sql = SQL_CREATE_TABLE_TRAFFIC_STATS },
         { name = 'attack_log',          sql = SQL_CREATE_TABLE_ATTACK_LOG },
-        { name = 'attack_log_archive',  sql = SQL_CREATE_TABLE_ATTACK_LOG_ARCHIVE },
         { name = 'ip_block_log',        sql = SQL_CREATE_TABLE_IP_BLOCK_LOG },
         { name = 'sensitive_discovery', sql = SQL_CREATE_TABLE_SENSITIVE_DISCOVERY },
-        { name = 'sensitive_discovery_archive', sql = SQL_CREATE_TABLE_SENSITIVE_DISCOVERY_ARCHIVE },
         { name = 'attack_type_traffic', sql = SQL_CREATE_TABLE_ATTACK_TYPE_TRAFFIC },
         { name = 'waf_traffic_stats',   sql = SQL_CREATE_TABLE_WAF_TRAFFIC_STATS },
         { name = 'waf_cluster_node',    sql = SQL_CREATE_TABLE_WAF_CLUSTER_NODE },
@@ -997,8 +987,6 @@ function _M.check_table(premature)
     -- 兼容老版本表结构：attack_log 可能没有 node_ip 列，这里补齐一次。
     ensure_column("attack_log", "node_ip",
         "ALTER TABLE attack_log ADD COLUMN node_ip VARCHAR(39) NULL COMMENT '节点IP' AFTER ip")
-    ensure_column("attack_log_archive", "node_ip",
-        "ALTER TABLE attack_log_archive ADD COLUMN node_ip VARCHAR(39) NULL COMMENT '节点IP' AFTER ip")
     ensure_column("ip_block_log", "server_name",
         "ALTER TABLE ip_block_log ADD COLUMN server_name VARCHAR(255) NULL COMMENT '请求域名' AFTER request_id")
     ensure_index("ip_block_log", "idx_ip_block_log_request_id",
@@ -1039,18 +1027,6 @@ function _M.check_table(premature)
         "ALTER TABLE attack_log ADD INDEX idx_attack_log_action_time (action, request_time)")
     ensure_index("attack_log", "idx_attack_log_node_time",
         "ALTER TABLE attack_log ADD INDEX idx_attack_log_node_time (node_ip, request_time)")
-    ensure_index("attack_log_archive", "idx_attack_log_archive_node_time",
-        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_node_time (node_ip, request_time)")
-    ensure_index("attack_log_archive", "idx_attack_log_archive_request_time",
-        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_request_time (request_time)")
-    ensure_index("attack_log_archive", "idx_attack_log_archive_ip_time",
-        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_ip_time (ip, request_time)")
-    ensure_index("attack_log_archive", "idx_attack_log_archive_type_time",
-        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_type_time (attack_type, request_time)")
-    ensure_index("attack_log_archive", "idx_attack_log_archive_server_time",
-        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_server_time (server_name, request_time)")
-    ensure_index("attack_log_archive", "idx_attack_log_archive_action_time",
-        "ALTER TABLE attack_log_archive ADD INDEX idx_attack_log_archive_action_time (action, request_time)")
     -- 兼容老版本表结构：waf_cluster_node 可能没有 last_seen 索引，这里补齐一次。
     ensure_index("waf_cluster_node", "idx_last_seen",
         "ALTER TABLE waf_cluster_node ADD INDEX idx_last_seen (last_seen)")

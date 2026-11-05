@@ -5,16 +5,19 @@ local ip_utils = require "ip_utils"
 
 local _M = {}
 local types = {
-    {kind="attack", prefix="attack_log_archive_", legacy="attack_log_archive", title="攻击事件", columns={"id","request_time","server_name","ip","attack_type","action","request_uri"}},
-    {kind="sensitive", prefix="sensitive_discovery_archive_", legacy="sensitive_discovery_archive", title="敏感数据发现", columns={"id","last_seen","server_name","node_ip","request_uri","rule_name","matched_sample","match_count","status"}},
-    {kind="blocking", prefix="ip_block_log_archive_", title="IP封禁日志", columns={"id","start_time","server_name","ip","block_reason","action","block_duration","end_time"}},
-    {kind="dingtalk", prefix="dingtalk_notification_archive_", title="钉钉发送记录", columns={"id","occurred_at","domain","ip","block_reason","action","send_status","error_message"}},
-    {kind="audit", prefix="waf_admin_audit_archive_", title="账号审计", columns={"id","created_at","username","action","target","client_ip","result","detail"}}
+    {kind="attack", base="attack_log", prefix="attack_log_archive_", legacy="attack_log_archive", title="攻击事件", columns={"id","request_time","server_name","ip","attack_type","action","request_uri"}},
+    {kind="sensitive", base="sensitive_discovery", prefix="sensitive_discovery_archive_", title="敏感数据发现", columns={"id","last_seen","server_name","node_ip","request_uri","rule_name","matched_sample","match_count","status"}},
+    {kind="blocking", base="ip_block_log", prefix="ip_block_log_archive_", title="IP封禁日志", columns={"id","start_time","server_name","ip","block_reason","action","block_duration","end_time"}},
+    {kind="dingtalk", base="waf_dingtalk_failure_log", prefix="dingtalk_notification_archive_", title="钉钉发送记录", columns={"id","occurred_at","domain","ip","block_reason","action","send_status","error_message"}},
+    {kind="audit", base="waf_admin_audit_log", prefix="waf_admin_audit_archive_", title="账号审计", columns={"id","created_at","username","action","target","client_ip","result","detail"}}
 }
+local kind_order = {}
+for index, item in ipairs(types) do kind_order[item.kind] = index end
 
 local function classify(name)
     name = tostring(name or "")
     for _, item in ipairs(types) do
+        if name == item.base then return item, "", "", false, true end
         if name == item.legacy then return item, "", "", true end
         if name:sub(1, #item.prefix) == item.prefix then
             local start_date, end_date = name:sub(#item.prefix + 1):match("^(%d%d%d%d%d%d%d%d)_(%d%d%d%d%d%d%d%d)$")
@@ -44,21 +47,27 @@ function _M.list(page, limit, kind)
     local current = archive.current_week()
     if not current then return nil, "无法确定当前归档周期" end
     for _, row in ipairs(rows) do
-        local item, start_date, end_date, legacy = classify(row.TABLE_NAME)
+        local item, start_date, end_date, legacy, base = classify(row.TABLE_NAME)
         if item and (not kind or kind == "" or kind == item.kind) then
             items[#items+1] = {name=row.TABLE_NAME, kind=item.kind, title=item.title, start_date=start_date, end_date=end_date,
                 estimated_rows=tonumber(row.TABLE_ROWS) or 0, bytes=(tonumber(row.DATA_LENGTH) or 0)+(tonumber(row.INDEX_LENGTH) or 0),
-                created_at=row.CREATE_TIME, protected=legacy or end_date >= current, legacy=not not legacy}
+                created_at=row.CREATE_TIME, protected=base or legacy or end_date >= current, legacy=not not legacy, base=not not base}
         end
     end
-    table.sort(items, function(a,b) if a.start_date == b.start_date then return a.name < b.name end return a.start_date > b.start_date end)
+    table.sort(items, function(a,b)
+        if a.base ~= b.base then return a.base end
+        if a.kind ~= b.kind then return kind_order[a.kind] < kind_order[b.kind] end
+        if a.legacy ~= b.legacy then return not a.legacy end
+        if a.start_date ~= b.start_date then return a.start_date > b.start_date end
+        return a.name < b.name
+    end)
     local total, result = #items, {}
     for i=(page-1)*limit+1, math.min(page*limit,total) do result[#result+1]=items[i] end
     return {items=result, total=total, page=page, limit=limit}
 end
 
 function _M.preview(name, page, limit)
-    local item = classify(name)
+    local item, _, _, _, base = classify(name)
     if not item then return nil, "归档表名无效" end
     local found, err = exists(name)
     if not found then return nil, err or "归档表不存在" end
@@ -73,16 +82,24 @@ function _M.preview(name, page, limit)
     for _, field in ipairs(selected) do
         quoted[#quoted+1] = field == "id" and "CAST(`id` AS CHAR) AS `id`" or "`" .. field .. "`"
     end
-    local count = mysql.query("SELECT COUNT(*) AS total FROM `" .. name .. "`")
     local rows = mysql.query("SELECT " .. table.concat(quoted, ",") .. " FROM `" .. name .. "` ORDER BY id DESC LIMIT " .. ((page-1)*limit) .. "," .. limit)
-    if not count or not rows then return nil, "读取归档内容失败" end
-    return {columns=selected, items=rows, total=tonumber(count[1].total) or 0, page=page, limit=limit}
+    if not rows then return nil, "读取归档内容失败" end
+    local count
+    if base then
+        count = mysql.query("SELECT TABLE_ROWS AS total FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=" .. ngx.quote_sql_str(name))
+    else
+        count = mysql.query("SELECT COUNT(*) AS total FROM `" .. name .. "`")
+    end
+    if not count or not count[1] then return nil, "读取归档记录数失败" end
+    local total = tonumber(count[1].total) or 0
+    if base then total = math.max(total, (page - 1) * limit + #rows) end
+    return {columns=selected, items=rows, total=total, estimated=not not base, page=page, limit=limit}
 end
 
 function _M.delete(name, confirmation, identity)
-    local item, _, end_date, legacy = classify(name)
+    local item, _, end_date, legacy, base = classify(name)
     if not item or confirmation ~= name then return nil, "归档表名或确认内容无效" end
-    if legacy then return nil, "基础归档表受保护，不能删除" end
+    if base or legacy then return nil, "当前日志表或旧版兼容归档表受保护，不能删除" end
     local current = archive.current_week()
     if not current then return nil, "无法确定当前归档周期" end
     if end_date >= current then return nil, "当前或未来归档周期不能删除" end

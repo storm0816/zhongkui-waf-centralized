@@ -19,8 +19,8 @@
 <body class="pear-container">
 <div class="archive-page"><div class="layui-card"><div class="layui-card-body">
     <div class="archive-toolbar"><select id="archive-kind" aria-label="日志类型"><option value="">全部日志类型</option><option value="attack">攻击事件</option><option value="sensitive">敏感数据发现</option><option value="blocking">IP封禁日志</option><option value="dingtalk">钉钉发送记录</option><option value="audit">账号审计</option></select><button id="archive-search" type="button" class="pear-btn pear-btn-primary">查询</button><button id="archive-refresh" type="button" class="pear-btn">刷新</button></div>
-    <div class="archive-note">记录数为数据库估算值。新表日期代表归档周期，旧表按日志日期命名，旧钉钉和审计表的结束日期是下一周起始边界。当前或未来归档周期不可删除；删除前请确认已有数据库备份。</div>
-    <div class="archive-table"><table class="layui-table"><thead><tr><th>日志类型</th><th>归档表名</th><th>表名日期范围</th><th>记录数（约）</th><th>占用空间</th><th>创建时间</th><th>状态</th><th>操作</th></tr></thead><tbody id="archive-rows"></tbody></table></div><div id="archive-pages"></div>
+    <div class="archive-note">各类型当前日志表置顶，可查看但不可删除；账号审计记录登录、账号和权限操作。记录数为数据库估算值。归档表名日期代表归档周期，并非日志发生时间；当前或未来归档周期不可删除。删除历史归档前请确认已有数据库备份。</div>
+    <div class="archive-table"><table class="layui-table"><thead><tr><th>日志类型</th><th>表名</th><th>表名日期范围</th><th>记录数（约）</th><th>占用空间</th><th>创建时间</th><th>状态</th><th>操作</th></tr></thead><tbody id="archive-rows"></tbody></table></div><div id="archive-pages"></div>
 </div></div></div>
 <script src="../../component/layui/layui.js"></script><script src="../../component/pear/pear.js"></script>
 <script>
@@ -45,7 +45,7 @@ layui.use(['jquery','layer','laypage'], function () {
             var html=data.items.map(function(r) {
                 var action='<button type="button" class="pear-btn pear-btn-primary pear-btn-xs archive-view" data-name="'+esc(r.name)+'">查看</button>';
                 if (canDelete && !r.protected) action+=' <button type="button" class="pear-btn pear-btn-danger pear-btn-xs archive-delete" data-name="'+esc(r.name)+'">删除</button>';
-                return '<tr><td>'+esc(r.title)+'</td><td>'+esc(r.name)+'</td><td>'+(r.legacy ? '-' : esc(r.start_date)+' - '+esc(r.end_date))+'</td><td>'+esc(r.estimated_rows)+'</td><td>'+esc((r.bytes/1048576).toFixed(2))+' MB</td><td>'+esc(r.created_at || '-')+'</td><td>'+(r.legacy?'基础表（受保护）':(r.protected?'受保护':'历史归档'))+'</td><td>'+action+'</td></tr>';
+                return '<tr><td>'+esc(r.title)+'</td><td>'+esc(r.name)+'</td><td>'+(r.base || r.legacy ? '-' : esc(r.start_date)+' - '+esc(r.end_date))+'</td><td>'+esc(r.estimated_rows)+'</td><td>'+esc((r.bytes/1048576).toFixed(2))+' MB</td><td>'+esc(r.created_at || '-')+'</td><td>'+(r.base?'当前日志（受保护）':(r.legacy?'旧版归档（受保护）':(r.protected?'当前周期（受保护）':'历史归档')))+'</td><td>'+action+'</td></tr>';
             }).join('');
             $('#archive-rows').html(html || '<tr><td colspan="8">暂无归档记录</td></tr>');
             pages('archive-pages',data,function(p,l){current=p;limit=l;load();});

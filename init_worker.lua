@@ -404,6 +404,7 @@ local function load_ip_blacklist_from_redis()
 
     local local_version = dict_config:get(master_blacklist_version_dict_key)
     if local_version and tostring(local_version) == tostring(version) then
+        mark_sync(blacklist_sync_status_dict_key, blacklist_sync_at_dict_key, "ok")
         return
     end
 
@@ -446,6 +447,7 @@ local function load_ip_whitelist_from_redis()
     local version = payload.version and tostring(payload.version) or ""
     local local_version = dict_config:get(whitelist_version_dict_key)
     if version ~= "" and local_version and tostring(local_version) == version then
+        mark_sync(whitelist_sync_status_dict_key, whitelist_sync_at_dict_key, "ok")
         return
     end
 
